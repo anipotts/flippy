@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Starts the flippy daemon with gtk4-layer-shell preloaded (must load before libwayland-client).
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+LS_LIB="${FLIPPY_LAYER_SHELL_LIB:-$HOME/.local/lib/x86_64-linux-gnu}"  # where gtk4-layer-shell is installed
+export LD_PRELOAD="$LS_LIB/libgtk4-layer-shell.so${LD_PRELOAD:+:$LD_PRELOAD}"
+export LD_LIBRARY_PATH="$LS_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export GI_TYPELIB_PATH="$LS_LIB/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
+unset ANTHROPIC_API_KEY  # must bill the Pro/Max subscription, never the API
+cd "$ROOT"
+exec "$ROOT/.venv/bin/python" -m flippy.daemon "$@"

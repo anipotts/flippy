@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Ping the flippy daemon. Usage: flippy-ask [ask|dismiss|reset|quit|ping]
+
+Starts the daemon if it isn't running (so no autostart is needed).
+"""
+import os
+import socket
+import subprocess
+import sys
+import time
+
+SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "flippy.sock")
+DAEMON = os.path.join(os.path.dirname(os.path.realpath(__file__)), "flippy-daemon")
+LOG = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "flippy.log")
+
+
+def send(cmd):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.settimeout(3)
+        s.connect(SOCK)
+        s.sendall((cmd + "\n").encode())
+        return s.recv(4096).decode().strip()
+
+
+def main():
+    cmd = " ".join(sys.argv[1:]) or "ask"
+    if cmd == "start":  # just make sure the daemon is running
+        cmd = "ping"
+        autostart = True
+    else:
+        autostart = cmd not in ("quit", "dismiss", "ping")
+    try:
+        print(send(cmd))
+        return
+    except (FileNotFoundError, ConnectionRefusedError, ConnectionResetError):
+        if not autostart:
+            sys.exit("flippy daemon not running")
+    os.makedirs(os.path.dirname(LOG), exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    with open(LOG, "ab") as log:
+        subprocess.Popen([DAEMON], stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+                         start_new_session=True, env=env)
+    for _ in range(100):
+        time.sleep(0.1)
+        try:
+            print(send(cmd))
+            return
+        except (FileNotFoundError, ConnectionRefusedError, ConnectionResetError):
+            pass
+    sys.exit(f"flippy daemon didn't start; see {LOG}")
+
+
+main()
