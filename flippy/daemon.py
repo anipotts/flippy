@@ -931,7 +931,12 @@ class Flippy:
     # --- fading ---
     def _schedule_fade(self, seconds):
         self._cancel_fade()
-        self.fade_id = GLib.timeout_add(int(seconds * 1000), lambda: (self._fade_out(), False)[1])
+        self.fade_id = GLib.timeout_add(int(seconds * 1000), self._fade_timer)
+
+    def _fade_timer(self):
+        self.fade_id = 0  # this source is finishing; don't source_remove it in _fade_out
+        self._fade_out()
+        return False
 
     def _cancel_fade(self):
         if self.fade_id:
@@ -940,6 +945,8 @@ class Flippy:
         self.overlay.win.set_opacity(1.0)
 
     def _fade_out(self):
+        if self.fade_id:  # called directly (dismiss) with a timed fade pending: drop it, or it
+            GLib.source_remove(self.fade_id)  # fires later and fades out the *next* answer
         self.fade_id = 0
         if self.fading:
             return
