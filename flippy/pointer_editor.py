@@ -71,6 +71,7 @@ class PixelEditor(Gtk.Window):
         side.append(self._label("Tools"))
         tools = Gtk.Box(spacing=4)
         group = None
+        self.tool_buttons = {}
         for key, label in (("pencil", "✏ Pencil"), ("fill", "🪣 Fill"), ("hotspot", "◎ Tip")):
             b = Gtk.ToggleButton(label=label)
             if group:
@@ -78,6 +79,7 @@ class PixelEditor(Gtk.Window):
             group = group or b
             b.set_active(key == "pencil")
             b.connect("toggled", lambda b, k=key: b.get_active() and setattr(self, "tool", k))
+            self.tool_buttons[key] = b
             b.set_tooltip_text({"pencil": "Left-click paints, right-click erases",
                                 "fill": "Fill an area with the color",
                                 "hotspot": "Click the pixel that should touch the target"}[key])
@@ -311,6 +313,76 @@ class PixelEditor(Gtk.Window):
         self.on_saved(name)
         self.close()
 
+
+
+# Scripted demo (`flippy-ask demo-pointer`): outline -> flood fill -> highlights -> sparkles -> tip.
+DEMO_SPRITE = [
+    "o          s   ",
+    "oo           s ",
+    "ofo       s    ",
+    "ohfo           ",
+    "ohffo          ",
+    "ohfffo         ",
+    "ohffffo        ",
+    "ohfffffo       ",
+    "ohffffffo      ",
+    "ohfffffffo     ",
+    "ohffffffffo    ",
+    "ohfffffffffo   ",
+    "ohfffffoooooo  ",
+    "ohffoffo       ",
+    "ohfo offo      ",
+    "ofo  offo      ",
+    "oo    offo     ",
+    "o     offo     ",
+    "       oo      ",
+]
+DEMO_COLORS = {"o": (0.2, 0.08, 0.38), "f": (1.0, 0.6, 0.1), "h": (1.0, 0.5, 0.75), "s": (1.0, 0.9, 0.2)}
+
+
+def demo_paint(ed, name, on_done, cell_ms=34):
+    """Paint DEMO_SPRITE into a PixelEditor like a person would, then name and save it."""
+    ox, oy = 1, 1
+    cells = {k: [(ox + c, oy + r) for r, row in enumerate(DEMO_SPRITE) for c, ch in enumerate(row) if ch == k]
+             for k in "ohs"}
+    steps = [("tool", "pencil"), ("color", "o")] + [("paint", xy) for xy in cells["o"]]
+    steps += [("pause", 6), ("tool", "fill"), ("color", "f"), ("pause", 4), ("fill", (ox + 2, oy + 6)), ("pause", 8),
+              ("tool", "pencil"), ("color", "h")] + [("paint", xy) for xy in cells["h"]]
+    steps += [("color", "s")] + [("paint", xy) for xy in cells["s"]]
+    steps += [("pause", 6), ("tool", "hotspot"), ("pause", 4), ("tip", (ox, oy)), ("pause", 10), ("name", name),
+              ("pause", 16), ("save", None)]
+    it = iter(steps)
+
+    def tick():
+        try:
+            kind, arg = next(it)
+        except StopIteration:
+            return False
+        if kind == "pause":  # wait `arg` ticks, then carry on
+            GLib.timeout_add(cell_ms * arg, lambda: GLib.timeout_add(cell_ms, tick) and False)
+            return False
+        if kind == "tool":
+            ed.tool_buttons[arg].set_active(True)
+        elif kind == "color":
+            ed.color = DEMO_COLORS[arg]
+        elif kind == "paint":
+            ed._snapshot()
+            ed._paint(arg, ed.color)
+        elif kind == "fill":
+            ed._snapshot()
+            ed._fill(arg, ed.color)
+        elif kind == "tip":
+            ed._snapshot()
+            ed.hotspot = arg
+        elif kind == "name":
+            ed.name.set_text(name)
+        elif kind == "save":
+            ed._save()
+            on_done(name)
+            return False
+        ed._redraw()
+        return True
+    GLib.timeout_add(700, lambda: GLib.timeout_add(cell_ms, tick) and False)
 
 
 class HotspotPicker(Gtk.Window):

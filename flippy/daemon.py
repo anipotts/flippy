@@ -31,7 +31,7 @@ from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
 
 from .brain import Brain, BrainError, prepare_image  # noqa: E402
 from .settings_window import SettingsWindow  # noqa: E402
-from . import settings, themes  # noqa: E402
+from . import pointer_editor, pointers, settings, themes  # noqa: E402
 from .point import image_to_logical, segments  # noqa: E402
 from .screenshot import Screenshotter  # noqa: E402
 
@@ -463,6 +463,8 @@ class Flippy:
         elif cmd.startswith("demo-draw "):  # scripted demo: circle (cx, cy, rx, ry) in logical px, then ask
             parts = cmd.split(maxsplit=5)
             self.demo_draw(*map(float, parts[1:5]), then_ask=parts[5] if len(parts) > 5 else None)
+        elif cmd.startswith("demo-pointer"):  # scripted demo: draw a pointer in the editor, save, preview it
+            self.demo_pointer(cmd[len("demo-pointer"):].strip() or "Sunset")
         elif cmd == "settings":
             self.open_settings()
         elif cmd == "preview":
@@ -922,6 +924,15 @@ class Flippy:
                 return False
             return True
         GLib.timeout_add(600, lambda: GLib.timeout_add(16, step) and False)
+
+    def demo_pointer(self, name):
+        ed = pointer_editor.PixelEditor(self.app, lambda n: None)
+        ed.present()
+
+        def saved(n):
+            settings.set("look", "pointer", pointers.PREFIX + n)
+            GLib.timeout_add(500, lambda: self.preview() and False)
+        pointer_editor.demo_paint(ed, name, saved)
 
     def cancel_draw(self):
         self._end_draw_mode()
