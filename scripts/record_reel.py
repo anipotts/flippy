@@ -11,7 +11,7 @@ Frames land in <outdir>/frames/<unix_time>.jpg and the daemon's UI events are
 copied to <outdir>/events.jsonl, so scripts/edit_demo.py can cut and zoom in sync.
 
 Needs gstreamer1.0-pipewire. COSMIC asks once which screen to share.
-Run:  python3 scripts/record_reel.py <outdir>
+Run:  python3 scripts/record_reel.py <outdir> [retake]
 """
 import json
 import os
@@ -76,6 +76,27 @@ SCENES += [
     ("cmd", "settings"),
     ("wait", 5.0),
 ]
+# `record_reel.py <outdir> retake`: the walkthrough again (after an ask, which is what used to trip the
+# early-fade bug) and the pointer editor.
+RETAKE = [
+    ("cmd", "set look.theme glass"), ("cmd", "set look.pointer theme"), ("wait", 1.5),
+    ("mark", "ask"),
+    ("cmd", "demo-type how do I make the ring glow purple?"),
+    ("until", "answer_done", 4.0, 60),
+    ("cmd", "dismiss"), ("wait", 1.0),
+    ("cmd", "set look.theme y2k"),
+    ("mark", "tour"),
+    ("cmd", "demo-type walk me through rendering this to an image"),
+    ("until", "answer_done", 5.0, 90),
+    ("cmd", "dismiss"), ("wait", 1.5),
+    ("cmd", "set look.theme glass"),
+    ("mark", "editor"),
+    ("cmd", "demo-pointer Sunset"),
+    ("until", "cleared", 1.0, 40),
+    ("cmd", "set look.pointer theme"),
+]
+if len(sys.argv) > 2 and sys.argv[2] == "retake":
+    SCENES = RETAKE
 
 
 def flippy(cmd):
