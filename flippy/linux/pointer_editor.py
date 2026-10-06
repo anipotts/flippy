@@ -12,7 +12,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk  # noqa: E402
 
-from . import pointers, themes  # noqa: E402
+from .. import pointers, themes  # noqa: E402
 
 GRID_W, GRID_H = 20, 24
 CELL = 18

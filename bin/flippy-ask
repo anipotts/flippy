@@ -7,11 +7,15 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
-SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "flippy.sock")
+SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), "flippy.sock")  # see flippy/daemon.py
 DAEMON = os.path.join(os.path.dirname(os.path.realpath(__file__)), "flippy-daemon")
-LOG = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "flippy.log")
+if sys.platform == "darwin":
+    LOG = os.path.expanduser("~/Library/Logs/flippy.log")
+else:
+    LOG = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "flippy.log")
 
 
 def send(cmd):

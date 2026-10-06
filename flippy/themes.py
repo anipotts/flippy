@@ -9,14 +9,19 @@ import ctypes
 import math
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 
 import cairo
-import gi
 
-gi.require_version("Pango", "1.0")
-gi.require_version("PangoCairo", "1.0")
-from gi.repository import Pango, PangoCairo  # noqa: E402
+if sys.platform == "darwin":
+    from .mac import text as mactext
+else:
+    import gi
+
+    gi.require_version("Pango", "1.0")
+    gi.require_version("PangoCairo", "1.0")
+    from gi.repository import Pango, PangoCairo  # noqa: E402
 
 from . import pointers  # noqa: E402
 
@@ -26,6 +31,9 @@ PIXEL_FONT = "VT323"
 
 def load_fonts():
     """Register bundled fonts for this process only (nothing installed system-wide)."""
+    if sys.platform == "darwin":
+        mactext.load_fonts(FONT_DIR)
+        return
     try:
         fc = ctypes.CDLL("libfontconfig.so.1")
         for f in os.listdir(FONT_DIR):
@@ -113,6 +121,8 @@ _measure_ctx = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1))
 
 
 def layout(cr, text, family, px, width=None, bold=False, mono=False):
+    if sys.platform == "darwin":
+        return mactext.Layout(cr, text, family, px, width, bold)
     lay = PangoCairo.create_layout(cr)
     fd = Pango.FontDescription.from_string(family)
     fd.set_absolute_size(px * Pango.SCALE)
@@ -127,14 +137,23 @@ def layout(cr, text, family, px, width=None, bold=False, mono=False):
 
 
 def lsize(lay):
+    if sys.platform == "darwin":
+        return lay.size()
     _, logical = lay.get_pixel_extents()
     return logical.width, logical.height
 
 
 def show(cr, lay, x, y, rgba):
     cr.set_source_rgba(*rgba)
+    if sys.platform == "darwin":
+        lay.show(cr, x, y)
+        return
     cr.move_to(x, y)
     PangoCairo.show_layout(cr, lay)
+
+
+def ellipsize_end(lay):
+    lay.set_ellipsize(True if sys.platform == "darwin" else Pango.EllipsizeMode.END)
 
 
 def round_rect(cr, x, y, w, h, r):
@@ -1069,7 +1088,7 @@ class Glass(Theme):
         title = card.header or ("Connecting to Claude…" if card.phase == "thinking" else
                                 ("Error" if card.error else "Flippy"))
         tl = layout(cr, title, self.font, 13, width=w - 120)
-        tl.set_ellipsize(Pango.EllipsizeMode.END)
+        ellipsize_end(tl)
         for dx, dy, al in ((0, 1, 0.55), (1, 0, 0.25), (-1, 0, 0.25)):  # dark glow behind the text
             show(cr, tl, ix + 21 + dx, iy - 1 + dy, (0, 0, 0, al))
         show(cr, tl, ix + 21, iy - 1, (1, 1, 1, 1))

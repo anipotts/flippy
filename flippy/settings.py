@@ -31,6 +31,10 @@ DEFAULTS = {
         "glide_seconds": 0.6,   # hand travel time between points
         "speed": 1.0,           # walkthrough playback speed, 0.5-2.0 (the player skins' speed slider)
     },
+    "keys": {                   # global hotkeys (macOS; on COSMIC they're set in COSMIC Settings)
+        "ask": "cmd+shift+space",
+        "draw": "ctrl+shift+space",
+    },
 }
 
 CHOICES = {

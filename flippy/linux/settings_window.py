@@ -12,7 +12,8 @@ import gi
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk  # noqa: E402
 
-from . import pointer_editor, pointers, settings, themes  # noqa: E402
+from . import pointer_editor  # noqa: E402
+from .. import pointers, settings, themes  # noqa: E402
 
 _adw_ready = False
 

@@ -1,69 +1,39 @@
 """Flippy daemon: socket listener + input box + answer card + pointer overlay + Claude session.
 
-GTK runs on the main thread; the Agent SDK client lives on an asyncio loop in a
-worker thread. Results come back to GTK through GLib.idle_add.
-
-COSMIC quirk: unmapping a layer surface (hide or destroy) makes the compositor
-drop our whole Wayland connection, and resizing a mapped one renders garbled.
-So both surfaces are mapped once and never unmapped or resized:
-  - the overlay is a permanent full-screen, click-through surface; the answer
-    card and pointer are drawn inside it and toggled at the widget level;
-  - the input box is a regular window instead (see InputBox).
-
-Run via bin/flippy-daemon (sets LD_PRELOAD for gtk4-layer-shell).
+This is the shared controller. The windows, screenshots and socket come from the
+platform layer: flippy/linux/ui.py (GTK + layer-shell) or flippy/mac/ui.py (AppKit).
+The UI runs on the main thread; the Agent SDK client lives on an asyncio loop in a
+worker thread. Results come back to the main thread through loop.idle_add.
 """
 import asyncio
 import json
 import math
 import os
 import sys
+import tempfile
 import threading
 import time
 
-import cairo
-import gi
+from . import loop, settings, themes
+from .brain import Brain, BrainError, prepare_image
+from .point import image_to_logical, segments
 
-gi.require_version("Gtk", "4.0")
-gi.require_version("Gdk", "4.0")
-gi.require_version("Gtk4LayerShell", "1.0")
-from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
-from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
-
-from .brain import Brain, BrainError, prepare_image  # noqa: E402
-from .settings_window import SettingsWindow  # noqa: E402
-from . import pointer_editor, pointers, settings, themes  # noqa: E402
-from .point import image_to_logical, segments  # noqa: E402
-from .screenshot import Screenshotter  # noqa: E402
-
-SOCK_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "flippy.sock")
-HIDE_SETTLE_MS = 700        # box closed -> COSMIC's dock drops its icon and re-centers (~0.5s); wait it out
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()  # macOS: the per-user $TMPDIR
+SOCK_PATH = os.path.join(RUNTIME_DIR, "flippy.sock")
 ASK_TIMEOUT_S = 90
 IDLE_RESET_S = 15 * 60      # fresh Claude session after this much idle (keeps context/usage small)
-CARD_MARGIN_TOP = 70
-CARD_MARGIN_BOTTOM = 110    # clear the dock
 STEP_TYPE_CPS = 90          # walkthrough step text types in at this many chars/s, then holds:
 STEP_HOLD = {"slow": (3.5, 0.07), "normal": (2.2, 0.045), "fast": (1.2, 0.025)}  # (min s, s per char)
 READ_S_PER_CHAR = 0.04      # extra time the final answer stays up per character
 DRAW_TIMEOUT_S = 60         # leave draw mode (and give the mouse back) if nothing happens
 # Other knobs (model, effort, theme, pointer, timing) live in flippy/settings.py.
 
-BASE_CSS = """
-window.flippy-overlay, window.flippy-box { background: transparent; }
-window.flippy-box entry, window.flippy-box entry:focus-within {
-  outline: 0 solid transparent; outline-width: 0; outline-offset: 0; }
-window.flippy-box entry > text { border: none; box-shadow: none; background: none; }
-window.flippy-box .flippy-card { font-family: "Fira Sans", "Inter", "Noto Sans", sans-serif; font-size: 15px; }
-"""
-
-EMPTY_REGION = cairo.Region()
-FULL_REGION = cairo.Region(cairo.RectangleInt(0, 0, 100000, 100000))
-
 
 def log(*a):
     print(time.strftime("%H:%M:%S"), *a, file=sys.stderr, flush=True)
 
 
-EVENTS_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "flippy-events.jsonl")
+EVENTS_PATH = os.path.join(RUNTIME_DIR, "flippy-events.jsonl")
 
 
 def event(name, **data):
@@ -75,335 +45,20 @@ def event(name, **data):
         pass
 
 
-def layer_window(app, ns, keyboard):
-    win = Gtk.Window(application=app)
-    win.add_css_class(ns)
-    LayerShell.init_for_window(win)
-    LayerShell.set_namespace(win, ns)
-    LayerShell.set_layer(win, LayerShell.Layer.OVERLAY)
-    LayerShell.set_keyboard_mode(win, keyboard)
-    return win
-
-
-class Overlay:
-    """Permanent full-screen layer holding the pointer, the answer card and the user's marks.
-
-    Everything is painted with cairo by the active theme (flippy/themes.py).
-    Click-through (empty input region) except in draw mode, where the input
-    region is widened to the whole surface so it catches the mouse. Only the
-    mouse: it never takes keyboard focus (see InputBox for why).
-    """
-
-    def __init__(self, app):
-        self.win = layer_window(app, "flippy-overlay", LayerShell.KeyboardMode.NONE)
-        for e in (LayerShell.Edge.TOP, LayerShell.Edge.BOTTOM, LayerShell.Edge.LEFT, LayerShell.Edge.RIGHT):
-            LayerShell.set_anchor(self.win, e, True)
-        LayerShell.set_exclusive_zone(self.win, -1)
-
-        self.area = Gtk.DrawingArea()
-        self.area.set_draw_func(self._draw)
-        self.win.set_child(self.area)
-        self.win.connect("map", lambda w: w.get_surface().set_input_region(EMPTY_REGION))
-
-        self.card = None          # themes.Card being shown, or None
-        self.card_mode = "top"    # "top" | "bottom" (centered) | "follow" (next to the pointer)
-        self.card_t0 = 0.0
-        self.meta = ""            # shown by themes that have room for it (e.g. "OPUS · LOW")
-        self.target = None        # (x, y, label) in logical px: where the pointer is heading
-        self.pos = None           # where the pointer is drawn right now (animated)
-        self.move_from = None
-        self.move_t0 = 0.0
-        self.t0 = 0.0
-        self.tick_id = 0
-
-        # draw mode
-        self.strokes: list[list[tuple[float, float]]] = []
-        self.drawing = False
-        self.on_draw_done = lambda: None
-        self.on_draw_cancel = lambda: None
-
-        # player controls (Glass/Y2K): only these rects take clicks; the rest stays click-through
-        self.hits = {}            # {name: (x, y, w, h)} from the theme, refreshed every frame
-        self.region_key = None    # last input region we set, to avoid resetting it every frame
-        self.on_control = lambda name, frac: None
-        self.pressed = (None, 0.0)
-        self.slider = None        # (name, press x) while dragging the seek/speed slider
-        drag = Gtk.GestureDrag(button=Gdk.BUTTON_PRIMARY)
-        drag.connect("drag-begin", self._drag_begin)
-        drag.connect("drag-update", self._drag_update)
-        drag.connect("drag-end", self._drag_end)
-        self.area.add_controller(drag)
-        right = Gtk.GestureClick(button=Gdk.BUTTON_SECONDARY)
-        right.connect("pressed", lambda *a: self.drawing and self.on_draw_cancel())
-        self.win.add_controller(right)
-        self.win.present()
-
-    @property
-    def theme(self):
-        return themes.get(settings.get("look", "theme"))
-
-    @property
-    def showing(self):
-        return self.card is not None or self.target is not None or bool(self.strokes)
-
-    def show_text(self, text, error=False, at_bottom=False, header=None, follow=False, **card_fields):
-        if self.card is None:
-            self.card_t0 = time.monotonic()
-        self.card = themes.Card(text=text, error=error, header=header, follow=bool(follow and self.target),
-                                meta=self.meta, **card_fields)
-        self.card_mode = "follow" if self.card.follow else ("bottom" if at_bottom else "top")
-        self.win.set_opacity(1.0)
-        self._ensure_tick()
-
-    def point(self, x, y, label):
-        """Move the pointer to (x, y): drop in if it's not showing yet, otherwise glide there."""
-        now = time.monotonic()
-        if self.pos is None:
-            self.pos = (x, y)
-            self.t0 = now
-        else:
-            self.move_from = self.pos
-            self.move_t0 = now
-        self.target = (x, y, label)
-        self._ensure_tick()
-
-    def clear(self, keep_marks=False):
-        self.card = None
-        self.target = None
-        self.pos = None
-        self.move_from = None
-        if not keep_marks:
-            self.strokes = []
-        if self.tick_id and not self.strokes:
-            self.area.remove_tick_callback(self.tick_id)
-            self.tick_id = 0
-        self.area.queue_draw()
-        self.win.set_opacity(1.0)
-
-    def _ensure_tick(self):
-        if not self.tick_id:
-            self.tick_id = self.area.add_tick_callback(self._tick)
-
-    def _tick(self, *_):
-        if self.target and self.move_from:
-            glide = settings.get("timing", "glide_seconds") / settings.get("timing", "speed")
-            k = min((time.monotonic() - self.move_t0) / glide, 1.0)
-            k = k * k * (3 - 2 * k)  # smoothstep
-            (fx, fy), (tx, ty) = self.move_from, self.target[:2]
-            self.pos = (fx + (tx - fx) * k, fy + (ty - fy) * k)
-            if k >= 1.0:
-                self.move_from = None
-        self.area.queue_draw()
-        return True
-
-    def pointer_style(self):
-        style = settings.get("look", "pointer")
-        return self.theme.pointer if style == "theme" else style
-
-    def _card_rect(self, W, H, opts):
-        cw, ch = self.theme.size(self.card, opts)
-        if self.card_mode == "follow" and self.pos:
-            x, y = self.pos
-            right, left, below, above = themes.pointer_extent(self.pointer_style(), settings.get("look", "pointer_size"))
-            flip = y + below + 4 > H
-            cx = x + right + 14                     # right of the pointer...
-            if cx + cw > W - 8:
-                cx = x - left - 14 - cw             # ...or left of it near the edge
-            cy = (y - ch - 16) if flip else (y + 16)
-            cx = min(max(cx, 8), W - cw - 8)
-            cy = min(max(cy, 8), H - ch - 8)
-        else:
-            cx = (W - cw) / 2
-            cy = H - ch - CARD_MARGIN_BOTTOM if self.card_mode == "bottom" else CARD_MARGIN_TOP
-        return cx, cy, cw, ch
-
-    # --- draw mode ---
-    def start_drawing(self):
-        self.drawing = True
-        self.strokes = []
-        self.win.get_surface().set_input_region(FULL_REGION)
-        self.win.set_cursor(Gdk.Cursor.new_from_name("crosshair", None))
-        self.win.set_opacity(1.0)
-        self._ensure_tick()
-
-    def stop_drawing(self):
-        self.drawing = False
-        self.win.get_surface().set_input_region(EMPTY_REGION)
-        self.win.set_cursor(None)
-        self.region_key = None  # let the next frame restore the controls' region
-
-    def _hit(self, x, y):
-        for name, (rx, ry, rw, rh) in self.hits.items():
-            if rx <= x <= rx + rw and ry <= y <= ry + rh:
-                return name, (x - rx) / rw if rw else 0
-        return None, 0
-
-    def _drag_begin(self, gesture, x, y):
-        if self.drawing:
-            self.strokes.append([(x, y)])
-            return
-        name, frac = self._hit(x, y)
-        if name:
-            self.pressed = (name, time.monotonic())
-            if name in ("seek", "speed"):
-                self.slider = (name, x)
-            self.on_control(name, frac)
-            self.area.queue_draw()
-
-    def _drag_update(self, gesture, dx, dy):
-        if self.drawing and self.strokes:
-            x0, y0 = self.strokes[-1][0]
-            self.strokes[-1].append((x0 + dx, y0 + dy))
-        elif self.slider and self.slider[0] in self.hits:
-            name, x0 = self.slider
-            rx, _, rw, _ = self.hits[name]
-            self.pressed = (name, time.monotonic())
-            self.on_control(name, (x0 + dx - rx) / rw)
-
-    def _drag_end(self, gesture, dx, dy):
-        self.slider = None
-        if not self.drawing or not self.strokes:
-            return
-        if len(self.strokes[-1]) < 4:  # a click, not a mark; keep drawing
-            self.strokes.pop()
-            return
-        self.on_draw_done()
-
-    def _draw_strokes(self, cr):
-        r, g, b = self.theme.pen
-        cr.set_line_cap(cairo.LINE_CAP_ROUND)
-        cr.set_line_join(cairo.LINE_JOIN_ROUND)
-        for width, alpha in ((12, 0.25), (5, 1.0)):  # soft glow, then the solid line
-            cr.set_line_width(width)
-            cr.set_source_rgba(r, g, b, alpha)
-            for stroke in self.strokes:
-                if not stroke:
-                    continue
-                cr.move_to(*stroke[0])
-                for pt in stroke[1:]:
-                    cr.line_to(*pt)
-                cr.stroke()
-
-    def _draw(self, area, cr, w, h):
-        if self.strokes:
-            self._draw_strokes(cr)
-        theme = self.theme
-        now = time.monotonic()
-        if self.target and self.pos:
-            themes.draw_pointer(cr, theme, self.pointer_style(), *self.pos, now - self.t0,
-                                settings.get("look", "pointer_size"), h)
-        hits = {}
-        if self.card:
-            name, at = self.pressed
-            opts = {"text_size": settings.get("look", "text_size"), "card_opacity": settings.get("look", "card_opacity"),
-                    "controls": settings.get("look", "controls"),
-                    "pressed": name if (now - at < 0.18 or self.slider) else None}
-            x, y, cw, ch = self._card_rect(w, h, opts)
-            theme.draw(cr, x, y, cw, ch, self.card, now - self.card_t0, opts)
-            hits = theme.hit_regions(self.card, x, y, cw, ch, opts)
-        self.hits = hits
-        self._update_input_region()
-
-    def _update_input_region(self):
-        """Clickable = the visible card's controls only. Draw mode manages its own (full) region."""
-        if self.drawing:
-            return
-        key = tuple(sorted((n, round(r[0]), round(r[1]), round(r[2]), round(r[3])) for n, r in self.hits.items()))
-        if key == self.region_key:
-            return
-        self.region_key = key
-        region = cairo.Region([cairo.RectangleInt(int(rx), int(ry), int(rw) + 1, int(rh) + 1)
-                               for rx, ry, rw, rh in self.hits.values()]) if self.hits else EMPTY_REGION
-        surface = self.win.get_surface()
-        if surface is not None:
-            surface.set_input_region(region)
-        self.win.set_cursor(Gdk.Cursor.new_from_name("pointer", None) if self.hits else None)
-
-
-class InputBox:
-    """Regular (xdg_toplevel) window, created on show and destroyed on hide.
-
-    Not a layer surface on purpose: on COSMIC a mapped layer surface can't
-    give keyboard focus back (switching it to KeyboardMode.NONE keeps eating
-    keys), and unmapping one kills the connection. A normal window closes
-    cleanly and focus returns to the app underneath.
-    """
-
-    def __init__(self, app, on_submit, on_cancel):
-        self.app = app
-        self.on_submit = on_submit
-        self.on_cancel = on_cancel
-        self.win = None
-
-    @property
-    def visible(self):
-        return self.win is not None
-
-    def show(self):
-        event("box")
-        if self.win:
-            self.win.present()
-            return
-        theme = themes.get(settings.get("look", "theme"))
-        win = Gtk.Window(application=self.app, title="Flippy", decorated=False, resizable=False)
-        win.set_titlebar(Gtk.Box(visible=False))  # client-side "no titlebar", so COSMIC doesn't add its own
-        win.add_css_class("flippy-box")
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        card.add_css_class("flippy-card")
-        card.set_size_request(560, -1)
-        entry = Gtk.Entry(placeholder_text=theme.placeholder)
-        hint = Gtk.Label(label="Enter to ask · Esc to close · /new fresh session · /settings", xalign=0)
-        hint.add_css_class("flippy-hint")
-        card.append(entry)
-        card.append(hint)
-        # no titlebar (see set_titlebar above), so the box itself is the drag handle:
-        # grab anywhere outside the text field to move it
-        handle = Gtk.WindowHandle(child=card)
-        win.set_child(handle)
-        entry.connect("activate", lambda e: self.on_submit(e.get_text().strip()))
-        keys = Gtk.EventControllerKey()
-        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        keys.connect("key-pressed", self._on_key)
-        win.add_controller(keys)
-        win.connect("close-request", lambda w: (self.on_cancel(), True)[1])
-        self.win = win
-        self.entry = entry
-        win.present()
-        entry.grab_focus()
-
-    def _on_key(self, _ctrl, keyval, _code, _state):
-        if keyval == Gdk.KEY_Escape:
-            self.on_cancel()
-            return True
-        return False
-
-    def hide(self):
-        if self.win:
-            win, self.win = self.win, None
-            GLib.idle_add(lambda: win.destroy())  # not from inside its own event handler
-
-
 class Flippy:
-    def __init__(self, app):
-        self.app = app
-        display = Gdk.Display.get_default()
-        base = Gtk.CssProvider()
-        base.load_from_data(BASE_CSS, -1)
-        Gtk.StyleContext.add_provider_for_display(display, base, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        self.theme_css = Gtk.CssProvider()  # the active theme's question-box styling
-        Gtk.StyleContext.add_provider_for_display(display, self.theme_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
-        self.settings_win = None
-        self.overlay = Overlay(app)
+    def __init__(self, ui):
+        self.ui = ui
+        self.overlay = ui.overlay
         self.overlay.on_draw_done = self._draw_done
         self.overlay.on_draw_cancel = self.cancel_draw
         self.overlay.on_control = self.control
-        self.box = InputBox(app, self.submit, self.dismiss)
+        self.box = ui.input_box(self.submit, self.dismiss)
         self.marked = False      # next question is about what the user drew
         self.gen = 0             # bumps per question; stale stream callbacks check it
         self.play = None         # playback state of the reply being shown (see _play_tick)
         self.play_id = 0
         self.draw_timeout_id = 0
-        self.shooter = Screenshotter()
+        self.shooter = ui.screenshotter
         self.busy = False
         self.fade_id = 0
         self.fading = False
@@ -417,8 +72,12 @@ class Flippy:
         settings.on_change(self._on_setting)
         self._run(self.brain.start(), lambda r, e: log("claude session ready" if not e else f"session start failed: {e}"))
 
-        self.hold = app.hold()
-        self._listen()
+        try:
+            os.unlink(SOCK_PATH)
+        except FileNotFoundError:
+            pass
+        ui.listen(SOCK_PATH, self.command)
+        os.chmod(SOCK_PATH, 0o600)
         log(f"listening on {SOCK_PATH}")
 
     # --- plumbing ---
@@ -429,28 +88,8 @@ class Flippy:
 
         def done(f):
             err = f.exception()
-            GLib.idle_add(lambda: cb(None if err else f.result(), err) and False)
+            loop.idle_add(lambda: cb(None if err else f.result(), err) and False)
         fut.add_done_callback(done)
-
-    def _listen(self):
-        try:
-            os.unlink(SOCK_PATH)
-        except FileNotFoundError:
-            pass
-        self.service = Gio.SocketService()
-        self.service.add_address(Gio.UnixSocketAddress.new(SOCK_PATH), Gio.SocketType.STREAM,
-                                 Gio.SocketProtocol.DEFAULT, None)
-        os.chmod(SOCK_PATH, 0o600)
-        self.service.connect("incoming", self._on_incoming)
-        self.service.start()
-
-    def _on_incoming(self, service, conn, _src):
-        stream = Gio.DataInputStream.new(conn.get_input_stream())
-        line, _ = stream.read_line_utf8(None)
-        reply = self.command((line or "").strip() or "ask")
-        conn.get_output_stream().write_all((reply + "\n").encode(), None)
-        conn.close(None)
-        return True
 
     def command(self, cmd):
         log("cmd:", cmd)
@@ -479,7 +118,7 @@ class Flippy:
         elif cmd == "reset":
             self.reset_session()
         elif cmd == "quit":
-            GLib.idle_add(self.app.quit)
+            self.ui.quit()
         elif cmd == "ping":
             return "pong"
         elif cmd.startswith("q "):  # ask without the box (scripting/testing)
@@ -498,6 +137,10 @@ class Flippy:
             self.box.hide()
             return
         self._cancel_fade()  # keep the last answer up while typing a follow-up
+        self._show_box()
+
+    def _show_box(self):
+        event("box")
         self.box.show()
 
     def submit(self, question):
@@ -523,7 +166,7 @@ class Flippy:
                         "annotation, not part of the app.]\n" + question)
         self.overlay.clear(keep_marks=self.marked)
         self.marked = False
-        GLib.timeout_add(HIDE_SETTLE_MS, self._shoot, question)
+        loop.timeout_add(self.ui.hide_settle_ms, self._shoot, question)
 
     def _shoot(self, question):
         self.shooter.take(lambda path, err: self._on_shot(question, path, err))
@@ -558,9 +201,9 @@ class Flippy:
                 os.unlink(path)  # portal drops screenshots in /tmp; don't leave them around
             except OSError:
                 pass
-        GLib.idle_add(lambda: self._start_playback(gen, img_size, shot_size) and False)
+        loop.idle_add(lambda: self._start_playback(gen, img_size, shot_size) and False)
         raw = await self.brain.ask(question, b64, img_size,
-                                   on_text=lambda d: GLib.idle_add(lambda: self._stream_text(gen, d) and False))
+                                   on_text=lambda d: loop.idle_add(lambda: self._stream_text(gen, d) and False))
         return raw, gen
 
     def _on_answer(self, result, err):
@@ -586,7 +229,7 @@ class Flippy:
         self.play = {"gen": gen, "raw": "", "done": False, "img": img_size, "shot": shot_size,
                      "step": 0, "shown": 0.0, "typed_at": None, "last": time.monotonic(), "pointed": False,
                      "pointed_step": -1, "paused": False, "finished": False}
-        self.play_id = GLib.timeout_add(33, self._play_tick)
+        self.play_id = loop.timeout_add(33, self._play_tick)
 
     def _stream_text(self, gen, delta):
         if self.play and self.play["gen"] == gen and not self.play["done"]:
@@ -594,14 +237,14 @@ class Flippy:
 
     def _stop_playback(self):
         if self.play_id:
-            GLib.source_remove(self.play_id)
+            loop.source_remove(self.play_id)
             self.play_id = 0
         self.play = None
 
     def _resume_ticking(self):
         if self.play and not self.play_id:
             self.play["last"] = time.monotonic()
-            self.play_id = GLib.timeout_add(33, self._play_tick)
+            self.play_id = loop.timeout_add(33, self._play_tick)
 
     @staticmethod
     def _hold_s(seg):
@@ -681,7 +324,7 @@ class Flippy:
         for seg in segs:
             if seg.point:
                 _, y = image_to_logical(seg.point, pl["img"], pl["shot"], self._scale())
-                return y < self._geometry().height / 2
+                return y < self.ui.screen_size()[1] / 2
         return False
 
     def _finish_playback(self, last_text, segs):
@@ -759,7 +402,7 @@ class Flippy:
             self._render_step(self.play, segments(self.play["raw"], self.play["done"]), time.monotonic())
         elif self.overlay.card:
             self.overlay.card.speed = settings.get("timing", "speed")
-        self.overlay.area.queue_draw()
+        self.overlay.queue_draw()
 
     def _fail(self, msg):
         self.busy = False
@@ -791,10 +434,7 @@ class Flippy:
 
     # --- settings ---
     def open_settings(self):
-        if self.settings_win is None:
-            self.settings_win = SettingsWindow(self.app, on_preview=self.preview, on_reset=self.reset_session)
-            self.settings_win.connect("close-request", lambda w: setattr(self, "settings_win", None) or False)
-        self.settings_win.present()
+        self.ui.open_settings(on_preview=self.preview, on_reset=self.reset_session)
 
     def set_command(self, arg):
         try:
@@ -817,7 +457,7 @@ class Flippy:
             self._apply_theme()
         elif section == "timing" and key == "speed":
             self._refresh_card()
-        self.overlay.area.queue_draw()
+        self.overlay.queue_draw()
 
     def _apply_claude_settings(self):
         model, effort = settings.get("claude", "model"), settings.get("claude", "effort")
@@ -828,7 +468,7 @@ class Flippy:
         theme = themes.get(settings.get("look", "theme"))
         if hasattr(theme, "refresh"):
             theme.refresh()  # e.g. re-read COSMIC's colors
-        self.theme_css.load_from_data(theme.box_css(), -1)
+        self.ui.apply_theme(theme)
 
     def preview(self):
         """Fake 3-step walkthrough so theme/pointer/timing changes can be seen in place."""
@@ -838,9 +478,8 @@ class Flippy:
         self._stop_playback()
         self._cancel_fade()
         self.overlay.clear()
-        g = self._geometry()
+        W, H = self.ui.screen_size()
         sc = self._scale()
-        W, H = g.width, g.height
         spots = [(70, 14, "Workspaces"), (W // 2, 14, "Clock"), (W // 2, H - 40, "Dock")]
         raw = " ".join(f"{txt} [POINT:{int(x * sc)},{int(y * sc)}:{lbl}]." for (x, y, lbl), txt in zip(spots, (
             "This is a preview of how answers look: the pointer starts at the workspaces button",
@@ -863,7 +502,7 @@ class Flippy:
         self.overlay.start_drawing()
         event("draw_start")
         self.overlay.show_text("draw around something, then let go to ask · right-click to cancel")
-        self.draw_timeout_id = GLib.timeout_add_seconds(DRAW_TIMEOUT_S, self._draw_timed_out)
+        self.draw_timeout_id = loop.timeout_add_seconds(DRAW_TIMEOUT_S, self._draw_timed_out)
 
     def _draw_timed_out(self):
         self.draw_timeout_id = 0  # this source is finishing; don't remove it again
@@ -872,7 +511,7 @@ class Flippy:
 
     def _end_draw_mode(self):
         if self.draw_timeout_id:
-            GLib.source_remove(self.draw_timeout_id)
+            loop.source_remove(self.draw_timeout_id)
             self.draw_timeout_id = 0
         self.overlay.stop_drawing()
 
@@ -884,7 +523,7 @@ class Flippy:
         self._end_draw_mode()
         self.overlay.clear(keep_marks=True)  # drop the hint, keep the marks
         self.marked = True
-        self.box.show()
+        self._show_box()
 
     # --- scripted demo helpers (used by scripts/record_demo.py) ---
     def demo_type(self, text, delay_ms=55):
@@ -896,13 +535,12 @@ class Flippy:
             if not self.box.visible:
                 return False
             state["i"] += 1
-            self.box.entry.set_text(text[:state["i"]])
-            self.box.entry.set_position(-1)
+            self.box.set_text(text[:state["i"]])
             if state["i"] >= len(text):
-                GLib.timeout_add(450, lambda: self.box.visible and self.box.entry.emit("activate") and False)
+                loop.timeout_add(450, lambda: self.box.visible and self.box.activate() and False)
                 return False
             return True
-        GLib.timeout_add(500, lambda: GLib.timeout_add(delay_ms, step) and False)
+        loop.timeout_add(500, lambda: loop.timeout_add(delay_ms, step) and False)
 
     def demo_draw(self, cx, cy, rx, ry, then_ask=None, duration_ms=900):
         self.start_draw()
@@ -915,7 +553,7 @@ class Flippy:
                 return False
             a = 2 * math.pi * 1.08 * state["i"] / n - math.pi / 2  # a bit past full circle, like a hand would
             self.overlay.strokes[-1].append((cx + rx * math.cos(a), cy + ry * math.sin(a)))
-            self.overlay.area.queue_draw()
+            self.overlay.queue_draw()
             state["i"] += 1
             if state["i"] > n:
                 self._draw_done()
@@ -923,16 +561,13 @@ class Flippy:
                     self.demo_type(then_ask)
                 return False
             return True
-        GLib.timeout_add(600, lambda: GLib.timeout_add(16, step) and False)
+        loop.timeout_add(600, lambda: loop.timeout_add(16, step) and False)
 
     def demo_pointer(self, name):
-        ed = pointer_editor.PixelEditor(self.app, lambda n: None)
-        ed.present()
-
-        def saved(n):
-            settings.set("look", "pointer", pointers.PREFIX + n)
-            GLib.timeout_add(500, lambda: self.preview() and False)
-        pointer_editor.demo_paint(ed, name, saved)
+        def saved(value):
+            settings.set("look", "pointer", value)
+            loop.timeout_add(500, lambda: self.preview() and False)
+        self.ui.demo_pointer(name, saved)
 
     def cancel_draw(self):
         self._end_draw_mode()
@@ -942,7 +577,7 @@ class Flippy:
     # --- fading ---
     def _schedule_fade(self, seconds):
         self._cancel_fade()
-        self.fade_id = GLib.timeout_add(int(seconds * 1000), self._fade_timer)
+        self.fade_id = loop.timeout_add(int(seconds * 1000), self._fade_timer)
 
     def _fade_timer(self):
         self.fade_id = 0  # this source is finishing; don't source_remove it in _fade_out
@@ -951,13 +586,13 @@ class Flippy:
 
     def _cancel_fade(self):
         if self.fade_id:
-            GLib.source_remove(self.fade_id)
+            loop.source_remove(self.fade_id)
             self.fade_id = 0
-        self.overlay.win.set_opacity(1.0)
+        self.overlay.set_opacity(1.0)
 
     def _fade_out(self):
         if self.fade_id:  # called directly (dismiss) with a timed fade pending: drop it, or it
-            GLib.source_remove(self.fade_id)  # fires later and fades out the *next* answer
+            loop.source_remove(self.fade_id)  # fires later and fades out the *next* answer
         self.fade_id = 0
         if self.fading:
             return
@@ -967,7 +602,7 @@ class Flippy:
         def step():
             if self.busy or self.box.visible:  # something new started; abort the fade
                 self.fading = False
-                self.overlay.win.set_opacity(1.0)
+                self.overlay.set_opacity(1.0)
                 return False
             a = 1 - (time.monotonic() - start) / 0.4
             if a <= 0:
@@ -976,20 +611,12 @@ class Flippy:
                 self.overlay.clear()
                 event("cleared")
                 return False
-            self.overlay.win.set_opacity(a)
+            self.overlay.set_opacity(a)
             return True
-        GLib.timeout_add(16, step)
-
-    # --- monitor info (v1: single monitor) ---
-    def _monitor(self):
-        return Gdk.Display.get_default().get_monitors().get_item(0)
-
-    def _geometry(self):
-        return self._monitor().get_geometry()
+        loop.timeout_add(16, step)
 
     def _scale(self):
-        mon = self._monitor()
-        return mon.get_scale() if hasattr(mon, "get_scale") else float(mon.get_scale_factor())
+        return self.ui.scale()
 
 
 def _friendly_error(err):
@@ -1008,12 +635,11 @@ def _friendly_error(err):
 
 def main():
     themes.load_fonts()  # bundled pixel font for the Y2K theme, process-local
-    if not LayerShell.is_supported():
-        sys.exit("compositor doesn't support wlr-layer-shell (or LD_PRELOAD missing)")
-    app = Gtk.Application(application_id="dev.flippy.daemon", flags=Gio.ApplicationFlags.NON_UNIQUE)
-    state = {}
-    app.connect("activate", lambda a: state.setdefault("flippy", Flippy(a)))
-    app.run(None)
+    if sys.platform == "darwin":
+        from .mac import ui
+    else:
+        from .linux import ui
+    ui.run(Flippy)
 
 
 if __name__ == "__main__":
