@@ -38,6 +38,9 @@ DEFAULTS = {
         "apps": "",             # comma-separated app ids to watch (macOS bundle ids)
         "muted": "",            # apps where you chose "don't ask"
     },
+    "updates": {
+        "check": True,          # look for a new GitHub Release once a day and offer to install it
+    },
     "automation": {
         "clicks": False,        # let `flippy-ask click` click on screen (macOS: needs the Accessibility permission)
     },

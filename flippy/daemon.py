@@ -10,12 +10,13 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import threading
 import time
 
-from . import loop, settings, themes, tips, watch
+from . import loop, settings, themes, tips, updates, watch
 from .brain import Brain, BrainError, prepare_image
 from .point import image_to_logical, segments
 
@@ -75,6 +76,8 @@ class Flippy:
         self._apply_claude_settings()
         self._apply_theme()
         settings.on_change(self._on_setting)
+        loop.timeout_add(60_000, lambda: self._update_tick() and False)  # first check a minute in, then every 6 h
+        loop.timeout_add(6 * 3600 * 1000, self._update_tick)
         self.watcher = watch.Watcher()
         self.dealer = tips.Dealer()
         self.decks = {}          # app id -> tips.Deck
@@ -145,6 +148,14 @@ class Flippy:
             self.ui.quit()
         elif cmd == "pause-toggle":  # pause/resume the walkthrough on screen (the double-tap shortcut)
             self.pause_toggle()
+        elif cmd == "update":  # check for a new release now (offers it, or says you're up to date)
+            self.check_for_update(force=True)
+            return "checking for updates"
+        elif cmd == "update install":  # install the latest release without asking
+            self.install_update(None)
+            return "updating"
+        elif cmd == "version":
+            return updates.current_version()
         elif cmd == "ping":
             return "pong"
         elif cmd.startswith("help-mode "):  # help-mode off|quiet
@@ -717,6 +728,67 @@ class Flippy:
     def _nudge_mute(self, offer):
         self.watcher.mute(offer.app)
         settings.set_list("help", "muted", settings.get_list("help", "muted") | {offer.app})
+
+    # --- updates (flippy/updates.py): offer new GitHub Releases ---
+    def _update_tick(self):
+        if settings.get("updates", "check") and updates.due():
+            self.check_for_update()
+        return True
+
+    def check_for_update(self, force=False):
+        def work():
+            try:
+                rel, err = updates.check(force=force), None
+            except updates.UpdateError as e:
+                rel, err = None, e
+            loop.idle_add(lambda: self._update_checked(rel, err, force) and False)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_checked(self, rel, err, force):
+        if err:
+            log(f"update: check failed: {err}")
+            if force:
+                self._fail(f"Couldn't check for updates: {err}")
+            return
+        if rel is None:
+            log(f"update: {updates.current_version()} is the latest")
+            if force and not self.busy:
+                self.overlay.show_text(f"Flippy {updates.current_version()} is up to date.")
+                self._schedule_fade(3)
+            return
+        log(f"update: {rel['version']} is out (have {updates.current_version()})")
+        if hasattr(self.ui, "show_update"):
+            self.ui.show_update(rel, install=lambda: self.install_update(rel),
+                                later=lambda: updates.later(rel["version"]))
+        else:
+            log("update: run `flippy-ask update install` to install it")
+
+    def install_update(self, rel):
+        if self.busy:
+            return
+        self.busy = True
+        self.overlay.show_text(f"Updating Flippy{' to ' + rel['version'] if rel else ''}…")
+
+        def work():
+            try:
+                res, err = updates.install(log=log), None
+            except (updates.UpdateError, OSError, subprocess.TimeoutExpired) as e:
+                res, err = None, e
+            loop.idle_add(lambda: self._update_installed(res, err) and False)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_installed(self, res, err):
+        self.busy = False
+        if err:
+            self._fail(f"Couldn't update: {err}")
+            return
+        log(f"update: {res['from']} -> {res['to']}" + (", packages updated" if res["packages"] else ""))
+        if res["from"] == res["to"]:
+            self.overlay.show_text("Already up to date.")
+            self._schedule_fade(3)
+            return
+        self.overlay.show_text(f"Updated to {updates.current_version()}. Restarting…")
+        loop.timeout_add(1200, lambda: self.ui.restart(full_install=res["app"]) and False)
 
     # --- settings ---
     def open_settings(self):

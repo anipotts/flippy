@@ -172,3 +172,12 @@ today, those steps just play on a timer. On COSMIC there's no way for an ordinar
 to see clicks in other apps. Options: treat any `resumed` from idle-notify plus a screen
 change as "they did it" (no position check), or give the card a clear "Done" button
 and wait on that.
+
+## Updates
+
+Checking for and installing updates (`flippy/updates.py`, `check_for_update` / `install_update`
+in `flippy/daemon.py`) is shared and already works on Linux: `flippy-ask update` checks,
+`flippy-ask update install` installs, and the daily check logs "update available". The one
+missing piece is the card: give the Linux `Platform` a `show_update(rel, install, later)`
+(the same overlay-drawn card as the help-mode nudge, with Install / Later / What's new).
+`restart()` is already there.

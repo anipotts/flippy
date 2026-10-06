@@ -243,6 +243,15 @@ class Platform:
         ed.present()
         pointer_editor.demo_paint(ed, name, lambda n: on_saved(pointers.PREFIX + n))
 
+    def restart(self, full_install=False):
+        """Start a fresh daemon (through flippy-ask, after this one's gone) and quit."""
+        import os
+        import subprocess
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        cmd = f"sleep 1; '{root}/install.sh'; " if full_install else "sleep 1; "
+        subprocess.Popen(["/bin/sh", "-c", cmd + f"'{root}/bin/flippy-ask' start"], start_new_session=True)
+        self.quit()
+
     def quit(self):
         GLib.idle_add(self.app.quit)
 

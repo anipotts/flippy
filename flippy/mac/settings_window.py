@@ -13,7 +13,7 @@ from AppKit import (NSAlert, NSAlertFirstButtonReturn, NSApp, NSBackingStoreBuff
                     NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskTitled)
 from Foundation import NSMakeRect, NSObject
 
-from .. import pointers, settings, themes
+from .. import pointers, settings, themes, updates
 from . import hotkeys, pointer_editor
 from .cairoview import cairo_view
 from .system import appearance
@@ -106,7 +106,8 @@ class KeyRecorder:
 
 
 class SettingsWindow:
-    def __init__(self, on_preview, on_reset, on_close):
+    def __init__(self, on_preview, on_reset, on_close, command=lambda cmd: None):
+        self.command = command
         self.keep = []
         self.thumbs = []
         self.recorders = []
@@ -247,6 +248,10 @@ class SettingsWindow:
               self._setting_popup(f, "claude", "image", IMAGES))
         f.group("Session")
         f.row("Start fresh session", "Forget the conversation so far", button("Reset", on_reset, f.keep))
+        f.group("Updates", f"You have Flippy {updates.current_version()}.")
+        f.row("Check for updates daily", "When a new version is out, Flippy offers to install it",
+              checkbox("", settings.get("updates", "check"), lambda on: settings.set("updates", "check", on), f.keep))
+        f.row("Check now", None, button("Check", lambda: self.command("update"), f.keep))
         return f
 
     def _timing(self, on_preview):

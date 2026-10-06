@@ -64,12 +64,8 @@ def ask_screen():
 
 def restart():
     """macOS applies Screen Recording only to newly started processes."""
-    if APP:
-        subprocess.Popen(["/bin/sh", "-c", f"sleep 1; open '{APP}'"], start_new_session=True)
-    else:
-        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        subprocess.Popen(["/bin/sh", "-c", f"sleep 1; '{root}/bin/flippy-ask' start"], start_new_session=True)
-    NSApp.terminate_(None)
+    from . import ui
+    ui.PLATFORM.restart()
 
 
 def login_item_on():

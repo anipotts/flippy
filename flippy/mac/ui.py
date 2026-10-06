@@ -68,6 +68,7 @@ def _glass_view(radius, tint):
     v.setCornerRadius_(radius)
     v.setHidden_(True)
     return v
+PLATFORM = None             # the running Platform (for windows that need it, like setup's Restart)
 ESC_HOTKEY = 4              # hotkey id for Esc while drawing (1-2: ask/draw)
 HIDE_SETTLE_MS = 150        # let the window server drop the question box before the screenshot
 FRAME_MS = 16
@@ -513,7 +514,7 @@ MENU = [("Ask about the screen", "ask", "ask"), ("Circle and ask", "draw", "draw
         ("Help when I'm stuck", "help-toggle", None), ("Tips while I work", "tips-toggle", None),
         ("Watch this app", "watch-front", None), ("Set a goal…", "goal-front", None), None,
         ("Preview the look", "preview", None), ("Settings…", "settings", None), ("New session", "reset", None),
-        None, ("Setup…", "setup", None), ("Quit Flippy", "quit", None)]
+        None, ("Check for updates…", "update", None), ("Setup…", "setup", None), ("Quit Flippy", "quit", None)]
 
 
 # --------------------------------------------------------------------------- platform
@@ -708,7 +709,8 @@ class Platform:
     def open_settings(self, on_preview, on_reset):
         from .settings_window import SettingsWindow  # local: only built when asked for
         if self.settings_win is None:
-            self.settings_win = SettingsWindow(on_preview, on_reset, lambda: setattr(self, "settings_win", None))
+            self.settings_win = SettingsWindow(on_preview, on_reset, lambda: setattr(self, "settings_win", None),
+                                               command=self.command)
         self.settings_win.present()
 
     def demo_pointer(self, name, on_saved):
@@ -791,6 +793,26 @@ class Platform:
     def press_nudge(self, title):
         return self.nudge.press(title)
 
+    def restart(self, full_install=False):
+        """Start a fresh Flippy and quit this one. full_install: rerun ./install.sh first (the app launcher changed)."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        app = os.environ.get("FLIPPY_APP")
+        if full_install:
+            cmd = f"sleep 1; '{root}/install.sh' >> ~/Library/Logs/flippy.log 2>&1"
+        elif app:
+            cmd = f"sleep 1; open '{app}'"
+        else:
+            cmd = f"sleep 1; '{root}/bin/flippy-ask' start"
+        subprocess.Popen(["/bin/sh", "-c", cmd], start_new_session=True)
+        self.quit()
+
+    def show_update(self, rel, install, later):
+        notes = next((ln.strip("-*# ").strip() for ln in rel["notes"].splitlines() if ln.strip("-*# ").strip()),
+                     "A new version is ready.")
+        self.nudge.card(f"Flippy {rel['version']} is out", notes,
+                        [("What's new", lambda: subprocess.Popen(["open", rel["url"]])), ("Later", later),
+                         ("Install", install)])
+
     def quit(self):
         self.stop_recording()
         AppHelper.callAfter(NSApp.terminate_, None)
@@ -824,7 +846,8 @@ def run(make_app):
         return
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)  # no Dock icon
-    platform = Platform()
+    global PLATFORM
+    platform = PLATFORM = Platform()
     flippy = make_app(platform)
     platform.flippy = flippy
     platform.start(flippy.command)

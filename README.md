@@ -65,6 +65,12 @@ If you installed gtk4-layer-shell somewhere other than `~/.local`, set `FLIPPY_L
 
 Single monitor only for now, on both platforms.
 
+## Updates
+
+Flippy checks GitHub for a new release once a day. When one is out, macOS shows a card (**Install / Later / What's new**); **Install** updates your copy and restarts Flippy. Check any time from the menu bar (**Check for updates…**) or with `flippy-ask update`; `flippy-ask update install` installs without asking, and `flippy-ask version` shows what you have. Turn the daily check off with `updates.check = false`. If you've edited Flippy's files yourself, it won't overwrite them: update with `git pull` instead.
+
+Releasing (for maintainers): `scripts/release.sh 0.3 "what changed"` bumps `VERSION`, tags, pushes and publishes the GitHub Release.
+
 ## Usage
 
 Press the ask hotkey (`⇧⌘Space` on macOS, `Super+Shift+Space` on COSMIC), type, hit Enter. `Esc` closes the box; answers fade on their own (or `flippy-ask dismiss`). Type `/new` for a fresh session or `/settings` for the settings window.
@@ -136,6 +142,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `help.mode` | `off`, `quiet` (offer a hand when stuck), `tips` (that, plus cached tips) |
 | `help.apps`, `help.muted` | comma-separated app ids (macOS bundle ids, e.g. `com.ableton.live`) |
 | `automation.clicks` | `false` (default) or `true`: lets `flippy-ask click <x> <y> [double]` click on screen (macOS, needs the Accessibility permission). When on, any program running as you can make Flippy click; Claude's answers never do. |
+| `updates.check` | `true` (default): look for a new release once a day |
 | `keys.pause` | `double-cmd` (default), `double-option`, `double-ctrl`, `double-shift` or `off`: pause/resume a walkthrough (macOS, needs the Accessibility permission) |
 | `keys.ask`, `keys.draw` | macOS hotkeys, e.g. `cmd+shift+space` (modifiers: `cmd`, `ctrl`, `option`, `shift`) |
 

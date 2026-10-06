@@ -48,13 +48,14 @@ mkdir -p "$STAGE/MacOS" "$STAGE/Resources"
 swiftc -O -o "$STAGE/MacOS/Flippy" "$ROOT/packaging/macos/Launcher.swift"
 "$ROOT/.venv/bin/python" "$ROOT/packaging/macos/make_icon.py" "$STAGE/Resources/Flippy.icns"
 "$ROOT/.venv/bin/python" - "$STAGE/Info.plist" "$ROOT" <<'PY'
-import plistlib, sys
+import os, plistlib, sys
 out, root = sys.argv[1], sys.argv[2]
+version = open(os.path.join(root, "VERSION")).read().strip()
 with open(out, "wb") as f:
     plistlib.dump({
         "CFBundleName": "Flippy", "CFBundleDisplayName": "Flippy", "CFBundleIdentifier": "dev.flippy.app",
         "CFBundleExecutable": "Flippy", "CFBundleIconFile": "Flippy", "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.2", "CFBundleVersion": "2", "LSMinimumSystemVersion": "13.0",
+        "CFBundleShortVersionString": version, "CFBundleVersion": version, "LSMinimumSystemVersion": "13.0",
         "LSUIElement": True,  # menu bar app: no Dock icon
         "NSHighResolutionCapable": True,
         "NSScreenCaptureUsageDescription": "Flippy sends a screenshot with each question so Claude can see what you mean.",
