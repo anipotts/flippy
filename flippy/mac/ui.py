@@ -155,13 +155,23 @@ class Overlay(OverlayBase):
         p.setReleasedWhenClosed_(False)
         bounds = NSMakeRect(0, 0, frame.size.width, frame.size.height)
         root = FlippedView.alloc().initWithFrame_(bounds)
-        self.glass = self.lens = None
+        self.glass = self.lens = self.hand = None
         self.glass_theme = None
         if GLASS:  # Liquid Glass behind the card (Theme.backdrop) and the glass pointer; cairo paints on top
             self.glass = _glass_view(20, glass_tint("card"))
             self.lens = _glass_view(20, glass_color(LENS["frost"], LENS["smoke"]))
             root.addSubview_(self.glass)
             root.addSubview_(self.lens)
+            # the glass hand: rounded pieces in a container, which fuses nearby glass into one shape
+            self.hand = AppKit.NSGlassEffectContainerView.alloc().initWithFrame_(bounds)
+            self.hand.setSpacing_(6)
+            hand_view = FlippedView.alloc().initWithFrame_(bounds)
+            self.hand_pieces = [_glass_view(4, glass_color(LENS["frost"], LENS["smoke"])) for _ in themes.GLASS_HAND]
+            for piece in self.hand_pieces:
+                hand_view.addSubview_(piece)
+            self.hand.setContentView_(hand_view)
+            self.hand.setHidden_(True)
+            root.addSubview_(self.hand)
         self.view = OverlayView.alloc().initWithFrame_(bounds)
         self.view.owner = self
         root.addSubview_(self.view)
@@ -199,6 +209,15 @@ class Overlay(OverlayBase):
             _show(self.glass, True)
         else:
             _show(self.glass, False)
+        pieces = self.pointer_hand(self.size()[1])
+        if pieces:
+            for view, (px, py, w, h, r, rot) in zip(self.hand_pieces, pieces):
+                view.setFrameCenterRotation_(0)
+                view.setFrame_(NSMakeRect(px, py, w, h))
+                view.setCornerRadius_(r)
+                view.setFrameCenterRotation_(rot)  # in a flipped parent this turns the same way as cairo
+                _show(view, True)
+        _show(self.hand, bool(pieces))
         lens = self.pointer_lens()
         if lens:
             cx, cy, r = lens

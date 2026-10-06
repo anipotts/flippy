@@ -246,6 +246,8 @@ def pointer_extent(style, size):
     if style == "glass":
         r = 26 * size
         return r, r, r, r
+    if style == "glasshand":
+        return 26 * size, 18 * size, 48 * size, 48 * size
     r = 26 * size
     return r, r, r, r
 
@@ -299,6 +301,92 @@ def _draw_lens(cr, theme, x, y, t, size, backdrop):
     cr.fill()
 
 
+# The Liquid Glass hand: rounded pieces that a glass container fuses into one shape.
+# (x, y, w, h, corner radius, rotation in degrees), in px at size 1, with the fingertip at (0, 0), pointing up.
+GLASS_HAND = [
+    (-5, 0, 10, 28, 5, 0),        # index finger
+    (-7, 18, 30, 26, 9, 0),       # palm
+    (5, 13, 8, 13, 4, 0),         # curled fingers: knuckles
+    (12, 15, 7, 12, 3.5, 0),
+    (18, 18, 6, 11, 3, 0),
+    (-15, 22, 8, 18, 4, -38),     # thumb, tilted out
+]
+
+
+def glass_hand(x, y, t, size, screen_h):
+    """Where the glass hand's pieces go: [(x, y, w, h, radius, rotation)] in screen px, tip on (x, y).
+    Drops in and bobs like the pixel hand, and flips to point down when there's no room below."""
+    intro = min(t / 0.3, 1.0)
+    drop = -40 * (1 - intro) ** 3
+    bob = 3 * math.sin(t * 4) if intro >= 1 else 0
+    flip = y + 46 * size + 4 > screen_h
+    out = []
+    for px, py, w, h, r, rot in GLASS_HAND:
+        if flip:  # mirror top-bottom around the tip
+            py, rot = -(py + h), -rot
+        oy = (-2 - drop - bob) if flip else (2 + drop + bob)
+        out.append((x + px * size, y + oy + py * size, w * size, h * size, r * size, rot))
+    return out
+
+
+def _piece_path(cr, px, py, w, h, r, rot):
+    cr.save()
+    cr.translate(px + w / 2, py + h / 2)
+    cr.rotate(math.radians(rot))
+    round_rect(cr, -w / 2, -h / 2, w, h, r)
+    cr.restore()
+
+
+def _union(cr, pieces, paint):
+    """Fill the pieces as one shape (no darker overlaps), then paint(cr) it from a group."""
+    cr.push_group()
+    for pc in pieces:
+        _piece_path(cr, *pc)
+    cr.set_source_rgba(0, 0, 0, 1)
+    cr.fill()
+    cr.pop_group_to_source()
+    paint(cr)
+
+
+def _draw_glass_hand(cr, theme, x, y, t, size, screen_h, backdrop):
+    pieces = glass_hand(x, y, t, size, screen_h)
+    cr.save()  # shadow
+    cr.translate(2, 3)
+    _union(cr, pieces, lambda c: c.paint_with_alpha(0.22))
+    cr.restore()
+    if not backdrop:  # no real glass: a milky body stands in
+        cr.push_group()
+        _union(cr, pieces, lambda c: c.paint())
+        cr.set_operator(cairo.OPERATOR_IN)
+        cr.set_source_rgba(1, 1, 1, 0.3)
+        cr.paint()
+        cr.pop_group_to_source()
+        cr.paint()
+    # rim: stroke every piece, then clear their insides, leaving the outline of the whole hand
+    top, bot = min(p[1] for p in pieces), max(p[1] + p[3] for p in pieces)
+    cr.push_group()
+    for pc in pieces:
+        _piece_path(cr, *pc)
+    cr.set_line_width(3)
+    g = cairo.LinearGradient(0, top, 0, bot)
+    g.add_color_stop_rgba(0, 1, 1, 1, 0.95)
+    g.add_color_stop_rgba(0.5, 1, 1, 1, 0.35)
+    g.add_color_stop_rgba(1, 1, 1, 1, 0.6)
+    cr.set_source(g)
+    cr.stroke()
+    cr.set_operator(cairo.OPERATOR_CLEAR)
+    for pc in pieces:
+        _piece_path(cr, *pc)
+    cr.fill()
+    cr.pop_group_to_source()
+    cr.paint()
+    fx, fy, fw, fh = pieces[0][:4]  # the exact spot: just inside the fingertip, whichever way it points
+    tip = fy + 4 * size if abs(fy - y) < abs(fy + fh - y) else fy + fh - 4 * size
+    cr.arc(x, tip, 2.2 * size, 0, 2 * math.pi)
+    cr.set_source_rgba(1, 1, 1, 0.95)
+    cr.fill()
+
+
 def draw_pointer(cr, theme, style, x, y, t, size, screen_h, backdrop=False):
     """Pointer with its hot spot at (x, y). t = seconds since it appeared.
     backdrop: the platform puts real glass under the "glass" pointer (see glass_lens)."""
@@ -314,6 +402,9 @@ def draw_pointer(cr, theme, style, x, y, t, size, screen_h, backdrop=False):
         style = theme.pointer  # missing/broken custom pointer: fall back to the theme's
     if style == "glass":
         _draw_lens(cr, theme, x, y, t, size, backdrop)
+        return
+    if style == "glasshand":
+        _draw_glass_hand(cr, theme, x, y, t, size, screen_h, backdrop)
         return
     if style in ("hand", "arrow"):
         cr.set_source_rgba(tr, tg, tb, 0.25 + 0.2 * pulse)  # tap ring at the exact spot

@@ -21,7 +21,7 @@ MODELS = [("default", "Account default"), ("opus", "Opus"), ("sonnet", "Sonnet")
 EFFORTS = [("low", "Low (fastest)"), ("medium", "Medium"), ("high", "High"), ("max", "Max (slowest)")]
 IMAGES = [(1366, "1366 px (lightest on usage)"), (1920, "1920 px (balanced)"), (0, "Full resolution (sharpest)")]
 POINTERS = [("theme", "Theme default"), ("hand", "Pixel hand"), ("arrow", "Pixel arrow"), ("ring", "Ring"), ("dot", "Dot"),
-            ("glass", "Liquid glass lens")]
+            ("glass", "Liquid glass lens"), ("glasshand", "Liquid glass hand")]
 PACES = [("slow", "Slow"), ("normal", "Normal"), ("fast", "Fast")]
 SHORTCUTS = os.path.expanduser("~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom")
 
