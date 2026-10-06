@@ -1,69 +1,54 @@
 # Flippy
 
-An AI tutor that sits on top of your Linux desktop. Press a hotkey, type a question about whatever's on screen, and Claude answers in a small card, with a pointer that flies to the exact button, menu or setting it's talking about.
+An AI tutor that sits on top of your desktop. Press a hotkey, type a question about whatever's on screen, and Claude answers in a small card, with a pointer that flies to the exact button, menu or setting it's talking about.
 
-Built for **COSMIC on Wayland** (Pop!_OS 24.04). Modeled on [farzaa/clicky](https://github.com/farzaa/clicky) (macOS), rewritten from scratch in Python + GTK4.
+Runs on **macOS** (13+, native AppKit) and on **Linux with COSMIC on Wayland** (Pop!_OS 24.04). Modeled on [farzaa/clicky](https://github.com/farzaa/clicky) (macOS), rewritten from scratch in Python.
 
 ## What it does
 
-- **Ask about your screen.** `Super+Shift+Space` opens a box; Flippy screenshots the screen, sends it to Claude with your question, and shows the answer next to a pointer on the thing it means.
+- **Ask about your screen.** A hotkey opens a box; Flippy screenshots the screen, sends it to Claude with your question, and shows the answer next to a pointer on the thing it means.
 - **Walkthroughs.** Multi-step answers play step by step: the pointer glides from point to point and the card follows. Pause, step back/forward, seek and change speed from the card.
-- **Circle and ask.** `Super+Alt` lets you draw on the screen to mark something, then ask about it ("what does this say?").
+- **Circle and ask.** A second hotkey lets you draw on the screen to mark something, then ask about it ("what does this say?").
 - **Follow-ups.** Questions share one session, so "and where's bluetooth?" works. `/new` starts fresh; sessions also reset after 15 idle minutes.
-- **Themes.** Midnight, Y2K Player, Glass, Terminal and Follow COSMIC.
+- **Themes.** Midnight, Y2K Player, Glass, Terminal, and one that follows your system's accent color (macOS or COSMIC).
 - **Custom pointers.** Built-in hand, ring, arrow and dot, or draw your own in the 20×24 pixel editor, or import an image and pick its tip.
-- **Settings window** for model, effort, theme, pointer, sizes and timing.
+- **Settings window** for model, effort, theme, pointer, sizes, timing and (on macOS) hotkeys.
 
 Claude only answers: it gets no tools and can't touch your files. It runs on your **Claude Pro/Max subscription** through the Claude Agent SDK, not on API credits.
 
-## Requirements
-
-- COSMIC desktop on Wayland (uses `wlr-layer-shell` via gtk4-layer-shell and the xdg-desktop-portal screenshot API)
-- Python 3.11+
-- A Claude Pro or Max subscription, logged in to Claude Code
-- Single monitor (multi-monitor isn't supported yet)
-
 ## Install
-
-### 1. System packages
-
-```bash
-sudo apt install git python3-venv python3-gi python3-gi-cairo python3-cairo python3-dbus python3-pil \
-    gir1.2-gtk-4.0 gir1.2-adw-1 \
-    meson ninja-build libgtk-4-dev libwayland-dev gobject-introspection libgirepository1.0-dev
-```
-
-### 2. Build gtk4-layer-shell
-
-It isn't packaged for Ubuntu/Pop!_OS 24.04, so build it into `~/.local`:
-
-```bash
-git clone --branch v1.3.0 https://github.com/wmww/gtk4-layer-shell ~/.local/src/gtk4-layer-shell
-cd ~/.local/src/gtk4-layer-shell
-meson setup build --prefix ~/.local -Dexamples=false -Ddocs=false -Dtests=false -Dvapi=false
-ninja -C build install
-```
-
-This puts the library in `~/.local/lib/x86_64-linux-gnu`, which `bin/flippy-daemon` preloads. If you install it somewhere else, set `FLIPPY_LAYER_SHELL_LIB` to that directory.
-
-### 3. Get Flippy
 
 ```bash
 git clone https://github.com/kap-il/flippy ~/Projects/flippy
 cd ~/Projects/flippy
-python3 -m venv --system-site-packages .venv   # system site-packages for PyGObject/GTK
-.venv/bin/pip install claude-agent-sdk
-mkdir -p ~/.local/bin
-ln -s "$PWD/bin/flippy-ask" "$PWD/bin/flippy-daemon" ~/.local/bin/
+./install.sh
 ```
 
-### 4. Log in to Claude
+The installer picks the right steps for your OS. Re-run it any time to update.
 
-Flippy uses your Claude Code login. If you haven't already, run `claude` once and log in with your Pro/Max account. Don't set `ANTHROPIC_API_KEY`, or it would bill the API instead (the launcher unsets it to be safe).
+### macOS
 
-### 5. Add the hotkeys
+Needs [Homebrew](https://brew.sh) (for cairo) and the Xcode Command Line Tools (the installer offers them if missing).
 
-COSMIC Settings → Keyboard → Keyboard shortcuts → Custom shortcuts:
+`./install.sh` sets up the Python environment, builds **`~/Applications/Flippy.app`** and starts it. Flippy lives in the menu bar (the pointer icon); there's no Dock icon. On first launch a setup window walks you through:
+
+1. **Logging in to Claude** with your Pro/Max account (it opens Terminal running Claude Code; type `/login`).
+2. **Screen Recording permission**, so Flippy can see your screen. macOS only applies it after a restart; the setup window has a button for that.
+3. **Hotkeys:** `⇧⌘Space` asks, `⌃⇧Space` circles. Change them in Settings → Hotkeys.
+4. Optionally, **open at login**.
+
+Reopen the setup any time from the menu bar icon → Setup…
+
+Flippy.app is signed ad hoc (not notarized), so rebuilding it can make macOS ask for Screen Recording again.
+
+### Linux (COSMIC)
+
+Needs COSMIC on Wayland (it uses `wlr-layer-shell` through gtk4-layer-shell and the xdg-desktop-portal screenshot API) and Python 3.11+.
+
+`./install.sh` installs the apt packages, builds gtk4-layer-shell into `~/.local` (it isn't packaged for Ubuntu/Pop!_OS 24.04), sets up the Python environment and links `flippy-ask` and `flippy-daemon` into `~/.local/bin`. Then:
+
+1. **Log in to Claude:** run `claude` once and log in with your Pro/Max account. Don't set `ANTHROPIC_API_KEY`, or it would bill the API instead (the launcher unsets it to be safe).
+2. **Add the hotkeys** in COSMIC Settings → Keyboard → Keyboard shortcuts → Custom shortcuts:
 
 | Shortcut | Command |
 |---|---|
@@ -72,11 +57,15 @@ COSMIC Settings → Keyboard → Keyboard shortcuts → Custom shortcuts:
 
 Use the full path; custom shortcuts don't always see `~/.local/bin` on `PATH`. The daemon starts itself on the first press, so there's no autostart to set up.
 
+If you installed gtk4-layer-shell somewhere other than `~/.local`, set `FLIPPY_LAYER_SHELL_LIB` to its library directory.
+
+Single monitor only for now, on both platforms.
+
 ## Usage
 
-Press `Super+Shift+Space`, type, hit Enter. `Esc` closes the box; answers fade on their own (or `flippy-ask dismiss`). Type `/new` for a fresh session or `/settings` for the settings window.
+Press the ask hotkey (`⇧⌘Space` on macOS, `Super+Shift+Space` on COSMIC), type, hit Enter. `Esc` closes the box; answers fade on their own (or `flippy-ask dismiss`). Type `/new` for a fresh session or `/settings` for the settings window.
 
-For draw mode, press `Super+Alt`, drag to circle something, release, then type your question. Right-click, the hotkey again, or 60 s of nothing cancels it.
+For draw mode, press the draw hotkey (`⌃⇧Space` / `Super+Alt`), drag to circle something, release, then type your question. Right-click, the hotkey again, or 60 s of nothing cancels it.
 
 Everything is also scriptable through `flippy-ask`:
 
@@ -87,6 +76,7 @@ flippy-ask q <question>     ask without the box
 flippy-ask dismiss          hide the current answer
 flippy-ask reset            start a fresh Claude session
 flippy-ask settings         open the settings window
+flippy-ask setup            macOS: open the first-run setup window
 flippy-ask preview          play a sample walkthrough with the current look
 flippy-ask set look.theme y2k
 flippy-ask quit             stop the daemon
@@ -107,6 +97,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `timing.show_seconds`, `timing.max_show_seconds` | how long answers stay up |
 | `timing.step_pace` | `slow`, `normal`, `fast` |
 | `timing.speed` | walkthrough playback speed, `0.5`–`2.0` |
+| `keys.ask`, `keys.draw` | macOS hotkeys, e.g. `cmd+shift+space` (modifiers: `cmd`, `ctrl`, `option`, `shift`) |
 
 Custom pointers are stored in `~/.config/flippy/pointers/`.
 
@@ -114,15 +105,28 @@ Every question sends a screenshot, which uses your subscription limits faster th
 
 ## Troubleshooting
 
-- **Logs:** `~/.local/state/flippy.log`.
-- **Nothing happens on the hotkey:** run `~/.local/bin/flippy-ask` in a terminal to see the error. "daemon didn't start" usually means gtk4-layer-shell isn't where `bin/flippy-daemon` looks (see `FLIPPY_LAYER_SHELL_LIB`).
-- **Pointer lands in the wrong place:** Flippy assumes one monitor; scaled (HiDPI) displays are handled, multi-monitor setups aren't yet.
+- **Logs:** `~/Library/Logs/flippy.log` on macOS, `~/.local/state/flippy.log` on Linux.
+- **Nothing happens on the hotkey:** run `~/.local/bin/flippy-ask` in a terminal to see the error. On Linux, "daemon didn't start" usually means gtk4-layer-shell isn't where `bin/flippy-daemon` looks (see `FLIPPY_LAYER_SHELL_LIB`). On macOS, another app may already own the shortcut; the log says so, and Settings → Hotkeys can change it.
+- **macOS: answers say Flippy needs Screen Recording:** allow Flippy in System Settings → Privacy & Security → Screen & System Audio Recording, then restart it (menu bar icon → Setup… → Restart Flippy).
+- **Pointer lands in the wrong place:** Flippy assumes one monitor; scaled (HiDPI/Retina) displays are handled, multi-monitor setups aren't yet.
+
+## Uninstall (macOS)
+
+```bash
+flippy-ask quit
+rm -rf ~/Applications/Flippy.app ~/Library/LaunchAgents/dev.flippy.app.plist ~/.local/bin/flippy-ask
+rm -rf ~/.config/flippy   # settings and custom pointers, if you want them gone too
+```
 
 ## Project layout
 
 ```
-bin/        flippy-ask (CLI, talks to the daemon over $XDG_RUNTIME_DIR/flippy.sock), flippy-daemon (launcher)
-flippy/     daemon, Claude brain, portal screenshots, POINT-tag parsing, themes, settings, pointer editor
+install.sh  picks scripts/install_mac.sh or scripts/install_linux.sh
+bin/        flippy-ask (CLI, talks to the daemon over a Unix socket), flippy-daemon (launcher)
+flippy/     shared: daemon (controller), Claude brain, overlay painting, POINT-tag parsing, themes, settings
+flippy/linux/  GTK + gtk4-layer-shell windows, portal screenshots, settings window, pointer editor
+flippy/mac/    AppKit overlay and windows, screencapture, Carbon hotkeys, menu bar, first-run setup
+packaging/macos/  Flippy.app launcher (Swift) and icon
 spikes/     the original standalone experiments (overlay, screenshot, brain)
 scripts/    demo recording and video editing (record_reel.py, edit_reel.py, reel_music.py, Blender scene)
 ```
@@ -130,5 +134,5 @@ scripts/    demo recording and video editing (record_reel.py, edit_reel.py, reel
 ## Credits
 
 - Pointing protocol and prompt adapted from [farzaa/clicky](https://github.com/farzaa/clicky) (MIT).
-- [gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell) for the overlay.
+- [gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell) for the Linux overlay; [PyObjC](https://github.com/ronaldoussoren/pyobjc) for the macOS one.
 - [VT323](https://fonts.google.com/specimen/VT323) font (SIL Open Font License, see `flippy/fonts/OFL.txt`).

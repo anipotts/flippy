@@ -106,6 +106,8 @@ class Flippy:
             self.demo_pointer(cmd[len("demo-pointer"):].strip() or "Sunset")
         elif cmd == "settings":
             self.open_settings()
+        elif cmd == "setup" and hasattr(self.ui, "open_setup"):  # macOS first-run window
+            self.ui.open_setup()
         elif cmd == "preview":
             self.preview()
         elif cmd.startswith("control "):  # same as clicking a player button: control <name> [0-1 for seek/speed]

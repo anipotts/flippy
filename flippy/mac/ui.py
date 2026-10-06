@@ -361,12 +361,13 @@ class Screenshotter:
 
 class MenuTarget(NSObject):
     def act_(self, sender):
-        self.command(str(sender.representedObject()))
+        cmd = str(sender.representedObject())
+        self.platform.open_setup() if cmd == "setup" else self.platform.command(cmd)
 
 
 MENU = [("Ask about the screen", "ask", "ask"), ("Circle and ask", "draw", "draw"), None,
         ("Preview the look", "preview", None), ("Settings…", "settings", None), ("New session", "reset", None),
-        None, ("Quit Flippy", "quit", None)]
+        None, ("Setup…", "setup", None), ("Quit Flippy", "quit", None)]
 
 
 # --------------------------------------------------------------------------- platform
@@ -378,6 +379,7 @@ class Platform:
         self.overlay = Overlay()
         self.screenshotter = Screenshotter()
         self.settings_win = None
+        self.setup_win = None
         self.command = lambda cmd: "not ready"
 
     def input_box(self, on_submit, on_cancel):
@@ -392,6 +394,15 @@ class Platform:
         self._bind_keys()
         settings.on_change(lambda section, key, value: section == "keys" and self._bind_keys())
         self._menu_bar()
+        from .setup_window import needs_setup
+        if needs_setup():
+            loop.timeout_add(300, lambda: self.open_setup())
+
+    def open_setup(self):
+        from .setup_window import SetupWindow
+        if self.setup_win is None:
+            self.setup_win = SetupWindow(lambda: self.command("settings"), lambda: setattr(self, "setup_win", None))
+        self.setup_win.present()
 
     def _bind_keys(self):
         for hid, name in ((1, "ask"), (2, "draw")):
@@ -406,7 +417,7 @@ class Platform:
         img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("cursorarrow.rays", "Flippy")
         self.status.button().setImage_(img)
         self.target = MenuTarget.alloc().init()
-        self.target.command = self.command
+        self.target.platform = self
         menu = NSMenu.alloc().init()
         self.menu_items = {}
         for entry in MENU:
@@ -497,8 +508,25 @@ class Platform:
         return main_screen().backingScaleFactor()
 
 
+def _already_running(sock_path):
+    """Opening Flippy.app again while it runs: show the settings there instead of starting twice."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(2)
+            s.connect(sock_path)
+            s.sendall(b"settings\n")
+            s.recv(64)
+        return True
+    except OSError:
+        return False
+
+
 def run(make_app):
     """Start Cocoa and call make_app(platform) once it's up."""
+    from ..daemon import SOCK_PATH
+    if _already_running(SOCK_PATH):
+        print("flippy: already running; opened its settings", flush=True)
+        return
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)  # no Dock icon
     platform = Platform()

@@ -1,0 +1,7 @@
+# macOS (installed by scripts/install_mac.sh). pycairo builds against Homebrew's cairo.
+claude-agent-sdk
+pillow
+pycairo
+pyobjc-framework-Cocoa
+pyobjc-framework-CoreText
+pyobjc-framework-Quartz

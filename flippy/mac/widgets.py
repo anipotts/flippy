@@ -131,19 +131,23 @@ class Form:
             self.y += d.frame().size.height + 2
         self.y += 6
 
-    def row(self, title, subtitle=None, control=None):
-        left_w = self.width - 2 * self.pad - (control.frame().size.width + 12 if control else 0)
-        t = label(title, 13)
+    def row(self, title, subtitle=None, control=None, mark=None):
+        """mark: an optional small view (e.g. a status tick) to the left of the title."""
+        indent = 28 if mark is not None else 0
+        left_w = self.width - 2 * self.pad - indent - (control.frame().size.width + 16 if control else 0)
+        t = label(title, 13, wrap_width=max(left_w, 120))  # wraps rather than running under the control
         h = t.frame().size.height
         s = None
         if subtitle:
             s = label(subtitle, 11, color=NSColor.secondaryLabelColor(), wrap_width=max(left_w, 120))
-            h += s.frame().size.height + 1
+            h += s.frame().size.height + 2
         row_h = max(h, control.frame().size.height if control else 0) + 12
         top = self.y + (row_h - h) / 2
-        self._place(t, self.pad, top)
+        if mark is not None:
+            self._place(mark, self.pad, top - 3)
+        self._place(t, self.pad + indent, top)
         if s:
-            self._place(s, self.pad, top + t.frame().size.height + 1)
+            self._place(s, self.pad + indent, top + t.frame().size.height + 2)
         if control:
             cw, ch = control.frame().size.width, control.frame().size.height
             self._place(control, self.width - self.pad - cw, self.y + (row_h - ch) / 2)
