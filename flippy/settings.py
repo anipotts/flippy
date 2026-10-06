@@ -44,6 +44,7 @@ DEFAULTS = {
     "keys": {                   # global hotkeys (macOS; on COSMIC they're set in COSMIC Settings)
         "ask": "cmd+shift+space",
         "draw": "ctrl+shift+space",
+        "pause": "double-cmd",  # pause/resume the walkthrough: double-cmd | double-option | double-ctrl | double-shift | off
     },
 }
 
@@ -57,6 +58,7 @@ CHOICES = {
     ("look", "player_shine"): ["wmp", "none"],
     ("timing", "step_pace"): ["slow", "normal", "fast"],
     ("help", "mode"): ["off", "quiet", "tips"],
+    ("keys", "pause"): ["double-cmd", "double-option", "double-ctrl", "double-shift", "off"],
 }
 
 VERSION = 2  # the config file's format; older files are migrated on load (see _migrate)

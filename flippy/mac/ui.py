@@ -519,6 +519,7 @@ class Platform:
         self.settings_win = None
         self.setup_win = None
         self.nudge = Nudge()
+        self.double_tap = hotkeys.DoubleTap()
         self.command = lambda cmd: "not ready"
 
     def input_box(self, on_submit, on_cancel):
@@ -548,6 +549,11 @@ class Platform:
             err = hotkeys.register(hid, settings.get("keys", name), lambda n=name: self.command(n))
             if err:
                 print(f"flippy: hotkey for {name}: {err}", flush=True)
+        pause = settings.get("keys", "pause")
+        err = self.double_tap.set(None if pause == "off" else pause[len("double-"):],
+                                  lambda: self.command("pause-toggle"))
+        if err:
+            print(f"flippy: pause shortcut: {err}", flush=True)
         if getattr(self, "menu_items", None):
             self._label_menu()
 

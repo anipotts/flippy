@@ -35,7 +35,7 @@ Needs [Homebrew](https://brew.sh) (for cairo) and the Xcode Command Line Tools (
 
 1. **Logging in to Claude** with your Pro/Max account (it opens Terminal running Claude Code; type `/login`).
 2. **Screen Recording permission**, so Flippy can see your screen. macOS only applies it after a restart; the setup window has a button for that.
-3. **Hotkeys:** `⇧⌘Space` asks, `⌃⇧Space` circles. Change them in Settings → Hotkeys.
+3. **Hotkeys:** `⇧⌘Space` asks, `⌃⇧Space` circles, and double-tapping `⌘` pauses or resumes a walkthrough. Change them in Settings → Hotkeys.
 4. Optionally, **open at login**.
 
 Reopen the setup any time from the menu bar icon → Setup…
@@ -75,6 +75,7 @@ flippy-ask                  open the question box (same as the hotkey)
 flippy-ask draw             draw mode
 flippy-ask q <question>     ask without the box
 flippy-ask dismiss          hide the current answer
+flippy-ask pause-toggle     pause or resume the walkthrough on screen
 flippy-ask reset            start a fresh Claude session
 flippy-ask settings         open the settings window
 flippy-ask setup            macOS: open the first-run setup window
@@ -132,6 +133,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `help.mode` | `off`, `quiet` (offer a hand when stuck), `tips` (that, plus cached tips) |
 | `help.apps`, `help.muted` | comma-separated app ids (macOS bundle ids, e.g. `com.ableton.live`) |
 | `automation.clicks` | `false` (default) or `true`: lets `flippy-ask click <x> <y> [double]` click on screen (macOS, needs the Accessibility permission). When on, any program running as you can make Flippy click; Claude's answers never do. |
+| `keys.pause` | `double-cmd` (default), `double-option`, `double-ctrl`, `double-shift` or `off`: pause/resume a walkthrough (macOS, needs the Accessibility permission) |
 | `keys.ask`, `keys.draw` | macOS hotkeys, e.g. `cmd+shift+space` (modifiers: `cmd`, `ctrl`, `option`, `shift`) |
 
 Custom pointers are stored in `~/.config/flippy/pointers/`.

@@ -143,6 +143,8 @@ class Flippy:
             self.reset_session()
         elif cmd == "quit":
             self.ui.quit()
+        elif cmd == "pause-toggle":  # pause/resume the walkthrough on screen (the double-tap shortcut)
+            self.pause_toggle()
         elif cmd == "ping":
             return "pong"
         elif cmd.startswith("help-mode "):  # help-mode off|quiet
@@ -517,6 +519,15 @@ class Flippy:
             self._goto(step + 1)
         elif name == "seek":
             self._goto(min(int(frac * len(known)), len(known) - 1))
+
+    def pause_toggle(self):
+        """Pause or resume the answer playing on screen; nothing if there isn't one (or it already finished)."""
+        pl = self.play
+        if pl is None or pl["finished"]:
+            return
+        event("control", control="pause" if not pl["paused"] else "play")
+        self.overlay.pressed = ("pause" if not pl["paused"] else "play", time.monotonic())
+        self._set_paused(not pl["paused"])
 
     def _set_paused(self, paused):
         pl = self.play

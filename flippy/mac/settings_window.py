@@ -27,6 +27,8 @@ POINTERS = [("theme", "Theme default"), ("hand", "Pixel hand"), ("arrow", "Pixel
 PACES = [("slow", "Slow"), ("normal", "Normal"), ("fast", "Fast")]
 CONTROLS = [("all", "On every theme"), ("players", "Only Media Player and Y2K")]
 SHINES = [("wmp", "WMP gloss"), ("none", "Plain glass")]
+PAUSE_KEYS = [("double-cmd", "⌘ ⌘  (double-tap)"), ("double-option", "⌥ ⌥  (double-tap)"),
+              ("double-ctrl", "⌃ ⌃  (double-tap)"), ("double-shift", "⇧ ⇧  (double-tap)"), ("off", "Off")]
 WIDTH, HEIGHT = 640, 720
 THUMB_W, THUMB_H = 280, 150
 
@@ -274,6 +276,8 @@ class SettingsWindow:
             rec = KeyRecorder(name, f.keep)
             self.recorders.append(rec)
             f.row(what, None, rec.btn)
+        f.row("Pause / resume a walkthrough", "Double-tap a modifier key. Needs the Accessibility permission.",
+              self._setting_popup(f, "keys", "pause", PAUSE_KEYS, width=170))
         f.group("Automation", "Lets scripts click on screen with flippy-ask click (used for recording demos). "
                               "Off by default: when on, any program running as you can make Flippy click. "
                               "Claude's answers never click. Also needs the Accessibility permission.")

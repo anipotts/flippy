@@ -60,7 +60,12 @@ def parse(combo):
 
 
 def pretty(combo):
-    """'cmd+shift+space' -> '⇧⌘Space' (macOS menu order: ⌃⌥⇧⌘)."""
+    """'cmd+shift+space' -> '⇧⌘Space' (macOS menu order: ⌃⌥⇧⌘); 'double-cmd' -> '⌘ ⌘'."""
+    if combo.startswith("double-"):
+        sym = SYMBOLS.get(combo[len("double-"):], "?")
+        return f"{sym} {sym}"
+    if combo == "off":
+        return "Off"
     parts = [p.strip().lower() for p in combo.split("+")]
     order = "⌃⌥⇧⌘"
     mods = sorted({SYMBOLS.get(p, "") for p in parts[:-1]}, key=lambda s: order.find(s))
@@ -109,3 +114,82 @@ def unregister(hid):
     _callbacks.pop(hid, None)
     if ref:
         _carbon.UnregisterEventHotKey(ref)
+
+
+# ---- double-tap a modifier (e.g. ⌘ ⌘): global hotkeys can't be modifier-only, so watch flagsChanged.
+# Needs the Accessibility permission (macOS only lets trusted apps watch keys in other apps).
+TAP_KEYS = {"cmd": 1 << 20, "option": 1 << 19, "ctrl": 1 << 18, "shift": 1 << 17}
+TAP_MAX_S = 0.3          # a tap: down and up within this long...
+DOUBLE_GAP_S = 0.4       # ...twice, with the second starting this soon after the first
+
+
+def accessibility_trusted():
+    lib = ctypes.CDLL("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+    lib.AXIsProcessTrusted.restype = ctypes.c_bool
+    return bool(lib.AXIsProcessTrusted())
+
+
+class DoubleTap:
+    """fn() when `key` (cmd/option/ctrl/shift) is tapped twice on its own. Pressing anything else with it
+    (⌘C, ⌘Tab, a mouse click while held...) cancels, so shortcuts never trigger it."""
+
+    def __init__(self):
+        self.monitors = []
+        self.fn = None
+        self.bit = 0
+        self.down_at = None     # when the key went down alone
+        self.clean = False      # nothing else happened while it was down
+        self.last_tap = -1.0
+
+    def set(self, key, fn):
+        """key: one of TAP_KEYS, or None to turn it off. Returns an error string or None."""
+        self.stop()
+        if key is None:
+            return None
+        if key not in TAP_KEYS:
+            return f"can't double-tap {key!r}"
+        if not accessibility_trusted():
+            return "double-tap shortcuts need the Accessibility permission"
+        from AppKit import NSEvent, NSEventMaskFlagsChanged, NSEventMaskKeyDown, NSEventMaskLeftMouseDown
+        self.fn, self.bit = fn, TAP_KEYS[key]
+        mask = NSEventMaskFlagsChanged | NSEventMaskKeyDown | NSEventMaskLeftMouseDown
+
+        def local(event):
+            self._event(event)
+            return event
+        self.monitors = [NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(mask, self._event),
+                         NSEvent.addLocalMonitorForEventsMatchingMask_handler_(mask, local)]
+        return None
+
+    def stop(self):
+        from AppKit import NSEvent
+        for m in self.monitors:
+            NSEvent.removeMonitor_(m)
+        self.monitors = []
+
+    def _event(self, event):
+        import time
+        now = time.monotonic()
+        if event.type() != 12:  # not NSEventTypeFlagsChanged: a key or click happened
+            self.clean = False
+            return
+        flags = event.modifierFlags() & 0xFFFF0000
+        mods = flags & (TAP_KEYS["cmd"] | TAP_KEYS["option"] | TAP_KEYS["ctrl"] | TAP_KEYS["shift"])
+        if mods == self.bit:  # our key went down, alone
+            self.down_at, self.clean = now, True
+            return
+        if mods == 0 and self.down_at is not None:  # released
+            tap = self.clean and now - self.down_at <= TAP_MAX_S
+            self.down_at = None
+            if not tap:
+                self.last_tap = -1.0
+                return
+            if now - self.last_tap <= DOUBLE_GAP_S + TAP_MAX_S:
+                self.last_tap = -1.0
+                if self.fn:
+                    self.fn()
+            else:
+                self.last_tap = now
+            return
+        self.clean = False  # another modifier joined in: a chord, not a tap
+        self.down_at = None
