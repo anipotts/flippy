@@ -18,7 +18,7 @@ DEFAULTS = {
     },
     "look": {
         "theme": "midnight",    # see flippy/themes.py
-        "pointer": "theme",     # theme | hand | ring | arrow | dot
+        "pointer": "theme",     # theme | hand | ring | arrow | dot | glass
         "pointer_size": 1.0,    # multiplier
         "text_size": 15,        # px, answer text
         "card_opacity": 0.94,
@@ -42,8 +42,8 @@ CHOICES = {
     ("claude", "model"): ["default", "opus", "sonnet", "haiku"],
     ("claude", "effort"): ["low", "medium", "high", "max"],
     ("claude", "image"): [1366, 1920, 0],
-    ("look", "theme"): ["midnight", "y2k", "glass", "terminal", "cosmic"],  # keep in sync with themes.THEMES
-    ("look", "pointer"): ["theme", "hand", "ring", "arrow", "dot"],
+    ("look", "theme"): ["midnight", "y2k", "glass", "nowplaying", "terminal", "cosmic"],  # keep in sync with themes.THEMES
+    ("look", "pointer"): ["theme", "hand", "ring", "arrow", "dot", "glass"],
     ("look", "controls"): ["all", "players"],
     ("look", "glass_shine"): ["wmp", "none"],
     ("timing", "step_pace"): ["slow", "normal", "fast"],

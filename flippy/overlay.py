@@ -203,7 +203,7 @@ class OverlayBase:
         now = time.monotonic()
         if self.target and self.pos:
             themes.draw_pointer(cr, theme, self.pointer_style(), *self.pos, now - self.t0,
-                                settings.get("look", "pointer_size"), h)
+                                settings.get("look", "pointer_size"), h, backdrop=self.has_backdrop)
         hits = {}
         lay = self.card_layout(w, h)
         if lay:
@@ -212,6 +212,12 @@ class OverlayBase:
             hits = theme.hit_regions(self.card, x, y, cw, ch, opts)
         self.hits = hits
         self.hits_changed()
+
+    def pointer_lens(self):
+        """(cx, cy, r) of the Liquid Glass pointer when it's showing and the platform has real glass, else None."""
+        if not (self.has_backdrop and self.target and self.pos and self.pointer_style() == "glass"):
+            return None
+        return themes.glass_lens(*self.pos, time.monotonic() - self.t0, settings.get("look", "pointer_size"))
 
     def card_layout(self, w, h):
         """((x, y, w, h), theme opts) of the card on a w x h screen, or None when there's no card."""

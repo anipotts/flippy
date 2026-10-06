@@ -243,12 +243,65 @@ def pointer_extent(style, size):
         return (len(HAND[0]) - HAND_TIP_COL) * px, HAND_TIP_COL * px, len(HAND) * px, len(HAND) * px
     if style == "arrow":
         return len(ARROW[0]) * px, 0, len(ARROW) * px, 0
+    if style == "glass":
+        r = 26 * size
+        return r, r, r, r
     r = 26 * size
     return r, r, r, r
 
 
-def draw_pointer(cr, theme, style, x, y, t, size, screen_h):
-    """Pointer with its hot spot at (x, y). t = seconds since it appeared."""
+def glass_lens(x, y, t, size):
+    """The Liquid Glass pointer: a lens centered on the target. (cx, cy, radius), animated: it drops in and breathes."""
+    intro = min(t / 0.3, 1.0)
+    drop = -40 * (1 - intro) ** 3
+    breathe = 1 + 0.05 * math.sin(t * 4) if intro >= 1 else 1
+    return x, y + drop, 22 * size * breathe
+
+
+def _draw_lens(cr, theme, x, y, t, size, backdrop):
+    """Light on the lens: shadow, rim, specular arcs, and a precise dot at the tip.
+    With a backdrop (macOS) the real glass sits underneath; without, a faint fill stands in for it."""
+    cx, cy, r = glass_lens(x, y, t, size)
+    for k, a in ((1.35, 0.06), (1.2, 0.1), (1.08, 0.14)):  # soft shadow under the lens
+        cr.arc(cx + 1, cy + 3, r * k, 0, 2 * math.pi)
+        cr.set_source_rgba(0, 0, 0, a)
+        cr.fill()
+    if not backdrop:
+        g = cairo.RadialGradient(cx - r * 0.3, cy - r * 0.4, 0, cx, cy, r)
+        g.add_color_stop_rgba(0, 1, 1, 1, 0.35)
+        g.add_color_stop_rgba(1, 0.6, 0.7, 0.8, 0.18)
+        cr.arc(cx, cy, r, 0, 2 * math.pi)
+        cr.set_source(g)
+        cr.fill()
+    cr.arc(cx, cy, r - 0.75, 0, 2 * math.pi)  # rim: bright on top, dimmer below
+    g = cairo.LinearGradient(0, cy - r, 0, cy + r)
+    g.add_color_stop_rgba(0, 1, 1, 1, 0.9)
+    g.add_color_stop_rgba(0.55, 1, 1, 1, 0.22)
+    g.add_color_stop_rgba(1, 1, 1, 1, 0.5)
+    cr.set_source(g)
+    cr.set_line_width(1.5)
+    cr.stroke()
+    cr.set_line_cap(cairo.LINE_CAP_ROUND)
+    cr.arc(cx, cy, r * 0.78, math.radians(200), math.radians(255))  # specular glint, top left
+    cr.set_source_rgba(1, 1, 1, 0.75)
+    cr.set_line_width(2.2 * size)
+    cr.stroke()
+    cr.arc(cx, cy, r * 0.8, math.radians(20), math.radians(70))  # refraction glow, bottom right
+    cr.set_source_rgba(1, 1, 1, 0.28)
+    cr.set_line_width(1.6 * size)
+    cr.stroke()
+    cr.set_line_cap(cairo.LINE_CAP_BUTT)
+    cr.arc(x, cy, 3.2 * size, 0, 2 * math.pi)  # a precise dot at the exact spot
+    cr.set_source_rgba(0, 0, 0, 0.45)
+    cr.fill()
+    cr.arc(x, cy, 2.2 * size, 0, 2 * math.pi)
+    cr.set_source_rgba(1, 1, 1, 0.95)
+    cr.fill()
+
+
+def draw_pointer(cr, theme, style, x, y, t, size, screen_h, backdrop=False):
+    """Pointer with its hot spot at (x, y). t = seconds since it appeared.
+    backdrop: the platform puts real glass under the "glass" pointer (see glass_lens)."""
     intro = min(t / 0.3, 1.0)
     drop = -40 * (1 - intro) ** 3
     bob = 3 * math.sin(t * 4) if intro >= 1 else 0
@@ -259,6 +312,9 @@ def draw_pointer(cr, theme, style, x, y, t, size, screen_h):
         if pointers.draw(cr, style[len(pointers.PREFIX):], x, y, t, size, px, screen_h, theme.tap):
             return
         style = theme.pointer  # missing/broken custom pointer: fall back to the theme's
+    if style == "glass":
+        _draw_lens(cr, theme, x, y, t, size, backdrop)
+        return
     if style in ("hand", "arrow"):
         cr.set_source_rgba(tr, tg, tb, 0.25 + 0.2 * pulse)  # tap ring at the exact spot
         cr.arc(x, y, (10 + 4 * pulse) * size, 0, 2 * math.pi)
@@ -1336,7 +1392,151 @@ window.flippy-box entry:focus-within { outline: none; border-color: rgba(0,0,0,0
 window.flippy-box .flippy-hint { color: rgba(235,238,240,0.7); font-size: 12px; text-shadow: 0 1px 2px rgba(0,0,0,0.8); }"""
 
 
-THEMES = {th.key: th for th in (Midnight(), Y2K(), Glass(), Terminal(), Cosmic())}
+# ---- Now Playing (the iOS lock screen player in Liquid Glass) ------------------
+
+class NowPlaying(Theme):
+    """A rounded glass card: bold title, the answer, a thin progress bar, bare white transport glyphs,
+    and round glass buttons for speed and close. On macOS it floats on real Liquid Glass."""
+    key, name = "nowplaying", "Now Playing"
+    pointer = "glass"
+    accent = (0.92, 0.94, 1.0)
+    tap = (1.0, 1.0, 1.0)
+    pen = (0.35, 0.72, 1.0)
+    placeholder = "Ask about your screen"
+    font = "Noto Sans"
+    R, PAD, BAR_H, CTRL_H, BTN = 24, 18, 14, 46, 34
+    backdrop = {"radius": R, "frost": 0.06, "smoke": 0.32}
+
+    def _w(self, card):
+        return 360 if card.follow else 440
+
+    def _title(self, card):
+        return card.header or ("Connecting to Claude…" if card.phase == "thinking" else
+                               ("Something went wrong" if card.error else "Flippy"))
+
+    def _layouts(self, cr, card, opts):
+        w = self._w(card) - 2 * self.PAD
+        head = layout(cr, self._title(card), self.font, opts["text_size"], width=w, bold=True)
+        ellipsize_end(head)
+        body = layout(cr, card.text or " ", self.font, opts["text_size"] - 1, width=w)
+        return head, body
+
+    def size(self, card, opts):
+        head, body = self._layouts(_measure_ctx, card, opts)
+        h = self.PAD + lsize(head)[1] + 3 + lsize(body)[1] + 14 + self.BAR_H + 8 + self.CTRL_H + 12
+        return self._w(card), h
+
+    def _geom(self, x, y, w, h):
+        cy = y + h - 12 - self.CTRL_H / 2
+        by = cy - self.CTRL_H / 2 - 8 - self.BAR_H / 2
+        return {"cy": cy, "ox": x + w / 2, "by": by, "bx0": x + self.PAD + 46, "bx1": x + w - self.PAD - 46,
+                "speed": (x + self.PAD + self.BTN / 2, cy), "close": (x + w - self.PAD - self.BTN / 2, cy)}
+
+    def hit_regions(self, card, x, y, w, h, opts=None):
+        G = self._geom(x, y, w, h)
+        cy, ox, b = G["cy"], G["ox"], self.BTN
+        hits = {"prev": (ox - 78, cy - 20, 40, 40), "toggle": (ox - 22, cy - 22, 44, 44), "next": (ox + 38, cy - 20, 40, 40),
+                "seek": (G["bx0"] - 4, G["by"] - 8, G["bx1"] - G["bx0"] + 8, 16)}
+        for name in ("speed", "close"):
+            bx, by = G[name]
+            hits["speed_cycle" if name == "speed" else name] = (bx - b / 2, by - b / 2, b, b)
+        return hits
+
+    @staticmethod
+    def _glass_button(cr, cx, cy, d, pressed=False):
+        """A small round glass button, like the lock screen's flashlight/camera ones."""
+        r = d / 2
+        cr.arc(cx, cy, r, 0, 2 * math.pi)
+        cr.set_source_rgba(1, 1, 1, 0.22 if pressed else 0.10)
+        cr.fill()
+        cr.arc(cx, cy, r - 0.5, 0, 2 * math.pi)
+        g = cairo.LinearGradient(0, cy - r, 0, cy + r)
+        g.add_color_stop_rgba(0, 1, 1, 1, 0.55)
+        g.add_color_stop_rgba(0.6, 1, 1, 1, 0.12)
+        g.add_color_stop_rgba(1, 1, 1, 1, 0.3)
+        cr.set_source(g)
+        cr.set_line_width(1)
+        cr.stroke()
+        cr.arc(cx, cy, r * 0.72, math.radians(205), math.radians(250))  # glint
+        cr.set_source_rgba(1, 1, 1, 0.5)
+        cr.set_line_width(1.4)
+        cr.stroke()
+
+    def draw(self, cr, x, y, w, h, card, t, opts):
+        a = opts["card_opacity"]
+        R, P = self.R, self.PAD
+        pressed = opts.get("pressed")
+        if not opts.get("backdrop"):  # no real glass here: a dark, see-through card stands in
+            round_rect(cr, x, y, w, h, R)
+            g = cairo.LinearGradient(0, y, 0, y + h)
+            g.add_color_stop_rgba(0, 0.22, 0.23, 0.26, 0.78 * a)
+            g.add_color_stop_rgba(1, 0.10, 0.10, 0.12, 0.86 * a)
+            cr.set_source(g)
+            cr.fill()
+        # the glass edge: a thin bright line, brightest along the top
+        round_rect(cr, x + 0.5, y + 0.5, w - 1, h - 1, R)
+        g = cairo.LinearGradient(0, y, 0, y + h)
+        g.add_color_stop_rgba(0, 1, 1, 1, 0.55)
+        g.add_color_stop_rgba(0.3, 1, 1, 1, 0.16)
+        g.add_color_stop_rgba(1, 1, 1, 1, 0.24)
+        cr.set_source(g)
+        cr.set_line_width(1)
+        cr.stroke()
+
+        head, body = self._layouts(cr, card, opts)
+        ty = y + P
+        show(cr, head, x + P, ty, (1.0, 0.6, 0.56, 1) if card.error else (1, 1, 1, 0.96))
+        ty += lsize(head)[1] + 3
+        show(cr, body, x + P, ty, (1, 1, 1, 0.72))
+
+        G = self._geom(x, y, w, h)
+        n = max(len(card.steps), 1)
+        # progress: step counter, thin bar, steps left
+        by = G["by"]
+        left = "--" if card.phase == "thinking" else f"{card.step + 1} of {n}"
+        right = "" if card.phase == "thinking" else ("done" if card.finished else f"{n - card.step - 1} left")
+        for text, rx, align in ((left, x + P, 0), (right, x + w - P, 1)):
+            if text:
+                lay = layout(cr, text, self.font, 11)
+                lw, lh = lsize(lay)
+                show(cr, lay, rx - lw * align, by - lh / 2, (1, 1, 1, 0.6))
+        bx0, bx1 = G["bx0"], G["bx1"]
+        round_rect(cr, bx0, by - 2, bx1 - bx0, 4, 2)
+        cr.set_source_rgba(1, 1, 1, 0.22)
+        cr.fill()
+        prog = max(0.0, min(card.progress, 1.0))
+        if prog > 0:
+            round_rect(cr, bx0, by - 2, max((bx1 - bx0) * prog, 4), 4, 2)
+            cr.set_source_rgba(1, 1, 1, 0.92)
+            cr.fill()
+
+        # transport: bare white glyphs, like the lock screen
+        cy, ox = G["cy"], G["ox"]
+        thinking = card.phase == "thinking"
+        pulse = (0.5 + 0.5 * math.sin(t * 5)) if thinking else 0
+        for name, gx, sz in (("prev", ox - 58, 8), ("next", ox + 58, 8)):
+            glyph(cr, name, gx, cy, sz, (1, 1, 1, 1.0 if pressed == name else 0.85))
+        glyph(cr, "pause" if playing(card) else "play", ox, cy, 12,
+              (1, 1, 1, 0.55 + 0.45 * (1 - pulse) if thinking else (1.0 if pressed != "toggle" else 0.7)))
+        # round glass buttons: speed (left), close (right)
+        sx, sy = G["speed"]
+        self._glass_button(cr, sx, sy, self.BTN, pressed == "speed_cycle")
+        sl = layout(cr, f"{card.speed:g}×", self.font, 11, bold=True)
+        sw, sh = lsize(sl)
+        show(cr, sl, sx - sw / 2, sy - sh / 2, (1, 1, 1, 0.92))
+        cx_, cy_ = G["close"]
+        self._glass_button(cr, cx_, cy_, self.BTN, pressed == "close")
+        glyph(cr, "close", cx_, cy_, 5, (1, 1, 1, 0.9))
+
+    def box_css(self):
+        return """
+window.flippy-box .flippy-card { background: rgba(40,40,46,0.82); border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 24px; padding: 12px 16px; color: #ffffff; }
+window.flippy-box entry { font-size: 16px; border-radius: 12px; background: rgba(255,255,255,0.12); color: #fff; }
+window.flippy-box .flippy-hint { color: rgba(255,255,255,0.6); font-size: 12px; }"""
+
+
+THEMES = {th.key: th for th in (Midnight(), Y2K(), Glass(), NowPlaying(), Terminal(), Cosmic())}
 
 
 def get(key):

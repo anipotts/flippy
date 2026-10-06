@@ -44,11 +44,26 @@ FROST = {"box": 0.10, "field": 0.30, "card": 0.03}
 SMOKE = {"box": 0.25, "field": 0.40, "card": 0.25}
 
 
+LENS = {"frost": 0.04, "smoke": 0.06}  # the glass pointer: nearly clear
+
+
+def glass_color(frost, smoke):
+    """Frost over smoke as one tint: white at `frost` on top of black at `smoke`."""
+    a = frost + smoke * (1 - frost)
+    return NSColor.colorWithWhite_alpha_(frost / a if a else 0, a)
+
+
 def glass_tint(part):
-    """FROST over SMOKE as one color: white at FROST on top of black at SMOKE."""
-    f, d = FROST[part], SMOKE[part]
-    a = f + d * (1 - f)
-    return NSColor.colorWithWhite_alpha_(f / a if a else 0, a)
+    return glass_color(FROST[part], SMOKE[part])
+
+
+def _glass_view(radius, tint):
+    v = AppKit.NSGlassEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, 10, 10))
+    v.setStyle_(AppKit.NSGlassEffectViewStyleClear)
+    v.setTintColor_(tint)
+    v.setCornerRadius_(radius)
+    v.setHidden_(True)
+    return v
 HIDE_SETTLE_MS = 150        # let the window server drop the question box before the screenshot
 FRAME_MS = 16
 
@@ -116,6 +131,11 @@ class OverlayView(NSView):
         self.owner.update_cursor()
 
 
+def _show(view, on):
+    if view.isHidden() == on:
+        view.setHidden_(not on)
+
+
 class Overlay(OverlayBase):
     has_backdrop = GLASS
 
@@ -135,13 +155,13 @@ class Overlay(OverlayBase):
         p.setReleasedWhenClosed_(False)
         bounds = NSMakeRect(0, 0, frame.size.width, frame.size.height)
         root = FlippedView.alloc().initWithFrame_(bounds)
-        self.glass = None
-        if GLASS:  # Liquid Glass behind the card for themes that want it (Theme.backdrop); cairo paints on top
-            self.glass = AppKit.NSGlassEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, 10, 10))
-            self.glass.setStyle_(AppKit.NSGlassEffectViewStyleClear)
-            self.glass.setTintColor_(glass_tint("card"))
-            self.glass.setHidden_(True)
+        self.glass = self.lens = None
+        self.glass_theme = None
+        if GLASS:  # Liquid Glass behind the card (Theme.backdrop) and the glass pointer; cairo paints on top
+            self.glass = _glass_view(20, glass_tint("card"))
+            self.lens = _glass_view(20, glass_color(LENS["frost"], LENS["smoke"]))
             root.addSubview_(self.glass)
+            root.addSubview_(self.lens)
         self.view = OverlayView.alloc().initWithFrame_(bounds)
         self.view.owner = self
         root.addSubview_(self.view)
@@ -164,19 +184,29 @@ class Overlay(OverlayBase):
         self.view.setNeedsDisplay_(True)
 
     def _place_glass(self):
-        """Keep the glass exactly under the card (it moves when the card follows the pointer)."""
+        """Keep the glass exactly under the card and the pointer lens (both move every frame)."""
         if self.glass is None:
             return
         lay = self.card_layout(*self.size())
-        if not (lay and lay[1]["backdrop"]):
-            if not self.glass.isHidden():
-                self.glass.setHidden_(True)
-            return
-        x, y, w, h = lay[0]
-        self.glass.setFrame_(NSMakeRect(x, y, w, h))
-        self.glass.setCornerRadius_(self.theme.backdrop["radius"])
-        if self.glass.isHidden():
-            self.glass.setHidden_(False)
+        if lay and lay[1]["backdrop"]:
+            theme = self.theme
+            if theme is not self.glass_theme:  # per-theme tint (Glass uses FROST/SMOKE["card"])
+                self.glass_theme = theme
+                bd = theme.backdrop
+                self.glass.setTintColor_(glass_color(bd["frost"], bd["smoke"]) if "frost" in bd else glass_tint("card"))
+                self.glass.setCornerRadius_(bd["radius"])
+            self.glass.setFrame_(NSMakeRect(*lay[0]))
+            _show(self.glass, True)
+        else:
+            _show(self.glass, False)
+        lens = self.pointer_lens()
+        if lens:
+            cx, cy, r = lens
+            self.lens.setFrame_(NSMakeRect(cx - r, cy - r, 2 * r, 2 * r))
+            self.lens.setCornerRadius_(r)
+            _show(self.lens, True)
+        else:
+            _show(self.lens, False)
 
     def set_opacity(self, a):
         self.panel.setAlphaValue_(a)
@@ -246,6 +276,13 @@ def box_style(theme):
         st.update(glass=True, bg=None, border=_rgba(1, 1, 1, 0.35), radius=theme.LIQUID_R, fg=_hex("ffffff"),
                   font=(None, 16), field_bg=glass_tint("field"), field_border=_rgba(1, 1, 1, 0.3),
                   field_radius=12, hint=_rgba(1, 1, 1, 0.9), hint_shadow=True)
+    elif theme.key == "nowplaying" and GLASS:  # same glass box, the lock screen's rounder corners
+        st.update(glass=True, bg=None, border=_rgba(1, 1, 1, 0.3), radius=theme.R, fg=_hex("ffffff"),
+                  font=(None, 16), field_bg=_rgba(1, 1, 1, 0.12), field_border=None,
+                  field_radius=12, hint=_rgba(1, 1, 1, 0.75), hint_shadow=True)
+    elif theme.key == "nowplaying":
+        st.update(bg=_rgba(40 / 255, 40 / 255, 46 / 255, 0.85), border=_rgba(1, 1, 1, 0.3), radius=theme.R,
+                  field_bg=_rgba(1, 1, 1, 0.12), field_radius=12)
     elif theme.key == "glass":
         st.update(bg=_rgba(40 / 255, 46 / 255, 48 / 255, 0.88), border=_rgba(0, 0, 0, 0.7), radius=9, fg=_hex("ffffff"),
                   font=(None, 15), field_bg=_rgba(0, 0, 0, 0.3), field_border=_rgba(0, 0, 0, 0.6), field_radius=12,
