@@ -283,10 +283,10 @@ class SettingsWindow:
             f.row(what, None, rec.btn)
         f.row("Pause / resume a walkthrough", "Double-tap a modifier key. Needs the Accessibility permission.",
               self._setting_popup(f, "keys", "pause", PAUSE_KEYS, width=170))
-        f.group("Automation", "Lets scripts click on screen with flippy-ask click (used for recording demos). "
+        f.group("Automation", "Lets scripts click and type with flippy-ask click / type / key (used for recording demos). "
                               "Off by default: when on, any program running as you can make Flippy click. "
                               "Claude's answers never click. Also needs the Accessibility permission.")
-        f.row("Let scripts click", None, checkbox("", settings.get("automation", "clicks"),
+        f.row("Let scripts click and type", None, checkbox("", settings.get("automation", "clicks"),
                                                   lambda on: settings.set("automation", "clicks", on), f.keep))
         f.group("In the question box")
         for cmd, what in (("/new", "Start a fresh session"), ("/settings", "Open this window"), ("Esc", "Close")):

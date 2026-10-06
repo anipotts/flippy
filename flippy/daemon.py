@@ -185,6 +185,20 @@ class Flippy:
                 event("record_stop")
         elif cmd.startswith("click "):  # click <x> <y> [double]: logical px, top-left origin (Settings: automation)
             return self.click_command(cmd[6:].split())
+        elif cmd.split()[0] in ("move", "path", "type", "key", "tap"):  # more scripted input, same toggle
+            return self.input_command(cmd)
+        elif cmd.startswith("hotkey "):  # a real hotkey fired (the platform calls this): log it, then do it
+            name = cmd.split()[1]
+            event("hotkey", key=name, combo=settings.get("keys", name) if name in settings.DEFAULTS["keys"] else name)
+            return self.command("pause-toggle" if name == "pause" else name)
+        elif cmd.startswith("mark "):  # mark <name>: a labelled moment in the event log (for editing recordings)
+            event("mark", name=cmd[5:].strip())
+        elif cmd == "demo-update":  # the update card, with sample notes
+            if not hasattr(self.ui, "show_update"):
+                return NOT_HERE
+            rel = {"version": "0.3", "name": "Flippy 0.3", "url": "https://github.com/kap-il/flippy/releases",
+                   "notes": "Tutorials that make the music under them."}
+            self.ui.show_update(rel, install=lambda: log("demo update: install"), later=lambda: None)
         elif cmd.startswith("nudge "):  # nudge <button title>: press a button on the help card (demo scripts)
             if not hasattr(self.ui, "press_nudge"):
                 return NOT_HERE
@@ -808,7 +822,7 @@ class Flippy:
     def click_command(self, args):
         """Scripted clicks for demos and automation. Off unless turned on in Settings; Claude never triggers these."""
         if not settings.get("automation", "clicks"):
-            return "clicks are off: turn on Settings > Hotkeys > Let scripts click (automation.clicks)"
+            return "clicks are off: turn on Settings > Hotkeys > Let scripts click and type (automation.clicks)"
         if not hasattr(self.ui, "click"):
             return "clicks aren't supported on this platform yet"
         try:
@@ -817,6 +831,36 @@ class Flippy:
             return "usage: click <x> <y> [double]"
         log(f"click at {x:.0f},{y:.0f}" + (" (double)" if "double" in args[2:] else ""))
         return self.ui.click(x, y, double="double" in args[2:])
+
+    def input_command(self, cmd):
+        """move <x> <y> | path [drag] <points.json> | type <text> | key <combo> | tap <mod> [times]"""
+        if not settings.get("automation", "clicks"):
+            return "scripted input is off: turn on Settings > Hotkeys > Let scripts click and type (automation.clicks)"
+        if not hasattr(self.ui, "type_text"):
+            return NOT_HERE
+        verb, _, rest = cmd.partition(" ")
+        try:
+            if verb == "move":
+                x, y = map(float, rest.split()[:2])
+                return self.ui.move(x, y)
+            if verb == "path":
+                drag = rest.startswith("drag ")
+                with open(rest[5:] if drag else rest) as f:
+                    points = [tuple(p) for p in json.load(f)]
+                event("path", drag=drag, n=len(points))
+                return self.ui.path(points, drag)
+            if verb == "type":
+                return self.ui.type_text(rest)
+            if verb == "key":
+                event("keys", combo=rest.strip())
+                return self.ui.key(rest.strip())
+            if verb == "tap":
+                mod, *n = rest.split()
+                event("keys", combo=f"double-{mod}" if (int(n[0]) if n else 2) == 2 else mod)
+                return self.ui.tap(mod, int(n[0]) if n else 2)
+        except (ValueError, OSError, KeyError) as e:
+            return f"bad {verb}: {e}"
+        return "unknown"
 
     def set_command(self, arg):
         try:
@@ -1037,9 +1081,16 @@ TUTORIAL_RE = re.compile(r"\b(how (do|can|would|should|to) (i|you|we)|how to|wal
                          r"build|record|install|do))\b")
 
 
+# "now add a bass loop", "make it louder", "add a new track": asking to be walked through doing it
+DO_RE = re.compile(r"^(?:(?:ok|okay|now|then|next|and|also|cool|nice)[,!]?\s+)*(?:let'?s\s+|can you\s+)?"
+                   r"(?:add|make|create|put|record|build|insert|set up|turn (?:on|up|down|off)|open|change|switch|"
+                   r"start|bring in|layer)\b")
+
+
 def wants_tutorial(question):
-    """Is this a "how do I do X" question (a tutorial, steps wait for their clicks) or just a question?"""
-    return bool(TUTORIAL_RE.search(question.lower()))
+    """Is this a "how do I do X" / "now add X" request (a tutorial: steps wait for their clicks) or a question?"""
+    q = question.lower().strip()
+    return bool(TUTORIAL_RE.search(q) or DO_RE.search(q))
 
 
 def _friendly_error(err):

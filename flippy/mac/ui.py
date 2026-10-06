@@ -68,6 +68,12 @@ def _glass_view(radius, tint):
     v.setCornerRadius_(radius)
     v.setHidden_(True)
     return v
+def event_hook(name, **data):
+    """The controller's event log (flippy.daemon.event), without importing it at module load."""
+    from ..daemon import event
+    event(name, **data)
+
+
 PLATFORM = None             # the running Platform (for windows that need it, like setup's Restart)
 ESC_HOTKEY = 4              # hotkey id for Esc while drawing (1-2: ask/draw)
 HIDE_SETTLE_MS = 150        # let the window server drop the question box before the screenshot
@@ -249,7 +255,8 @@ class Overlay(OverlayBase):
         self.update_cursor()
         # the overlay never takes the keyboard, so Esc is a global hotkey, only while drawing
         if on:
-            err = hotkeys.register(ESC_HOTKEY, "escape", lambda: self.on_draw_cancel())
+            err = hotkeys.register(ESC_HOTKEY, "escape", lambda: (event_hook("hotkey", key="escape"),
+                                                                   self.on_draw_cancel()))
             if err:
                 print(f"flippy: Esc while drawing: {err}", flush=True)
         else:
@@ -447,7 +454,13 @@ class InputBox:
 
     # scripted demos
     def set_text(self, text):
-        self.entry.setStringValue_(text)
+        """Scripted typing: append what's new through the field editor, like keystrokes (no select-all flash)."""
+        current = str(self.entry.stringValue())
+        editor = self.entry.currentEditor()
+        if editor is not None and text.startswith(current):
+            editor.insertText_(text[len(current):])
+        else:
+            self.entry.setStringValue_(text)
 
     def activate(self):
         self.on_submit(str(self.entry.stringValue()).strip())
@@ -555,12 +568,12 @@ class Platform:
 
     def _bind_keys(self):
         for hid, name in ((1, "ask"), (2, "draw")):
-            err = hotkeys.register(hid, settings.get("keys", name), lambda n=name: self.command(n))
+            err = hotkeys.register(hid, settings.get("keys", name), lambda n=name: self.command(f"hotkey {n}"))
             if err:
                 print(f"flippy: hotkey for {name}: {err}", flush=True)
         pause = settings.get("keys", "pause")
         err = self.double_tap.set(None if pause == "off" else pause[len("double-"):],
-                                  lambda: self.command("pause-toggle"))
+                                  lambda: self.command("hotkey pause"))
         if err:
             print(f"flippy: pause shortcut: {err}", flush=True)
         if getattr(self, "menu_items", None):
@@ -789,6 +802,105 @@ class Platform:
         if getattr(self, "click_monitor", None) is not None:
             NSEvent.removeMonitor_(self.click_monitor)
             self.click_monitor = None
+
+    # --- scripted input (flippy-ask move/path/type/key/tap, behind automation.clicks): real events, so the
+    # cursor and keystrokes look like a person's in recordings. Long gestures run on a thread.
+    def _can_post(self):
+        if Quartz.CGPreflightPostEventAccess():
+            return None
+        Quartz.CGRequestPostEventAccess()
+        return ("Flippy needs the Accessibility permission for this: System Settings > Privacy & Security > "
+                "Accessibility, turn on Flippy, then restart it")
+
+    @staticmethod
+    def _mouse(kind, x, y, clicks=1):
+        ev = Quartz.CGEventCreateMouseEvent(None, kind, Quartz.CGPointMake(x, y), Quartz.kCGMouseButtonLeft)
+        Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventClickState, clicks)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+
+    def move(self, x, y):
+        return self._can_post() or self._mouse(Quartz.kCGEventMouseMoved, x, y) or "ok"
+
+    def path(self, points, drag):
+        """points: [(x, y, seconds until the next point)]; drag: hold the button the whole way."""
+        err = self._can_post()
+        if err:
+            return err
+
+        def run():
+            down = False
+            for i, (x, y, dt) in enumerate(points):
+                if drag and i == 0:
+                    self._mouse(Quartz.kCGEventMouseMoved, x, y)
+                    time.sleep(0.05)
+                    self._mouse(Quartz.kCGEventLeftMouseDown, x, y)
+                    down = True
+                else:
+                    self._mouse(Quartz.kCGEventLeftMouseDragged if down else Quartz.kCGEventMouseMoved, x, y)
+                time.sleep(max(dt, 0.004))
+            if down:
+                self._mouse(Quartz.kCGEventLeftMouseUp, *points[-1][:2])
+        threading.Thread(target=run, daemon=True).start()
+        return "ok"
+
+    def type_text(self, text):
+        """Real keystrokes, at a human-ish pace."""
+        err = self._can_post()
+        if err:
+            return err
+
+        def run():
+            import random
+            for ch in text:
+                for down in (True, False):
+                    ev = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
+                    Quartz.CGEventKeyboardSetUnicodeString(ev, len(ch.encode("utf-16-le")) // 2, ch)
+                    Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+                time.sleep(random.uniform(0.045, 0.11) + (0.12 if ch in " ,." else 0))
+        threading.Thread(target=run, daemon=True).start()
+        return "ok"
+
+    FLAGS = {"cmd": Quartz.kCGEventFlagMaskCommand, "shift": Quartz.kCGEventFlagMaskShift,
+             "option": Quartz.kCGEventFlagMaskAlternate, "ctrl": Quartz.kCGEventFlagMaskControl}
+    MOD_KEYS = {"cmd": 55, "shift": 56, "option": 58, "ctrl": 59}
+
+    def key(self, combo):
+        """A shortcut like cmd+shift+space, escape or return, pressed for real."""
+        err = self._can_post()
+        if err:
+            return err
+        parts = [p.strip().lower() for p in combo.split("+")]
+        try:
+            code = hotkeys.KEYS[parts[-1]]
+        except KeyError:
+            return f"unknown key {parts[-1]!r}"
+        flags = 0
+        for m in parts[:-1]:
+            flags |= self.FLAGS.get({"opt": "option", "alt": "option", "control": "ctrl"}.get(m, m), 0)
+        for down in (True, False):
+            ev = Quartz.CGEventCreateKeyboardEvent(None, code, down)
+            Quartz.CGEventSetFlags(ev, flags)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+            time.sleep(0.03)
+        return "ok"
+
+    def tap(self, mod, times):
+        """Tap a modifier on its own (for double-tap shortcuts)."""
+        err = self._can_post()
+        if err:
+            return err
+        code, flag = self.MOD_KEYS[mod], self.FLAGS[mod]
+
+        def run():
+            for _ in range(times):
+                for down in (True, False):
+                    ev = Quartz.CGEventCreateKeyboardEvent(None, code, down)
+                    Quartz.CGEventSetFlags(ev, flag if down else 0)
+                    Quartz.CGEventSetType(ev, Quartz.kCGEventFlagsChanged)
+                    Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+                    time.sleep(0.07 if down else 0.12)
+        threading.Thread(target=run, daemon=True).start()
+        return "ok"
 
     def press_nudge(self, title):
         return self.nudge.press(title)
