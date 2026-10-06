@@ -27,6 +27,8 @@ STEP_HOLD = {"slow": (3.5, 0.07), "normal": (2.2, 0.045), "fast": (1.2, 0.025)} 
 READ_S_PER_CHAR = 0.04      # extra time the final answer stays up per character
 DRAW_TIMEOUT_S = 60         # leave draw mode (and give the mouse back) if nothing happens
 TIPS_RETRY_S = 300          # after a failed tip deck write, wait this long before trying again
+CLICK_RADIUS = 55           # a click this close (logical px) to a :click step's target counts as doing it
+CLICK_SETTLE_S = 0.5        # after their click, let the app react before moving on
 # Other knobs (model, effort, theme, pointer, timing) live in flippy/settings.py.
 
 
@@ -119,6 +121,11 @@ class Flippy:
             self.ui.open_setup()
         elif cmd == "preview":
             self.preview()
+        elif cmd == "demo-tutorial":  # a fake tutorial whose first step waits for you to click the Apple menu
+            self.preview(tutorial=True)
+        elif cmd.startswith("demo-user-click "):  # demo-user-click <x> <y>: as if they clicked there (tests)
+            x, y = map(float, cmd.split()[1:3])
+            self._on_user_click(x, y)
         elif cmd.startswith("control "):  # same as clicking a player button: control <name> [0-1 for seek/speed]
             parts = cmd.split()
             self.control(parts[1], float(parts[2]) if len(parts) > 2 else 0.0)
@@ -278,7 +285,8 @@ class Flippy:
         self._stop_playback()
         self.play = {"gen": gen, "raw": "", "done": False, "img": img_size, "shot": shot_size,
                      "step": 0, "shown": 0.0, "typed_at": None, "last": time.monotonic(), "pointed": False,
-                     "pointed_step": -1, "paused": False, "finished": False}
+                     "pointed_step": -1, "paused": False, "finished": False,
+                     "target": None, "waiting": False, "clicked_at": None, "acted": set()}
         self.play_id = loop.timeout_add(33, self._play_tick)
 
     def _stream_text(self, gen, delta):
@@ -286,6 +294,8 @@ class Flippy:
             self.play["raw"] += delta
 
     def _stop_playback(self):
+        if self.play and self.play["waiting"]:
+            self._listen_for_click(False)
         if self.play_id:
             loop.source_remove(self.play_id)
             self.play_id = 0
@@ -320,10 +330,12 @@ class Flippy:
             return True  # wait until we know where this step points
         if pl["pointed_step"] != pl["step"]:
             pl["pointed_step"] = pl["step"]
+            pl["target"] = None
             if seg.point:
                 x, y = image_to_logical(seg.point, pl["img"], pl["shot"], self._scale())
                 self.overlay.point(x, y, seg.point.label)
                 pl["pointed"] = True
+                pl["target"] = (x, y)
                 event("point", x=x, y=y, label=seg.point.label, text=seg.text)
         if pl["paused"]:
             if pl["typed_at"]:
@@ -337,6 +349,23 @@ class Flippy:
             return True
         if pl["typed_at"] is None:
             pl["typed_at"] = now
+        if self._gated(seg) and pl["step"] not in pl["acted"]:
+            # a step they have to do: hold here until they click the thing (flippy/point.py ":click")
+            if pl["clicked_at"] is None or now - pl["clicked_at"] < CLICK_SETTLE_S:
+                if not pl["waiting"]:
+                    pl["waiting"] = True
+                    self._listen_for_click(True)
+                    self._render_step(pl, segs, now)
+                return True
+            self._step_done(pl)
+            if pl["done"] and pl["step"] == len(segs) - 1:
+                self._continue_tutorial()
+                return False
+            if pl["step"] < len(segs) - 1:
+                pl["step"] += 1
+                pl["shown"] = 0.0
+                pl["typed_at"] = None
+            return True
         if pl["done"] and pl["step"] == len(segs) - 1:
             return self._finish_playback(seg.text, segs)
         if now - pl["typed_at"] >= self._hold_s(seg):
@@ -358,7 +387,10 @@ class Flippy:
             if pl["typed_at"]:
                 frac += min((now - pl["typed_at"]) / self._hold_s(seg), 1) * 0.5
             progress = (step + frac) / len(known)
-        self.overlay.show_text(seg.text[:int(pl["shown"])] or " ",
+        text = seg.text[:int(pl["shown"])] or " "
+        if pl["waiting"] and step == pl["step"]:
+            text += "\n→ Your turn: click it"
+        self.overlay.show_text(text,
                                header=seg.point.label if seg.point else None,
                                follow=pl["pointed"],
                                at_bottom=self._card_at_bottom(segs),
@@ -367,6 +399,36 @@ class Flippy:
                                typing=pl["shown"] < len(seg.text),
                                paused=pl["paused"], finished=pl["finished"],
                                speed=settings.get("timing", "speed"), controls=True)
+
+    # --- tutorials: steps marked :click wait for them to click the thing ---
+    def _gated(self, seg):
+        return bool(seg.point and seg.point.action and settings.get("timing", "wait_for_clicks")
+                    and hasattr(self.ui, "watch_clicks"))
+
+    def _listen_for_click(self, on):
+        if hasattr(self.ui, "watch_clicks"):
+            self.ui.watch_clicks(self._on_user_click) if on else self.ui.unwatch_clicks()
+
+    def _on_user_click(self, x, y):
+        pl = self.play
+        if pl and pl["waiting"] and pl["target"] and pl["clicked_at"] is None:
+            tx, ty = pl["target"]
+            if math.hypot(x - tx, y - ty) <= CLICK_RADIUS * settings.get("look", "pointer_size") ** 0.5:
+                pl["clicked_at"] = time.monotonic()
+                event("user_click", x=x, y=y)
+
+    def _step_done(self, pl):
+        pl["acted"].add(pl["step"])
+        pl["waiting"] = False
+        pl["clicked_at"] = None
+        self._listen_for_click(False)
+
+    def _continue_tutorial(self):
+        """They did the last step we could see: take a fresh screenshot and ask for what's next."""
+        log("tutorial: they did it, asking for the next step")
+        event("tutorial_continue")
+        self._stop_playback()
+        self.submit("Done, I did that. Continue the walkthrough from here.")
 
     def _card_at_bottom(self, segs):
         """Centered card (no pointer yet): keep it away from the first point."""
@@ -424,6 +486,9 @@ class Flippy:
                 self._goto(0, retype=True)  # replay from the top
         elif name == "prev":
             self._goto(max(step - 1, 0))
+        elif name == "next" and pl["waiting"] and step == len(known) - 1 and pl["done"]:
+            self._step_done(pl)  # skipping the last step they could do: on to the next screenful
+            self._continue_tutorial()
         elif name == "next" and step + 1 < len(known):
             self._goto(step + 1)
         elif name == "seek":
@@ -441,6 +506,12 @@ class Flippy:
 
     def _goto(self, k, retype=False):
         pl = self.play
+        if pl["waiting"]:
+            if k > pl["step"]:
+                self._step_done(pl)  # skipping ahead counts as done
+            else:
+                pl["waiting"], pl["clicked_at"] = False, None
+                self._listen_for_click(False)
         known = [sg for sg in segments(pl["raw"], pl["done"]) if sg.complete]
         pl["step"] = k
         pl["shown"] = 0.0 if retype else float(len(known[k].text))  # stepping shows the text in full
@@ -668,8 +739,9 @@ class Flippy:
             theme.refresh()  # e.g. re-read COSMIC's colors
         self.ui.apply_theme(theme)
 
-    def preview(self):
-        """Fake 3-step walkthrough so theme/pointer/timing changes can be seen in place."""
+    def preview(self, tutorial=False):
+        """Fake 3-step walkthrough so theme/pointer/timing changes can be seen in place.
+        tutorial: the first step is a ":click" step that waits for them to click it."""
         if self.busy:
             return
         self.gen += 1
@@ -679,6 +751,14 @@ class Flippy:
         W, H = self.ui.screen_size()
         sc = self._scale()
         spots = [(70, 14, "Workspaces"), (W // 2, 14, "Clock"), (W // 2, H - 40, "Dock")]
+        if tutorial:
+            spots = [(22, 12, "Apple menu:click"), (W // 2, H - 40, "Dock")]
+            texts = ("Click the Apple menu to open it", "Nice. That's how tutorials wait for you, then go on")
+            raw = " ".join(f"{txt} [POINT:{int(x * sc)},{int(y * sc)}:{lbl}]." for (x, y, lbl), txt in zip(spots, texts))
+            shot = (int(W * sc), int(H * sc))
+            self._start_playback(self.gen, shot, shot)
+            self.play["raw"], self.play["done"] = raw, True
+            return
         raw = " ".join(f"{txt} [POINT:{int(x * sc)},{int(y * sc)}:{lbl}]." for (x, y, lbl), txt in zip(spots, (
             "This is a preview of how answers look: the pointer starts at the workspaces button",
             "then glides to the clock while the panel follows it",

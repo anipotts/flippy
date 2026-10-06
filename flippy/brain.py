@@ -24,6 +24,10 @@ you have a pointer that can highlight things on screen. use it when the user is 
 to point, put [POINT:x,y:label] right after the words that mention the thing, where x,y are integer pixel coordinates in the screenshot (origin top-left, x right, y down, using the dimensions given) and label is 1-3 words.
 the pointer glides to each tag as your reply is read out, and the panel moves with it showing only the text since the previous tag. so when you walk through several things, write one short sentence per thing, each ending with its tag, in a sensible order (at most 6). one thing = one tag.
 if pointing wouldn't help, end with [POINT:none].
+
+tutorials:
+when you're walking them through doing something (not just explaining what's on screen), mark each step they have to do themselves by adding :click after the label, e.g. [POINT:412,88:Track menu:click]. flippy waits until they click it before going on.
+if clicking will change the screen (opens a menu, dialog, panel or another view), stop your reply right after that step: you can't see what comes next yet. once they click it you'll get a fresh screenshot and "continue", and you go on from there with the next step(s).
 """
 
 # Model and effort come from settings (flippy-ask settings); env vars override for testing.

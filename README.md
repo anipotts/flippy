@@ -9,6 +9,7 @@ Runs on **macOS** (13+, native AppKit) and on **Linux with COSMIC on Wayland** (
 - **Ask about your screen.** A hotkey opens a box; Flippy screenshots the screen, sends it to Claude with your question, and shows the answer next to a pointer on the thing it means.
 - **Walkthroughs.** Multi-step answers play step by step: the pointer glides from point to point and the card follows. Pause, step back/forward, seek and change speed from the card.
 - **Circle and ask.** A second hotkey lets you draw on the screen to mark something, then ask about it ("what does this say?").
+- **Tutorials that wait for you.** When Claude walks you through doing something, the steps you have to do yourself wait until you click the thing (on macOS). If that click opens a menu or dialog Claude couldn't see yet, Flippy takes a fresh screenshot and Claude carries on from there. Next on the card skips a step. Turn it off with `timing.wait_for_clicks`.
 - **Follow-ups.** Questions share one session, so "and where's bluetooth?" works. `/new` starts fresh; sessions also reset after 15 idle minutes.
 - **Themes.** Midnight, Y2K Player, Glass, Terminal, and one that follows your system's accent color (macOS or COSMIC).
 - **Custom pointers.** Built-in hand, ring, arrow and dot, or draw your own in the 20×24 pixel editor, or import an image and pick its tip.
@@ -84,6 +85,7 @@ flippy-ask goal <id> <text> set what you want to do in an app (steers its tips)
 flippy-ask demo-tip         show a tip card
 flippy-ask click <x> <y>    click on screen (only with automation.clicks on)
 flippy-ask preview          play a sample walkthrough with the current look
+flippy-ask demo-tutorial    a sample tutorial that waits for you to click the Apple menu
 flippy-ask set look.theme y2k
 flippy-ask quit             stop the daemon
 ```
@@ -125,6 +127,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `timing.show_seconds`, `timing.max_show_seconds` | how long answers stay up |
 | `timing.step_pace` | `slow`, `normal`, `fast` |
 | `timing.speed` | walkthrough playback speed, `0.5`–`2.0` |
+| `timing.wait_for_clicks` | `true` (default): tutorial steps wait until you click the thing (macOS) |
 | `help.mode` | `off`, `quiet` (offer a hand when stuck), `tips` (that, plus cached tips) |
 | `help.apps`, `help.muted` | comma-separated app ids (macOS bundle ids, e.g. `com.ableton.live`) |
 | `automation.clicks` | `false` (default) or `true`: lets `flippy-ask click <x> <y> [double]` click on screen (macOS, needs the Accessibility permission). When on, any program running as you can make Flippy click; Claude's answers never do. |

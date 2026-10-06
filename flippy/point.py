@@ -2,11 +2,12 @@
 import re
 from dataclasses import dataclass
 
-# Clicky's regex, anchored to the end of the reply.
-POINT_RE = re.compile(r"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?)\]\s*$")
+# Clicky's regex, anchored to the end of the reply. Flippy adds an optional ":click" flag after the
+# label: a tutorial step the user has to do (click that thing) before the walkthrough goes on.
+POINT_RE = re.compile(r"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(:click)?(?::screen(\d+))?)\]\s*$")
 
 # Same tag, anywhere in the text (inline pointing: one tag right after each thing mentioned).
-TAG_RE = re.compile(r"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?)\]")
+TAG_RE = re.compile(r"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(:click)?(?::screen(\d+))?)\]")
 TAG_PREFIX = "[POINT:"
 PUNCT = ".,;:!?"
 
@@ -22,6 +23,7 @@ class Point:
     x: int  # in screenshot-image pixels
     y: int
     label: str
+    action: bool = False  # ":click": the user has to click it before the walkthrough goes on
 
 
 def parse_reply(text: str) -> tuple[str, Point | None]:
@@ -32,7 +34,7 @@ def parse_reply(text: str) -> tuple[str, Point | None]:
     clean = text[: m.start()].rstrip()
     if m.group(1) is None:  # [POINT:none]
         return clean, None
-    return clean, Point(int(m.group(1)), int(m.group(2)), (m.group(3) or "").strip())
+    return clean, Point(int(m.group(1)), int(m.group(2)), (m.group(3) or "").strip(), bool(m.group(4)))
 
 
 def match_tag(text: str, i: int):
@@ -40,7 +42,8 @@ def match_tag(text: str, i: int):
     tag still streaming in, or None if it's just a bracket."""
     m = TAG_RE.match(text, i)
     if m:
-        pt = None if m.group(1) is None else Point(int(m.group(1)), int(m.group(2)), (m.group(3) or "").strip())
+        pt = None if m.group(1) is None else Point(int(m.group(1)), int(m.group(2)), (m.group(3) or "").strip(),
+                                                   bool(m.group(4)))
         return m.end(), pt
     rest = text[i:]
     if "]" not in rest and (TAG_PREFIX.startswith(rest) or rest.startswith(TAG_PREFIX)):
@@ -64,7 +67,8 @@ def segments(raw: str, done: bool) -> list[Segment]:
     segs: list[Segment] = []
     pos = 0
     for m in TAG_RE.finditer(raw):
-        pt = None if m.group(1) is None else Point(int(m.group(1)), int(m.group(2)), (m.group(3) or "").strip())
+        pt = None if m.group(1) is None else Point(int(m.group(1)), int(m.group(2)), (m.group(3) or "").strip(),
+                                                   bool(m.group(4)))
         end = m.end()
         while end < len(raw) and raw[end] in PUNCT:  # "...Files [POINT..]." -> the "." belongs here
             end += 1

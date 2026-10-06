@@ -160,3 +160,15 @@ like the help-mode thresholds.
 3. Try it with `demo-nudge`, then for real in LMMS. Tune `STALL_S` / `AWAY_S`.
 4. `show_tip` on the same overlay card, then try `help.mode = "tips"`.
 5. Later: ScreenCast or screencopy instead of screenshot PNGs; dialog detection.
+
+## Tutorials that wait for clicks
+
+Not help mode, but the same kind of port. Steps Claude marks `:click` (`flippy/point.py`)
+make playback wait until the person clicks near the pointer (`_gated`, `_on_user_click`
+in `flippy/daemon.py`). The platform provides `watch_clicks(fn)` / `unwatch_clicks()`,
+calling `fn(x, y)` (logical px) for left clicks in other apps. On macOS that's an
+`NSEvent` global monitor, which needs no permission. Without these methods, as on Linux
+today, those steps just play on a timer. On COSMIC there's no way for an ordinary client
+to see clicks in other apps. Options: treat any `resumed` from idle-notify plus a screen
+change as "they did it" (no position check), or give the card a clear "Done" button
+and wait on that.

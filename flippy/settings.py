@@ -31,6 +31,7 @@ DEFAULTS = {
         "step_pace": "normal",  # slow | normal | fast (how long each walkthrough step holds)
         "glide_seconds": 0.6,   # hand travel time between points
         "speed": 1.0,           # walkthrough playback speed, 0.5-2.0 (the player skins' speed slider)
+        "wait_for_clicks": True,  # tutorial steps marked :click wait until you click the thing (macOS)
     },
     "help": {                   # help mode (flippy/watch.py): offer a hand when you seem stuck
         "mode": "off",          # off | quiet (offer a hand when stuck) | tips (that, plus cached tips: flippy/tips.py)

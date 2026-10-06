@@ -260,6 +260,9 @@ class SettingsWindow:
               self._setting_slider(f, "timing", "speed", 0.5, 2.0, 0.05, digits=2))
         f.row("Glide time", "Seconds for the pointer to travel between steps",
               self._setting_slider(f, "timing", "glide_seconds", 0.2, 2.0, 0.1, digits=1))
+        f.row("Wait for my clicks", "Tutorials pause on steps you have to do until you click the thing",
+              checkbox("", settings.get("timing", "wait_for_clicks"),
+                       lambda on: settings.set("timing", "wait_for_clicks", on), f.keep))
         f.row("Try it", None, button("Preview", on_preview, f.keep))
         return f
 

@@ -749,6 +749,21 @@ class Platform:
                 time.sleep(0.03)
         return "ok"
 
+    def watch_clicks(self, fn):
+        """fn(x, y) on every left click in other apps (logical px, top-left origin). No permission needed."""
+        self.unwatch_clicks()
+
+        def on_click(event):
+            p, f = NSEvent.mouseLocation(), main_screen().frame()
+            fn(p.x - f.origin.x, f.origin.y + f.size.height - p.y)
+        self.click_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(AppKit.NSEventMaskLeftMouseDown,
+                                                                                  on_click)
+
+    def unwatch_clicks(self):
+        if getattr(self, "click_monitor", None) is not None:
+            NSEvent.removeMonitor_(self.click_monitor)
+            self.click_monitor = None
+
     def press_nudge(self, title):
         return self.nudge.press(title)
 
