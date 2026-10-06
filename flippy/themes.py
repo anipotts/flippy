@@ -1049,7 +1049,8 @@ class Glass(Theme):
         cr.fill()
 
     def _liquid(self, cr, x, y, w, h, a):
-        """Over a real glass backdrop: just light, no body. Bright rim, sheen, glare, refraction line."""
+        """Over a real glass backdrop: just light, no body. WMP 11-style gloss on the title and controls bars
+        (lighter top half, crisp edge, a bright line on top) and a rim around the glass."""
         R = self.LIQUID_R
         cr.save()
         round_rect(cr, x, y, w, h, R)
@@ -1060,44 +1061,34 @@ class Glass(Theme):
         g.add_color_stop_rgba(1, 0, 0.05, 0.08, 0.07 * a)
         cr.set_source(g)
         cr.paint()
-        # soft sheen pooling in the top-left corner, where the light comes from
-        g = cairo.RadialGradient(x + w * 0.18, y - h * 0.15, 0, x + w * 0.18, y - h * 0.15, w * 0.55)
-        g.add_color_stop_rgba(0, 1, 1, 1, 0.22)
-        g.add_color_stop_rgba(1, 1, 1, 1, 0)
-        cr.set_source(g)
-        cr.paint()
-        # a diagonal glare band across the glass
-        cr.move_to(x + w * 0.52, y)
-        cr.line_to(x + w * 0.66, y)
-        cr.line_to(x + w * 0.46, y + h)
-        cr.line_to(x + w * 0.38, y + h)
-        cr.close_path()
-        g = cairo.LinearGradient(x + w * 0.38, 0, x + w * 0.66, 0)
-        g.add_color_stop_rgba(0, 1, 1, 1, 0)
-        g.add_color_stop_rgba(0.5, 1, 1, 1, 0.07)
-        g.add_color_stop_rgba(1, 1, 1, 1, 0)
-        cr.set_source(g)
-        cr.fill()
+        for by, bh in ((y, self.TITLE_H + 2), (y + h - self.CTRL_H - 10, self.CTRL_H + 10)):  # title bar, controls bar
+            half = bh * 0.5
+            g = cairo.LinearGradient(0, by, 0, by + half)
+            g.add_color_stop_rgba(0, 1, 1, 1, 0.16)
+            g.add_color_stop_rgba(1, 1, 1, 1, 0.05)
+            cr.rectangle(x, by, w, half)
+            cr.set_source(g)
+            cr.fill()
+            cr.rectangle(x, by + half, w, bh - half)  # below the crisp edge: a touch darker
+            cr.set_source_rgba(0, 0, 0, 0.06)
+            cr.fill()
+            cr.rectangle(x, by + 0.5, w, 1)  # bright line along the top of the bar
+            g = cairo.LinearGradient(x, 0, x + w, 0)
+            g.add_color_stop_rgba(0, 1, 1, 1, 0.05)
+            g.add_color_stop_rgba(0.5, 1, 1, 1, 0.45)
+            g.add_color_stop_rgba(1, 1, 1, 1, 0.05)
+            cr.set_source(g)
+            cr.fill()
         cr.restore()
-        # rim: bright along the top, fading down the sides; a faint refraction line along the bottom
+        # rim: bright along the top, fading down the sides, a little light again along the bottom
         round_rect(cr, x + 0.75, y + 0.75, w - 1.5, h - 1.5, R - 0.5)
         g = cairo.LinearGradient(0, y, 0, y + h)
-        g.add_color_stop_rgba(0, 1, 1, 1, 0.75)
-        g.add_color_stop_rgba(0.25, 1, 1, 1, 0.18)
+        g.add_color_stop_rgba(0, 1, 1, 1, 0.6)
+        g.add_color_stop_rgba(0.25, 1, 1, 1, 0.15)
         g.add_color_stop_rgba(0.75, 1, 1, 1, 0.08)
-        g.add_color_stop_rgba(1, 1, 1, 1, 0.35)
+        g.add_color_stop_rgba(1, 1, 1, 1, 0.28)
         cr.set_source(g)
         cr.set_line_width(1.5)
-        cr.stroke()
-        cr.move_to(x + R, y + 1.2)  # specular hotspot on the top edge
-        cr.line_to(x + w - R, y + 1.2)
-        g = cairo.LinearGradient(x, 0, x + w, 0)
-        g.add_color_stop_rgba(0, 1, 1, 1, 0)
-        g.add_color_stop_rgba(0.3, 1, 1, 1, 0.9)
-        g.add_color_stop_rgba(0.7, 1, 1, 1, 0.25)
-        g.add_color_stop_rgba(1, 1, 1, 1, 0)
-        cr.set_source(g)
-        cr.set_line_width(1.2)
         cr.stroke()
 
     def draw(self, cr, x, y, w, h, card, t, opts):
