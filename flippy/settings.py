@@ -32,6 +32,11 @@ DEFAULTS = {
         "glide_seconds": 0.6,   # hand travel time between points
         "speed": 1.0,           # walkthrough playback speed, 0.5-2.0 (the player skins' speed slider)
     },
+    "help": {                   # help mode (flippy/watch.py): offer a hand when you seem stuck
+        "mode": "off",          # off | quiet
+        "apps": "",             # comma-separated app ids to watch (macOS bundle ids)
+        "muted": "",            # apps where you chose "don't ask"
+    },
     "keys": {                   # global hotkeys (macOS; on COSMIC they're set in COSMIC Settings)
         "ask": "cmd+shift+space",
         "draw": "ctrl+shift+space",
@@ -47,6 +52,7 @@ CHOICES = {
     ("look", "controls"): ["all", "players"],
     ("look", "glass_shine"): ["wmp", "none"],
     ("timing", "step_pace"): ["slow", "normal", "fast"],
+    ("help", "mode"): ["off", "quiet"],
 }
 
 _data = copy.deepcopy(DEFAULTS)
@@ -89,6 +95,15 @@ def _valid(section, key, value):
 
 def get(section, key):
     return _data[section][key]
+
+
+def get_list(section, key):
+    """A comma-separated string setting as a set."""
+    return {v.strip() for v in _data[section][key].split(",") if v.strip()}
+
+
+def set_list(section, key, values):
+    set(section, key, ",".join(sorted(values)))
 
 
 def set(section, key, value):  # noqa: A001 (module-level API reads nicely as settings.set)

@@ -33,7 +33,8 @@ from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 
 from .. import loop, settings, themes
 from ..overlay import OverlayBase
-from . import hotkeys
+from . import hotkeys, sensors
+from .nudge import Nudge
 from .cairoview import blit
 from .widgets import FlippedView
 
@@ -475,13 +476,26 @@ class Screenshotter:
 
 # --------------------------------------------------------------------------- menu bar
 
-class MenuTarget(NSObject):
+class MenuTarget(NSObject, protocols=[objc.protocolNamed("NSMenuDelegate")]):
     def act_(self, sender):
         cmd = str(sender.representedObject())
-        self.platform.open_setup() if cmd == "setup" else self.platform.command(cmd)
+        p = self.platform
+        if cmd == "setup":
+            p.open_setup()
+        elif cmd == "help-toggle":
+            p.command(f"help-mode {'off' if settings.get('help', 'mode') != 'off' else 'quiet'}")
+        elif cmd == "watch-front":
+            if p.menu_front:
+                p.command(f"watch-app {p.menu_front[0]}")
+        else:
+            p.command(cmd)
+
+    def menuWillOpen_(self, menu):
+        self.platform.refresh_help_menu()
 
 
 MENU = [("Ask about the screen", "ask", "ask"), ("Circle and ask", "draw", "draw"), None,
+        ("Help when I'm stuck", "help-toggle", None), ("Watch this app", "watch-front", None), None,
         ("Preview the look", "preview", None), ("Settings…", "settings", None), ("New session", "reset", None),
         None, ("Setup…", "setup", None), ("Quit Flippy", "quit", None)]
 
@@ -496,6 +510,7 @@ class Platform:
         self.screenshotter = Screenshotter()
         self.settings_win = None
         self.setup_win = None
+        self.nudge = Nudge()
         self.command = lambda cmd: "not ready"
 
     def input_box(self, on_submit, on_cancel):
@@ -536,6 +551,8 @@ class Platform:
         self.target.platform = self
         menu = NSMenu.alloc().init()
         self.menu_items = {}
+        self.help_items = {}
+        self.menu_front = None
         for entry in MENU:
             if entry is None:
                 menu.addItem_(NSMenuItem.separatorItem())
@@ -547,8 +564,41 @@ class Platform:
             menu.addItem_(item)
             if key:
                 self.menu_items[key] = (item, title)
+            if cmd in ("help-toggle", "watch-front"):
+                self.help_items[cmd] = item
+        menu.setDelegate_(self.target)
         self.status.setMenu_(menu)
         self._label_menu()
+
+    def refresh_help_menu(self):
+        """The menu is opening: the app in front is the one they're working in (Flippy never activates)."""
+        app, name, pid = sensors.frontmost()
+        self.menu_front = (app, name) if app and pid != os.getpid() else None
+        on = settings.get("help", "mode") != "off"
+        self.help_items["help-toggle"].setState_(1 if on else 0)
+        watch_item = self.help_items["watch-front"]
+        if self.menu_front:
+            watched = self.menu_front[0] in settings.get_list("help", "apps")
+            watch_item.setTitle_(f"Watch {self.menu_front[1]}")
+            watch_item.setState_(1 if watched else 0)
+            watch_item.setEnabled_(True)
+        else:
+            watch_item.setTitle_("Watch this app")
+            watch_item.setState_(0)
+            watch_item.setEnabled_(False)
+
+    # --- help mode (flippy/watch.py) ---
+    def sample(self):
+        return sensors.sample()
+
+    def show_nudge(self, offer, on_help, on_later, on_mute):
+        self.nudge.show(offer, on_help, on_later, on_mute)
+
+    def hide_nudge(self):
+        self.nudge.hide()
+
+    def nudge_visible(self):
+        return self.nudge.visible
 
     def _label_menu(self):
         for key, (item, title) in self.menu_items.items():

@@ -14,7 +14,7 @@ import tempfile
 import threading
 import time
 
-from . import loop, settings, themes
+from . import loop, settings, themes, watch
 from .brain import Brain, BrainError, prepare_image
 from .point import image_to_logical, segments
 
@@ -70,6 +70,10 @@ class Flippy:
         self._apply_claude_settings()
         self._apply_theme()
         settings.on_change(self._on_setting)
+        self.watcher = watch.Watcher()
+        self.watch_id = 0
+        self.sampling = False
+        self._apply_help_settings()
         self._run(self.brain.start(), lambda r, e: log("claude session ready" if not e else f"session start failed: {e}"))
 
         try:
@@ -123,6 +127,15 @@ class Flippy:
             self.ui.quit()
         elif cmd == "ping":
             return "pong"
+        elif cmd.startswith("help-mode "):  # help-mode off|quiet
+            return self.set_command("help.mode " + cmd.split(maxsplit=1)[1])
+        elif cmd.startswith("demo-nudge"):  # show the "need a hand?" card: demo-nudge [stalled|circles|dialog]
+            reason = cmd.split()[1] if len(cmd.split()) > 1 else "stalled"
+            offer = watch.Offer("demo", "Ableton Live", reason)
+            self.ui.show_nudge(offer, lambda: self._nudge_help(offer), lambda: log("nudge: not now"),
+                               lambda: log("nudge: mute"))
+        elif cmd.startswith("watch-app "):  # watch-app <app id>: toggle help mode for that app
+            self.toggle_watch_app(cmd.split(maxsplit=1)[1])
         elif cmd.startswith("q "):  # ask without the box (scripting/testing)
             self.submit(cmd[2:].strip())
         else:
@@ -434,6 +447,66 @@ class Flippy:
         elif self.overlay.showing:
             self._fade_out()
 
+    # --- help mode: offer a hand when they seem stuck (flippy/watch.py) ---
+    def _apply_help_settings(self):
+        self.watcher.apps = settings.get_list("help", "apps")
+        self.watcher.muted = settings.get_list("help", "muted")
+        on = settings.get("help", "mode") != "off" and hasattr(self.ui, "sample")
+        if on and not self.watch_id:
+            self.watch_id = loop.timeout_add(int(watch.SAMPLE_S * 1000), self._watch_tick)
+            log(f"help mode on, watching {sorted(self.watcher.apps) or 'no apps yet'}")
+        elif not on and self.watch_id:
+            loop.source_remove(self.watch_id)
+            self.watch_id = 0
+            self.watcher.reset()
+            self.ui.hide_nudge()
+            log("help mode off")
+
+    def toggle_watch_app(self, app):
+        apps = settings.get_list("help", "apps")
+        apps.symmetric_difference_update({app})
+        settings.set_list("help", "apps", apps)
+        if app in apps and settings.get("help", "mode") == "off":
+            settings.set("help", "mode", "quiet")  # picking an app to watch turns help mode on
+
+    def _watch_tick(self):
+        if (self.busy or self.box.visible or self.overlay.showing or self.overlay.drawing
+                or self.ui.nudge_visible() or self.sampling):
+            self.watcher.reset()  # Flippy's own stuff on screen isn't the person being stuck
+            return True
+        if not self.watcher.apps:
+            return True
+        self.sampling = True
+
+        def work():  # the screen thumbnail takes ~100 ms: off the main thread
+            try:
+                s = self.ui.sample()
+            except Exception as e:
+                log(f"help mode: sampling failed: {e}")
+                s = None
+            loop.idle_add(lambda: self._watch_feed(s) and False)
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def _watch_feed(self, sample):
+        self.sampling = False
+        if sample is None or self.busy or self.box.visible or self.overlay.showing:
+            return
+        offer = self.watcher.feed(sample)
+        if offer:
+            log(f"help mode: offering a hand in {offer.app_name} ({offer.reason})")
+            event("nudge", app=offer.app, reason=offer.reason)
+            self.ui.show_nudge(offer, lambda: self._nudge_help(offer), lambda: self.watcher.not_now(offer.app),
+                               lambda: self._nudge_mute(offer))
+
+    def _nudge_help(self, offer):
+        self.watcher.helped(offer.app)
+        self.submit(offer.question())
+
+    def _nudge_mute(self, offer):
+        self.watcher.mute(offer.app)
+        settings.set_list("help", "muted", settings.get_list("help", "muted") | {offer.app})
+
     # --- settings ---
     def open_settings(self):
         self.ui.open_settings(on_preview=self.preview, on_reset=self.reset_session)
@@ -459,6 +532,8 @@ class Flippy:
             self._apply_theme()
         elif section == "timing" and key == "speed":
             self._refresh_card()
+        elif section == "help":
+            self._apply_help_settings()
         self.overlay.queue_draw()
 
     def _apply_claude_settings(self):

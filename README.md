@@ -77,10 +77,25 @@ flippy-ask dismiss          hide the current answer
 flippy-ask reset            start a fresh Claude session
 flippy-ask settings         open the settings window
 flippy-ask setup            macOS: open the first-run setup window
+flippy-ask help-mode quiet  help mode on (or off)
+flippy-ask watch-app <id>   toggle watching an app in help mode
+flippy-ask demo-nudge       show the "Need a hand?" card
 flippy-ask preview          play a sample walkthrough with the current look
 flippy-ask set look.theme y2k
 flippy-ask quit             stop the daemon
 ```
+
+## Help mode (macOS)
+
+Flippy can offer a hand when you seem stuck in an app you're learning. Turn it on from the menu bar icon: **Help when I'm stuck**, then, with the app you're learning in front, open the menu again and choose **Watch <app>**.
+
+It watches only those apps, using simple local rules, with no Claude involved until you ask:
+
+- **Stalled:** you were busy, then stopped for about 25 seconds while the screen stayed still. If you've been away for more than 3 minutes, it won't ask.
+- **Going in circles:** the screen keeps flipping between the same few states while you click around.
+- **Something popped up:** a small window appears in the middle of the app.
+
+A small card in the top-right asks "Need a hand?". **Help** takes a screenshot and asks Claude what you're probably trying to do. **Not now** makes it wait longer in that app next time, and **Don't ask in <app>** turns it off there. Input is only counted, never read. `flippy-ask demo-nudge` shows the card without waiting. Linux support: see [docs/help-mode-linux.md](docs/help-mode-linux.md).
 
 ## Settings
 
@@ -97,6 +112,8 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `timing.show_seconds`, `timing.max_show_seconds` | how long answers stay up |
 | `timing.step_pace` | `slow`, `normal`, `fast` |
 | `timing.speed` | walkthrough playback speed, `0.5`–`2.0` |
+| `help.mode` | `off`, `quiet` |
+| `help.apps`, `help.muted` | comma-separated app ids (macOS bundle ids, e.g. `com.ableton.live`) |
 | `keys.ask`, `keys.draw` | macOS hotkeys, e.g. `cmd+shift+space` (modifiers: `cmd`, `ctrl`, `option`, `shift`) |
 
 Custom pointers are stored in `~/.config/flippy/pointers/`.
