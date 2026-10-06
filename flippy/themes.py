@@ -1054,10 +1054,10 @@ class Glass(Theme):
         cr.save()
         round_rect(cr, x, y, w, h, R)
         cr.clip()
-        # a whisper of tint so the controls hold together on bright backgrounds
+        # barely any tint: the glass underneath does the work (its frost is set in flippy/mac/ui.py)
         g = cairo.LinearGradient(0, y, 0, y + h)
-        g.add_color_stop_rgba(0, 1, 1, 1, 0.06 * a)
-        g.add_color_stop_rgba(1, 0, 0.05, 0.08, 0.22 * a)
+        g.add_color_stop_rgba(0, 1, 1, 1, 0.02 * a)
+        g.add_color_stop_rgba(1, 0, 0.05, 0.08, 0.07 * a)
         cr.set_source(g)
         cr.paint()
         # soft sheen pooling in the top-left corner, where the light comes from

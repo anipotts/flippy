@@ -38,6 +38,8 @@ from .cairoview import blit
 from .widgets import FlippedView
 
 GLASS = hasattr(AppKit, "NSGlassEffectView")  # macOS 26+
+# How milky (white) the Glass theme's Liquid Glass is, 0-1: the question box, its text field, the answer card.
+FROST = {"box": 0.20, "field": 0.40, "card": 0.08}
 HIDE_SETTLE_MS = 150        # let the window server drop the question box before the screenshot
 FRAME_MS = 16
 
@@ -128,7 +130,7 @@ class Overlay(OverlayBase):
         if GLASS:  # Liquid Glass behind the card for themes that want it (Theme.backdrop); cairo paints on top
             self.glass = AppKit.NSGlassEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, 10, 10))
             self.glass.setStyle_(AppKit.NSGlassEffectViewStyleClear)
-            self.glass.setTintColor_(NSColor.colorWithWhite_alpha_(0.0, 0.12))
+            self.glass.setTintColor_(NSColor.colorWithWhite_alpha_(1.0, FROST["card"]))
             self.glass.setHidden_(True)
             root.addSubview_(self.glass)
         self.view = OverlayView.alloc().initWithFrame_(bounds)
@@ -231,10 +233,10 @@ def box_style(theme):
         st.update(bg=_hex("33363f"), border=_hex("9ca1b3"), border_w=2, radius=2, fg=_hex("00ff6a"),
                   font=(themes.PIXEL_FONT, 24), field_bg=_hex("000000"), field_border=_hex("0c0d12"),
                   hint=_hex("7dffa9"), hint_font=(themes.PIXEL_FONT, 16))
-    elif theme.key == "glass" and GLASS:  # Liquid Glass box; the field is a darker, partly opaque pane
-        st.update(glass=True, bg=None, border=_rgba(1, 1, 1, 0.35), radius=theme.LIQUID_R, fg=_hex("ffffff"),
-                  font=(None, 16), field_bg=_rgba(0.02, 0.05, 0.08, 0.5), field_border=_rgba(1, 1, 1, 0.16),
-                  field_radius=12, hint=_rgba(1, 1, 1, 0.75))
+    elif theme.key == "glass" and GLASS:  # Liquid Glass box; the field is frostier, with dark text on it
+        st.update(glass=True, bg=None, border=_rgba(1, 1, 1, 0.35), radius=theme.LIQUID_R, fg=_rgba(0.08, 0.09, 0.11),
+                  font=(None, 16), field_bg=_rgba(1, 1, 1, FROST["field"]), field_border=_rgba(1, 1, 1, 0.5),
+                  field_radius=12, hint=_rgba(1, 1, 1, 0.9), hint_shadow=True)
     elif theme.key == "glass":
         st.update(bg=_rgba(40 / 255, 46 / 255, 48 / 255, 0.88), border=_rgba(0, 0, 0, 0.7), radius=9, fg=_hex("ffffff"),
                   font=(None, 15), field_bg=_rgba(0, 0, 0, 0.3), field_border=_rgba(0, 0, 0, 0.6), field_radius=12,
@@ -318,7 +320,7 @@ class InputBox:
         if st.get("glass"):
             root = AppKit.NSGlassEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
             root.setStyle_(AppKit.NSGlassEffectViewStyleClear)
-            root.setTintColor_(NSColor.colorWithWhite_alpha_(0.0, 0.15))
+            root.setTintColor_(NSColor.colorWithWhite_alpha_(1.0, FROST["box"]))
             root.setCornerRadius_(st["radius"])
             root.setContentView_(card)
             panel.setHasShadow_(False)  # the glass draws its own edge and depth
@@ -341,6 +343,12 @@ class InputBox:
         hint = NSTextField.labelWithString_("Enter to ask · Esc to close · /new fresh session · /settings")
         hint.setFont_(hint_font)
         hint.setTextColor_(st["hint"])
+        if st.get("hint_shadow"):  # white hint on light frost: a soft shadow keeps it readable
+            shadow = AppKit.NSShadow.alloc().init()
+            shadow.setShadowColor_(NSColor.colorWithWhite_alpha_(0, 0.6))
+            shadow.setShadowBlurRadius_(3)
+            shadow.setShadowOffset_((0, -1))
+            hint.setShadow_(shadow)
         hint.setFrame_(NSMakeRect(self.PAD_X, self.PAD_Y - 2, self.WIDTH, hint_h))
         card.addSubview_(field_box)
         card.addSubview_(hint)
