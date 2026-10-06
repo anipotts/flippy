@@ -247,7 +247,7 @@ def pointer_extent(style, size):
         r = 26 * size
         return r, r, r, r
     if style == "glasshand":
-        return 20 * size, 28 * size, 48 * size, 48 * size
+        return 20 * size, 16 * size, 50 * size, 50 * size
     r = 26 * size
     return r, r, r, r
 
@@ -306,13 +306,11 @@ def _draw_lens(cr, theme, x, y, t, size, backdrop):
 # (x, y, w, h, corner radius, rotation in degrees), in px at size 1, with the fingertip at (0, 0), pointing up.
 # The first piece must be the pointing finger (the tip dot sits in it).
 GLASS_HAND = [
-    (-5, 0, 10, 28, 5, 0),        # middle finger, up
-    (-17, 18, 33, 26, 9, 0),      # palm
-    (-13, 14, 8, 12, 4, 0),       # curled index
-    (5, 14, 8, 12, 4, 0),         # curled ring
-    (12, 17, 6, 11, 3, 0),        # curled pinky
-    (-23, 19, 10, 19, 5, -34),    # thumb, tilted out...
-    (-19, 27, 14, 15, 7, 0),      # ...and the fleshy base that joins it to the palm
+    (-5, 0, 10, 36, 5, 0),        # middle finger, up and long
+    (-15, 25, 34, 24, 10, 0),     # the fist
+    (-15, 19, 10, 13, 5, 0),      # curled index
+    (5, 19, 9, 13, 4.5, 0),       # curled ring
+    (13, 22, 7, 11, 3.5, 0),      # curled pinky (thumb tucked behind, nothing sticking out)
 ]
 
 
@@ -322,7 +320,7 @@ def glass_hand(x, y, t, size, screen_h):
     intro = min(t / 0.3, 1.0)
     drop = -40 * (1 - intro) ** 3
     bob = 3 * math.sin(t * 4) if intro >= 1 else 0
-    flip = y + 46 * size + 4 > screen_h
+    flip = y + 50 * size + 4 > screen_h
     out = []
     for px, py, w, h, r, rot in GLASS_HAND:
         if flip:  # mirror top-bottom around the tip
