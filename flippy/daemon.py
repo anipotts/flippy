@@ -123,6 +123,10 @@ class Flippy:
             self.ui.open_setup()
         elif cmd == "preview":
             self.preview()
+        elif cmd.startswith("demo-point "):  # demo-point <x> <y> <label>|<text>: one pointed step, logical px
+            x, y, rest = cmd.split(maxsplit=3)[1:]
+            label, _, text = rest.partition("|")
+            self.demo_point(float(x), float(y), label, text or label)
         elif cmd == "demo-tutorial":  # a fake tutorial whose first step waits for you to click the Apple menu
             self.preview(tutorial=True)
         elif cmd.startswith("demo-user-click "):  # demo-user-click <x> <y>: as if they clicked there (tests)
@@ -374,7 +378,12 @@ class Flippy:
                 pl["typed_at"] = None
             return True
         if pl["done"] and pl["step"] == len(segs) - 1:
-            return self._finish_playback(seg.text, segs)
+            if self._tutorial_goes_on(pl, segs) and now - pl["typed_at"] >= self._hold_s(seg):
+                self._continue_tutorial()  # they did the last step; Claude just added a remark after it
+                return False
+            if not self._tutorial_goes_on(pl, segs):
+                return self._finish_playback(seg.text, segs)
+            return True
         if now - pl["typed_at"] >= self._hold_s(seg):
             pl["step"] += 1
             pl["shown"] = 0.0
@@ -423,6 +432,14 @@ class Flippy:
             if math.hypot(x - tx, y - ty) <= CLICK_RADIUS * settings.get("look", "pointer_size") ** 0.5:
                 pl["clicked_at"] = time.monotonic()
                 event("user_click", x=x, y=y)
+
+    def _tutorial_goes_on(self, pl, segs):
+        """In a tutorial, after they did the reply's last step-to-do, only remarks without a point followed:
+        the screen has probably changed, so look again instead of ending."""
+        if not (self.tutorial and pl["acted"]):
+            return False
+        last_pointed = max((i for i, sg in enumerate(segs) if sg.point), default=-1)
+        return max(pl["acted"]) >= last_pointed
 
     def _step_done(self, pl):
         pl["acted"].add(pl["step"])
@@ -745,6 +762,21 @@ class Flippy:
         if hasattr(theme, "refresh"):
             theme.refresh()  # e.g. re-read COSMIC's colors
         self.ui.apply_theme(theme)
+
+    def demo_point(self, x, y, label, text):
+        """A one-step answer pointing at (x, y): same spot every time, so a theme/pointer montage lines up."""
+        if self.busy:
+            return
+        self.gen += 1
+        self._stop_playback()
+        self._cancel_fade()
+        self.overlay.clear()
+        self.tutorial = False
+        W, H = self.ui.screen_size()
+        sc = self._scale()
+        shot = (int(W * sc), int(H * sc))
+        self._start_playback(self.gen, shot, shot)
+        self.play["raw"], self.play["done"] = f"{text} [POINT:{int(x * sc)},{int(y * sc)}:{label}]", True
 
     def preview(self, tutorial=False):
         """Fake 3-step walkthrough so theme/pointer/timing changes can be seen in place.
