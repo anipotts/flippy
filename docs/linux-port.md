@@ -1,11 +1,35 @@
-# Help mode on Linux (COSMIC): porting notes
+# Bringing the macOS features to Linux (COSMIC)
+
+Everything below exists on macOS and not yet on Linux. The shared code (Claude,
+pointing, themes, settings, the controller in `flippy/daemon.py`) already works on
+both; what's missing is each feature's platform piece in `flippy/linux/ui.py`. The
+controller checks for those methods (`hasattr(self.ui, ...)`), so a missing piece
+switches its feature off instead of crashing, and macOS-only commands answer "not
+available on this platform yet".
+
+| Feature | On Linux today | What it needs | Section |
+|---|---|---|---|
+| Help mode ("Need a hand?") | off | `sample()`, the nudge card | [Help mode](#help-mode) |
+| Tips while you work | off | `show_tip()` (+ help mode's `sample()`) | [Tips mode](#tips-mode) |
+| Tutorials wait for your click | steps play on a timer | `watch_clicks()` / `unwatch_clicks()` | [Tutorials](#tutorials-that-wait-for-clicks) |
+| Update card | check + install work (`flippy-ask update`), no card | `show_update()` | [Updates](#updates) |
+| Menu bar icon showing your pointer | no tray icon | a StatusNotifierItem | [Tray icon](#tray-icon) |
+| Pause / resume shortcut | **works**: bind a COSMIC shortcut | nothing (docs only) | [Pause shortcut](#pause-shortcut) |
+| Esc cancels draw mode | right-click / hotkey / 60 s timeout cancel | keyboard on the overlay while drawing | [Esc](#esc-cancels-draw-mode) |
+| Scripted clicks (`flippy-ask click`) | no | the RemoteDesktop portal | [Scripted clicks](#scripted-clicks) |
+| Real Liquid Glass (Media Player, Glass, lens, glass hand) | painted look, no blur | a compositor blur protocol | [Glass](#liquid-glass) |
+| Settings window rows for the new settings | edit with `flippy-ask set` | rows in the GTK window | [Settings window](#settings-window) |
+| First-run setup window | the installer prints the steps | optional | [Setup](#first-run-setup) |
+| Demo tools (`shot`, `record`, `nudge`, `demo-nudge`, `demo-tip`) | no | not needed for users | [Demo tools](#demo-tools) |
+
+# Help mode
 
 Help mode watches an app you're learning and, when you seem stuck, offers a
 "Need a hand?" card with **Help** / **Not now** / **Don't ask in <app>**. It's
-deterministic: nothing is sent to Claude until you press Help. It currently runs
-on macOS only. These notes cover how it's built there and how to bring it to
-COSMIC. The short answer: **yes, it's doable on COSMIC**, with one signal
-(input event counts) replaced by a close substitute.
+deterministic: nothing is sent to Claude until you press Help. These notes cover
+how it's built on macOS and how to bring it to COSMIC. The short answer: **yes,
+it's doable on COSMIC**, with one signal (input event counts) replaced by a close
+substitute.
 
 ## How it's built
 
@@ -181,3 +205,106 @@ in `flippy/daemon.py`) is shared and already works on Linux: `flippy-ask update`
 missing piece is the card: give the Linux `Platform` a `show_update(rel, install, later)`
 (the same overlay-drawn card as the help-mode nudge, with Install / Later / What's new).
 `restart()` is already there.
+
+
+## Tray icon
+
+macOS shows a menu bar icon drawn from the equipped pointer, with click rays
+(`flippy/mac/statusicon.py`), plus a menu (Ask, Circle, help mode, settings,
+updates, quit). On COSMIC, apps get a tray icon through **StatusNotifierItem**
+(the D-Bus tray protocol COSMIC's panel shows in its status area):
+
+1. Move the drawing in `statusicon.render()` into shared code. It's plain cairo
+   plus `themes`, and only `image()` is AppKit.
+2. Publish an `org.kde.StatusNotifierItem` on the session bus with `dbus-python`
+   (already a dependency): `IconPixmap` = the rendered ARGB32 at 22 and 44 px,
+   re-sent with `NewIcon` when `look.pointer` or `look.theme` changes
+   (`settings.on_change`), like `_status_icon()` in `flippy/mac/ui.py`.
+3. The menu goes over `com.canonical.dbusmenu`. Mirror `MENU` in `flippy/mac/ui.py`
+   and send each item to `self.command(...)`.
+
+Template images don't exist there, so draw it white with a dark outline (or pick
+from the panel's light/dark setting).
+
+## Pause shortcut
+
+Works today, no code needed: the `pause-toggle` command is shared. Add a COSMIC
+custom shortcut (Settings → Keyboard → Custom shortcuts), for example
+`Super+P` → `~/.local/bin/flippy-ask pause-toggle`. Double-tapping a bare modifier
+(macOS's default, `keys.pause`) isn't possible on Wayland: apps can't watch keys
+outside their own windows, and COSMIC shortcuts need a real key.
+
+## Esc cancels draw mode
+
+On macOS, Esc is registered as a global hotkey only while drawing
+(`set_drawing_input` in `flippy/mac/ui.py`). On COSMIC the overlay is a layer
+surface with `KeyboardMode.NONE`, so it never sees keys. Options:
+
+- Switch the overlay to `KeyboardMode.EXCLUSIVE` in `set_drawing_input(True)`,
+  handle Esc with a `Gtk.EventControllerKey` (calling `self.on_draw_cancel()`), and
+  back to `NONE` when drawing ends. **Test this carefully:** the top of
+  `flippy/linux/ui.py` notes that COSMIC kept eating keys after a layer surface's
+  keyboard mode was switched back. If that still happens, don't ship it.
+- Or bind a COSMIC shortcut on Esc that runs `flippy-ask draw` (the draw hotkey
+  already toggles draw mode off). It would only be wanted while drawing, though,
+  and COSMIC shortcuts are always on, so this is a poor fit.
+
+Until then: right-click, the draw hotkey again, or 60 s of nothing cancels it.
+
+## Scripted clicks
+
+`flippy-ask click <x> <y>` (behind `automation.clicks`) posts real clicks on
+macOS (`click()` in `flippy/mac/ui.py`). Wayland doesn't let apps inject input
+directly; the sanctioned way is the **RemoteDesktop portal**
+(`org.freedesktop.portal.RemoteDesktop`): create a session, `SelectDevices`
+(pointer), `Start` (the user approves once; keep the `restore_token`), then
+`NotifyPointerMotionAbsolute` + `NotifyPointerButton`. Implement it as `click()` on
+the Linux `Platform`; the controller already refuses when the setting is off. It's
+only needed for recording demos, so it's low priority.
+
+## Liquid Glass
+
+On macOS, the Media Player and Glass themes, the glass lens and the glass hand
+sit on `NSGlassEffectView`: real blur and refraction of what's behind
+(`has_backdrop`, `_place_glass` in `flippy/mac/ui.py`). On Linux `has_backdrop`
+is False and the themes paint a stand-in (`Theme.backdrop` is ignored, and
+`MediaPlayer._classic`, `Glass` and `_draw_lens` / `_draw_glass_hand` draw their
+no-backdrop versions), which already looks right without blur.
+
+For real blur, the compositor has to blur behind a region of the layer surface.
+Check whether your cosmic-comp offers a background blur protocol (look for
+`ext-background-effect` or a COSMIC blur protocol in `wayland-info`). If it does,
+request blur for the card's rect each frame (the same rect `card_layout()` gives
+`_place_glass`) and set `has_backdrop = True` on the Linux `Overlay`.
+
+## Settings window
+
+The GTK settings window (`flippy/linux/settings_window.py`) predates these
+settings. Until it has rows for them, use `flippy-ask set`:
+
+| Setting | Row to add (where the macOS window has it) |
+|---|---|
+| `help.mode` (`off` / `quiet` / `tips`) | a help section; macOS uses the menu bar instead |
+| `help.apps`, `help.muted` | a list of watched apps (app ids) with remove buttons |
+| `timing.wait_for_clicks` | Timing → "Wait for my clicks" |
+| `look.player_shine` | Appearance → "Media Player reflections" (only matters once there's blur) |
+| `updates.check` | Claude → Updates, with "Check now" running `update` |
+| `automation.clicks` | only once scripted clicks exist on Linux |
+| `keys.pause` | not here: on COSMIC it's a system shortcut (see above) |
+
+The glass lens and glass hand are already in its pointer list.
+
+## First-run setup
+
+macOS needs a setup window because of its permissions (Screen Recording,
+Accessibility) and the app bundle. On Linux, `scripts/install_linux.sh` prints the
+remaining steps (Claude login, COSMIC shortcuts). A GTK assistant that checks the
+Claude login (the CLI's credentials) and offers to add the shortcuts by writing
+COSMIC's shortcuts file would be a nice extra, not a requirement.
+
+## Demo tools
+
+`flippy-ask shot`, `record`, `nudge`, `demo-nudge` and `demo-tip` exist for
+recording the macOS demo. On Linux they answer "not available on this platform
+yet". The Linux reel has its own recorders (`scripts/record_reel.py`,
+`scripts/record_raw.py`). Nothing to port unless you want the same demo there.

@@ -58,12 +58,13 @@ Needs COSMIC on Wayland (it uses `wlr-layer-shell` through gtk4-layer-shell and 
 |---|---|
 | `Super+Shift+Space` | `~/.local/bin/flippy-ask` |
 | `Super+Alt` | `~/.local/bin/flippy-ask draw` |
+| `Super+P` (optional) | `~/.local/bin/flippy-ask pause-toggle` |
 
 Use the full path; custom shortcuts don't always see `~/.local/bin` on `PATH`. The daemon starts itself on the first press, so there's no autostart to set up.
 
 If you installed gtk4-layer-shell somewhere other than `~/.local`, set `FLIPPY_LAYER_SHELL_LIB` to its library directory.
 
-Single monitor only for now, on both platforms.
+Single monitor only for now, on both platforms. Some macOS features (help mode, tips, the tray icon, real Liquid Glass) aren't on Linux yet; [docs/linux-port.md](docs/linux-port.md) lists them all and how to add each.
 
 ## Updates
 
@@ -110,7 +111,7 @@ It watches only those apps, using simple local rules, with no Claude involved un
 - **Going in circles:** the screen keeps flipping between the same few states while you click around.
 - **Something popped up:** a small window appears in the middle of the app.
 
-A small card in the top-right asks "Need a hand?". **Help** takes a screenshot and asks Claude what you're probably trying to do. **Not now** makes it wait longer in that app next time, and **Don't ask in <app>** turns it off there. Input is only counted, never read. `flippy-ask demo-nudge` shows the card without waiting. Linux support: see [docs/help-mode-linux.md](docs/help-mode-linux.md).
+A small card in the top-right asks "Need a hand?". **Help** takes a screenshot and asks Claude what you're probably trying to do. **Not now** makes it wait longer in that app next time, and **Don't ask in <app>** turns it off there. Input is only counted, never read. `flippy-ask demo-nudge` shows the card without waiting. Linux support: see [docs/linux-port.md](docs/linux-port.md).
 
 ### Tips while you work
 

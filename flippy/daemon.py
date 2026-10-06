@@ -28,6 +28,7 @@ STEP_TYPE_CPS = 90          # walkthrough step text types in at this many chars/
 STEP_HOLD = {"slow": (3.5, 0.07), "normal": (2.2, 0.045), "fast": (1.2, 0.025)}  # (min s, s per char)
 READ_S_PER_CHAR = 0.04      # extra time the final answer stays up per character
 DRAW_TIMEOUT_S = 60         # leave draw mode (and give the mouse back) if nothing happens
+NOT_HERE = "not available on this platform yet (see docs/linux-port.md)"
 TIPS_RETRY_S = 300          # after a failed tip deck write, wait this long before trying again
 CLICK_RADIUS = 55           # a click this close (logical px) to a :click step's target counts as doing it
 CLICK_SETTLE_S = 0.5        # after their click, let the app react before moving on
@@ -164,11 +165,17 @@ class Flippy:
             parts = cmd.split(maxsplit=2)
             reason = parts[1] if len(parts) > 1 else "stalled"
             offer = watch.Offer("demo", parts[2] if len(parts) > 2 else "Ableton Live", reason)
+            if not hasattr(self.ui, "show_nudge"):
+                return NOT_HERE
             self.ui.show_nudge(offer, lambda: self._nudge_help(offer), lambda: log("nudge: not now"),
                                lambda: log("nudge: mute"))
         elif cmd.startswith("shot "):  # shot <path.png>: screenshot through Flippy's permission (demo scripts)
+            if not hasattr(self.ui, "screenshot_to"):
+                return NOT_HERE
             self.ui.screenshot_to(cmd[5:].strip())
         elif cmd.startswith("record "):  # record start <path.mov> | record stop
+            if not hasattr(self.ui, "start_recording"):
+                return NOT_HERE
             parts = cmd.split(maxsplit=2)
             if parts[1] == "start" and len(parts) == 3:
                 self.ui.start_recording(parts[2])
@@ -179,6 +186,8 @@ class Flippy:
         elif cmd.startswith("click "):  # click <x> <y> [double]: logical px, top-left origin (Settings: automation)
             return self.click_command(cmd[6:].split())
         elif cmd.startswith("nudge "):  # nudge <button title>: press a button on the help card (demo scripts)
+            if not hasattr(self.ui, "press_nudge"):
+                return NOT_HERE
             return "ok" if self.ui.press_nudge(cmd[6:].strip()) else "no such button"
         elif cmd.startswith("goal "):  # goal <app id> <what they want to do>: steers that app's tips
             parts = cmd.split(maxsplit=2)
@@ -186,6 +195,8 @@ class Flippy:
                 return "usage: goal <app id> <what you want to do>"
             self.set_goal(parts[1], parts[2])
         elif cmd.startswith("demo-tip"):  # demo-tip [app id]: that app's next real tip, else a sample one
+            if not hasattr(self.ui, "show_tip"):
+                return NOT_HERE
             parts = cmd.split(maxsplit=1)
             deck = tips.Deck.load(parts[1]) if len(parts) > 1 else None
             tip = deck.next_tip() if deck else None
