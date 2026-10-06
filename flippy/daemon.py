@@ -134,19 +134,39 @@ class Flippy:
             return "pong"
         elif cmd.startswith("help-mode "):  # help-mode off|quiet
             return self.set_command("help.mode " + cmd.split(maxsplit=1)[1])
-        elif cmd.startswith("demo-nudge"):  # show the "need a hand?" card: demo-nudge [stalled|circles|dialog]
-            reason = cmd.split()[1] if len(cmd.split()) > 1 else "stalled"
-            offer = watch.Offer("demo", "Ableton Live", reason)
+        elif cmd.startswith("demo-nudge"):  # the "need a hand?" card: demo-nudge [stalled|circles|dialog] [app name]
+            parts = cmd.split(maxsplit=2)
+            reason = parts[1] if len(parts) > 1 else "stalled"
+            offer = watch.Offer("demo", parts[2] if len(parts) > 2 else "Ableton Live", reason)
             self.ui.show_nudge(offer, lambda: self._nudge_help(offer), lambda: log("nudge: not now"),
                                lambda: log("nudge: mute"))
+        elif cmd.startswith("shot "):  # shot <path.png>: screenshot through Flippy's permission (demo scripts)
+            self.ui.screenshot_to(cmd[5:].strip())
+        elif cmd.startswith("record "):  # record start <path.mov> | record stop
+            parts = cmd.split(maxsplit=2)
+            if parts[1] == "start" and len(parts) == 3:
+                self.ui.start_recording(parts[2])
+                event("record_start", path=parts[2])
+            else:
+                self.ui.stop_recording()
+                event("record_stop")
+        elif cmd.startswith("nudge "):  # nudge <button title>: press a button on the help card (demo scripts)
+            return "ok" if self.ui.press_nudge(cmd[6:].strip()) else "no such button"
         elif cmd.startswith("goal "):  # goal <app id> <what they want to do>: steers that app's tips
             parts = cmd.split(maxsplit=2)
             if len(parts) < 3:
                 return "usage: goal <app id> <what you want to do>"
             self.set_goal(parts[1], parts[2])
-        elif cmd.startswith("demo-tip"):  # show a tip card
-            self._show_tip(tips.Deck("demo", "Ableton Live"), {"text": "Hold ⌘ while dragging a clip to duplicate it "
-                                                                       "instead of moving it.", "level": 1, "state": "new"})
+        elif cmd.startswith("demo-tip"):  # demo-tip [app id]: that app's next real tip, else a sample one
+            parts = cmd.split(maxsplit=1)
+            deck = tips.Deck.load(parts[1]) if len(parts) > 1 else None
+            tip = deck.next_tip() if deck else None
+            if tip:
+                self._show_tip(deck, tip)
+            else:
+                self._show_tip(tips.Deck("demo", "Ableton Live"), {"text": "Hold ⌘ while dragging a clip to duplicate "
+                                                                           "it instead of moving it.", "level": 1,
+                                                                   "state": "new"})
         elif cmd.startswith("watch-app "):  # watch-app <app id>: toggle help mode for that app
             self.toggle_watch_app(cmd.split(maxsplit=1)[1])
         elif cmd.startswith("q "):  # ask without the box (scripting/testing)
@@ -371,6 +391,8 @@ class Flippy:
     # --- player controls (clicked on the Glass/Y2K skins) ---
     def control(self, name, frac=0.0):
         log("control:", name, f"{frac:.2f}" if name in ("seek", "speed") else "")
+        event("control", name=name)
+        self.overlay.pressed = (name, time.monotonic())  # light the button up, also when scripted
         if name in ("stop", "close", "min"):
             self.dismiss()
             return

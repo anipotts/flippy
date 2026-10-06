@@ -12,10 +12,12 @@ gets the keyboard back as soon as the question box closes.
 """
 import math
 import os
+import json
 import socket
 import subprocess
 import tempfile
 import threading
+import time
 
 import AppKit
 import objc
@@ -700,7 +702,39 @@ class Platform:
             on_saved(pointers.PREFIX + name)
         pixelart.demo_paint(ed.art, ed._redraw, set_tool, lambda col: setattr(ed, "color", col), done)
 
+    # --- demo recording (scripts/demo_mac.py): run as Flippy's children, so they use its Screen Recording ---
+    def screenshot_to(self, path):
+        subprocess.run(["/usr/sbin/screencapture", "-x", "-m", "-t", "png", path], timeout=15)
+
+    def start_recording(self, path):
+        """ffmpeg screen capture to path; path + '.json' gets the clocks to line events up with frames."""
+        self.stop_recording()
+        log = open(path + ".log", "w")
+        self.recorder = subprocess.Popen(
+            ["ffmpeg", "-y", "-hide_banner", "-f", "avfoundation", "-capture_cursor", "1", "-framerate", "30",
+             "-i", "Capture screen 0:none", "-c:v", "h264_videotoolbox", "-b:v", "24M", "-pix_fmt", "yuv420p", path],
+            stdin=subprocess.PIPE, stdout=log, stderr=log)
+        clocks = {"wall": time.time(), "mono": time.monotonic()}  # avfoundation stamps frames with the monotonic clock
+        with open(path + ".json", "w") as f:
+            json.dump(clocks, f)
+        self.recording = path
+
+    def stop_recording(self):
+        rec = getattr(self, "recorder", None)
+        if rec and rec.poll() is None:
+            rec.stdin.write(b"q")  # ffmpeg's own clean stop: finishes the file
+            rec.stdin.flush()
+            try:
+                rec.wait(20)
+            except subprocess.TimeoutExpired:
+                rec.kill()
+        self.recorder = None
+
+    def press_nudge(self, title):
+        return self.nudge.press(title)
+
     def quit(self):
+        self.stop_recording()
         AppHelper.callAfter(NSApp.terminate_, None)
 
     def screen_size(self):

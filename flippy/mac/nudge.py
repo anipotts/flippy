@@ -46,6 +46,7 @@ class Nudge:
         head = label(head_text, 13, bold=True, color=NSColor.whiteColor(), wrap_width=W - 2 * PAD)
         detail = label(detail_text, 12, color=NSColor.colorWithWhite_alpha_(1, 0.8), wrap_width=W - 2 * PAD)
         btns = [button(title, act(fn), self.keep, primary=(i == len(buttons) - 1)) for i, (title, fn) in enumerate(buttons)]
+        self.buttons = {title.lower(): b for (title, _), b in zip(buttons, btns)}
         small = None
         if link:
             small = button(link[0], act(link[1]), self.keep)
@@ -53,6 +54,7 @@ class Nudge:
             small.setContentTintColor_(NSColor.colorWithWhite_alpha_(1, 0.6))
             small.setFont_(AppKit.NSFont.systemFontOfSize_(11))
             small.sizeToFit()
+            self.buttons["link"] = small
 
         y = PAD
         hh, dh = head.frame().size.height, detail.frame().size.height
@@ -103,6 +105,14 @@ class Nudge:
         self.panel = panel
         if on_timeout:
             self.timer = loop.timeout_add(int(timeout_s * 1000), lambda: act(on_timeout)() and False)
+
+    def press(self, title):
+        """Click a button on screen (scripted demos): its title, case-insensitive, or "link"."""
+        b = getattr(self, "buttons", {}).get(title.lower()) if self.panel else None
+        if b is None:
+            return False
+        b.performClick_(None)  # highlights like a real click, then runs it
+        return True
 
     def hide(self):
         if self.timer:
