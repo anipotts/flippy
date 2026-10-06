@@ -310,19 +310,23 @@ GLASS_HAND = [
     (-15, 25, 34, 24, 10, 0),     # the fist
     (-15, 19, 10, 13, 5, 0),      # curled index
     (5, 19, 9, 13, 4.5, 0),       # curled ring
-    (13, 22, 7, 11, 3.5, 0),      # curled pinky (thumb tucked behind, nothing sticking out)
+    (13, 22, 7, 11, 3.5, 0),      # curled pinky
 ]
+# The thumb folds across the curled fingers. It's inside the fist, so as glass it would just melt into it:
+# it's drawn on top instead, as a lit outline clipped to the hand.
+GLASS_THUMB = (-19, 31, 26, 9, 4.5, -6)
 
 
-def glass_hand(x, y, t, size, screen_h):
+def glass_hand(x, y, t, size, screen_h, pieces=None):
     """Where the glass hand's pieces go: [(x, y, w, h, radius, rotation)] in screen px, tip on (x, y).
-    Drops in and bobs like the pixel hand, and flips to point down when there's no room below."""
+    Drops in and bobs like the pixel hand, and flips to point down when there's no room below.
+    pieces: lay out these instead of GLASS_HAND (e.g. [GLASS_THUMB])."""
     intro = min(t / 0.3, 1.0)
     drop = -40 * (1 - intro) ** 3
     bob = 3 * math.sin(t * 4) if intro >= 1 else 0
     flip = y + 50 * size + 4 > screen_h
     out = []
-    for px, py, w, h, r, rot in GLASS_HAND:
+    for px, py, w, h, r, rot in (GLASS_HAND if pieces is None else pieces):
         if flip:  # mirror top-bottom around the tip
             py, rot = -(py + h), -rot
         oy = (-2 - drop - bob) if flip else (2 + drop + bob)
@@ -381,6 +385,17 @@ def _draw_glass_hand(cr, theme, x, y, t, size, screen_h, backdrop):
     cr.fill()
     cr.pop_group_to_source()
     cr.paint()
+    cr.save()  # the thumb across the fist, clipped to the hand
+    for pc in pieces:
+        _piece_path(cr, *pc)
+    cr.clip()
+    _piece_path(cr, *glass_hand(x, y, t, size, screen_h, [GLASS_THUMB])[0])
+    cr.set_source_rgba(1, 1, 1, 0.08)
+    cr.fill_preserve()
+    cr.set_source_rgba(1, 1, 1, 0.5)
+    cr.set_line_width(1.2)
+    cr.stroke()
+    cr.restore()
     fx, fy, fw, fh = pieces[0][:4]  # the exact spot: just inside the fingertip, whichever way it points
     tip = fy + 4 * size if abs(fy - y) < abs(fy + fh - y) else fy + fh - 4 * size
     cr.arc(x, tip, 2.2 * size, 0, 2 * math.pi)
