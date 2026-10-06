@@ -747,27 +747,25 @@ class Platform:
         subprocess.run(["/usr/sbin/screencapture", "-x", "-m", "-t", "png", path], timeout=15)
 
     def start_recording(self, path):
-        """ffmpeg screen capture to path; path + '.json' gets the clocks to line events up with frames."""
+        """Record the main display with macOS's own screencapture (screen only: no cameras, no mic).
+        path + '.json' gets the wall clock at stop; the first frame is then stop - the video's duration."""
         self.stop_recording()
-        log = open(path + ".log", "w")
-        self.recorder = subprocess.Popen(
-            ["ffmpeg", "-y", "-hide_banner", "-f", "avfoundation", "-capture_cursor", "1", "-framerate", "30",
-             "-i", "Capture screen 0:none", "-c:v", "h264_videotoolbox", "-b:v", "24M", "-pix_fmt", "yuv420p", path],
-            stdin=subprocess.PIPE, stdout=log, stderr=log)
-        clocks = {"wall": time.time(), "mono": time.monotonic()}  # avfoundation stamps frames with the monotonic clock
-        with open(path + ".json", "w") as f:
-            json.dump(clocks, f)
+        self.recorder = subprocess.Popen(["/usr/sbin/screencapture", "-v", "-C", "-x", "-D1", path],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.recording = path
 
     def stop_recording(self):
         rec = getattr(self, "recorder", None)
         if rec and rec.poll() is None:
-            rec.stdin.write(b"q")  # ffmpeg's own clean stop: finishes the file
-            rec.stdin.flush()
+            import signal
+            stopped = time.time()
+            rec.send_signal(signal.SIGINT)  # screencapture's own stop: finishes the file
             try:
-                rec.wait(20)
+                rec.wait(30)
             except subprocess.TimeoutExpired:
                 rec.kill()
+            with open(self.recording + ".json", "w") as f:
+                json.dump({"stopped": stopped}, f)
         self.recorder = None
 
     def click(self, x, y, double=False):
