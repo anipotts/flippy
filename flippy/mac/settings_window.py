@@ -17,7 +17,7 @@ from .. import pointers, settings, themes
 from . import hotkeys, pointer_editor
 from .cairoview import cairo_view
 from .system import appearance
-from .widgets import Form, button, label, popup, set_popup, slider
+from .widgets import Form, button, checkbox, label, popup, set_popup, slider
 
 MODELS = [("default", "Account default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")]
 EFFORTS = [("low", "Low (fastest)"), ("medium", "Medium"), ("high", "High"), ("max", "Max (slowest)")]
@@ -271,6 +271,11 @@ class SettingsWindow:
             rec = KeyRecorder(name, f.keep)
             self.recorders.append(rec)
             f.row(what, None, rec.btn)
+        f.group("Automation", "Lets scripts click on screen with flippy-ask click (used for recording demos). "
+                              "Off by default: when on, any program running as you can make Flippy click. "
+                              "Claude's answers never click. Also needs the Accessibility permission.")
+        f.row("Let scripts click", None, checkbox("", settings.get("automation", "clicks"),
+                                                  lambda on: settings.set("automation", "clicks", on), f.keep))
         f.group("In the question box")
         for cmd, what in (("/new", "Start a fresh session"), ("/settings", "Open this window"), ("Esc", "Close")):
             f.row(what, cmd)

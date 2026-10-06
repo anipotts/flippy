@@ -21,6 +21,7 @@ import time
 
 import AppKit
 import objc
+import Quartz
 from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyAccessory, NSBackingStoreBuffered,
                     NSColor, NSCursor, NSEvent, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
                     NSImage, NSMenu, NSMenuItem, NSPanel, NSScreen, NSScreenSaverWindowLevel,
@@ -729,6 +730,24 @@ class Platform:
             except subprocess.TimeoutExpired:
                 rec.kill()
         self.recorder = None
+
+    def click(self, x, y, double=False):
+        """Post a real left click at (x, y) on the main display (logical px, top-left origin)."""
+        if not Quartz.CGPreflightPostEventAccess():
+            Quartz.CGRequestPostEventAccess()  # the system prompt, the first time
+            return ("Flippy needs the Accessibility permission to click: System Settings > Privacy & Security > "
+                    "Accessibility, turn on Flippy, then restart it")
+        pt = Quartz.CGPointMake(x, y)
+        move = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, pt, Quartz.kCGMouseButtonLeft)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, move)
+        time.sleep(0.05)
+        for n in (1, 2) if double else (1,):
+            for kind in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
+                ev = Quartz.CGEventCreateMouseEvent(None, kind, pt, Quartz.kCGMouseButtonLeft)
+                Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventClickState, n)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+                time.sleep(0.03)
+        return "ok"
 
     def press_nudge(self, title):
         return self.nudge.press(title)

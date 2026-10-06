@@ -150,6 +150,8 @@ class Flippy:
             else:
                 self.ui.stop_recording()
                 event("record_stop")
+        elif cmd.startswith("click "):  # click <x> <y> [double]: logical px, top-left origin (Settings: automation)
+            return self.click_command(cmd[6:].split())
         elif cmd.startswith("nudge "):  # nudge <button title>: press a button on the help card (demo scripts)
             return "ok" if self.ui.press_nudge(cmd[6:].strip()) else "no such button"
         elif cmd.startswith("goal "):  # goal <app id> <what they want to do>: steers that app's tips
@@ -614,12 +616,28 @@ class Flippy:
     def open_settings(self):
         self.ui.open_settings(on_preview=self.preview, on_reset=self.reset_session)
 
+    def click_command(self, args):
+        """Scripted clicks for demos and automation. Off unless turned on in Settings; Claude never triggers these."""
+        if not settings.get("automation", "clicks"):
+            return "clicks are off: turn on Settings > Hotkeys > Let scripts click (automation.clicks)"
+        if not hasattr(self.ui, "click"):
+            return "clicks aren't supported on this platform yet"
+        try:
+            x, y = float(args[0]), float(args[1])
+        except (IndexError, ValueError):
+            return "usage: click <x> <y> [double]"
+        log(f"click at {x:.0f},{y:.0f}" + (" (double)" if "double" in args[2:] else ""))
+        return self.ui.click(x, y, double="double" in args[2:])
+
     def set_command(self, arg):
         try:
             path, raw = arg.split(maxsplit=1)
             section, key = path.split(".")
             default = settings.DEFAULTS[section][key]
-            value = type(default)(float(raw)) if isinstance(default, (int, float)) else raw
+            if isinstance(default, bool):
+                value = raw.lower() in ("1", "true", "on", "yes")
+            else:
+                value = type(default)(float(raw)) if isinstance(default, (int, float)) else raw
             if not settings._valid(section, key, value):
                 return f"invalid value for {path}; choices: {settings.CHOICES.get((section, key), type(default).__name__)}"
             settings.set(section, key, value)

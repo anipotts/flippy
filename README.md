@@ -82,6 +82,7 @@ flippy-ask watch-app <id>   toggle watching an app in help mode
 flippy-ask demo-nudge       show the "Need a hand?" card
 flippy-ask goal <id> <text> set what you want to do in an app (steers its tips)
 flippy-ask demo-tip         show a tip card
+flippy-ask click <x> <y>    click on screen (only with automation.clicks on)
 flippy-ask preview          play a sample walkthrough with the current look
 flippy-ask set look.theme y2k
 flippy-ask quit             stop the daemon
@@ -126,6 +127,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `timing.speed` | walkthrough playback speed, `0.5`–`2.0` |
 | `help.mode` | `off`, `quiet` (offer a hand when stuck), `tips` (that, plus cached tips) |
 | `help.apps`, `help.muted` | comma-separated app ids (macOS bundle ids, e.g. `com.ableton.live`) |
+| `automation.clicks` | `false` (default) or `true`: lets `flippy-ask click <x> <y> [double]` click on screen (macOS, needs the Accessibility permission). When on, any program running as you can make Flippy click; Claude's answers never do. |
 | `keys.ask`, `keys.draw` | macOS hotkeys, e.g. `cmd+shift+space` (modifiers: `cmd`, `ctrl`, `option`, `shift`) |
 
 Custom pointers are stored in `~/.config/flippy/pointers/`.

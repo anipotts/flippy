@@ -37,6 +37,9 @@ DEFAULTS = {
         "apps": "",             # comma-separated app ids to watch (macOS bundle ids)
         "muted": "",            # apps where you chose "don't ask"
     },
+    "automation": {
+        "clicks": False,        # let `flippy-ask click` click on screen (macOS: needs the Accessibility permission)
+    },
     "keys": {                   # global hotkeys (macOS; on COSMIC they're set in COSMIC Settings)
         "ask": "cmd+shift+space",
         "draw": "ctrl+shift+space",
