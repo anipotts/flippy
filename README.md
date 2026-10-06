@@ -162,6 +162,6 @@ scripts/    demo recording and video editing (record_reel.py, edit_reel.py, reel
 
 ## Credits
 
-- Pointing protocol and prompt adapted from [farzaa/clicky](https://github.com/farzaa/clicky) (MIT).
+- Pointing protocol and prompt adapted from [farzaa/clicky](https://github.com/farzaa/clicky) (MIT, Copyright (c) 2026 Farza). License text in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - [gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell) for the Linux overlay; [PyObjC](https://github.com/ronaldoussoren/pyobjc) for the macOS one.
 - [VT323](https://fonts.google.com/specimen/VT323) font (SIL Open Font License, see `flippy/fonts/OFL.txt`).

@@ -9,6 +9,7 @@ from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKCli
 
 from .point import pick_target_size
 
+# The pointing instructions are adapted from Clicky (MIT: see THIRD_PARTY_NOTICES.md).
 SYSTEM_PROMPT = """\
 you're a friendly tutor that can see the user's screen. they typed a question; your reply is shown in a small panel.
 

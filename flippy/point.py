@@ -1,4 +1,4 @@
-"""POINT tag protocol (from Clicky) and image<->screen coordinate mapping."""
+"""POINT tag protocol (from Clicky, MIT: see THIRD_PARTY_NOTICES.md) and image<->screen coordinate mapping."""
 import re
 from dataclasses import dataclass
 
