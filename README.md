@@ -19,13 +19,16 @@ Claude only answers: it gets no tools and can't touch your files. It runs on you
 
 ## Install
 
+[![Install on macOS](https://img.shields.io/badge/Install_on-macOS-111?style=for-the-badge&logo=apple&logoColor=white)](#macos)
+[![Install on Linux (COSMIC)](https://img.shields.io/badge/Install_on-Linux_(COSMIC)-e95420?style=for-the-badge&logo=linux&logoColor=white)](#linux-cosmic)
+
+One command on either: open Terminal and paste
+
 ```bash
-git clone https://github.com/kap-il/flippy ~/Projects/flippy
-cd ~/Projects/flippy
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/kap-il/flippy/main/install.sh | bash
 ```
 
-The installer picks the right steps for your OS. Re-run it any time to update.
+It downloads Flippy to `~/flippy` (set `FLIPPY_DIR` to put it elsewhere) and runs the right installer for your OS. Run it again any time to update. Prefer to look first? `git clone https://github.com/kap-il/flippy && cd flippy && ./install.sh` does the same.
 
 ### macOS
 

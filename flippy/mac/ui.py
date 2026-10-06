@@ -36,7 +36,7 @@ from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 
 from .. import loop, settings, themes
 from ..overlay import OverlayBase
-from . import hotkeys, sensors
+from . import hotkeys, sensors, statusicon
 from .nudge import Nudge
 from .cairoview import blit
 from .widgets import FlippedView
@@ -567,8 +567,9 @@ class Platform:
 
     def _menu_bar(self):
         self.status = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
-        img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("cursorarrow.rays", "Flippy")
-        self.status.button().setImage_(img)
+        self._status_icon()
+        settings.on_change(lambda section, key, value: section == "look" and key in ("pointer", "theme")
+                           and self._status_icon())  # the icon is the equipped pointer
         self.target = MenuTarget.alloc().init()
         self.target.platform = self
         menu = NSMenu.alloc().init()
@@ -653,6 +654,15 @@ class Platform:
 
     def nudge_visible(self):
         return self.nudge.visible
+
+    def _status_icon(self):
+        try:
+            img = statusicon.image()
+        except Exception as e:  # never lose the menu bar icon over a drawing problem
+            print(f"flippy: menu bar icon: {e}", flush=True)
+            img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("cursorarrow.rays", "Flippy")
+        img.setAccessibilityDescription_("Flippy")
+        self.status.button().setImage_(img)
 
     def _label_menu(self):
         for key, (item, title) in self.menu_items.items():

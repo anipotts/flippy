@@ -9,3 +9,11 @@ env.sh
 *.raw.webm
 demo_raw/
 reel_raw/
+# demo recording/editing (local only)
+scripts/demo_mac.py
+scripts/edit_demo_mac.py
+flippy-demo/
+*.mov
+*.mp3
+*.m4a
+*.wav
