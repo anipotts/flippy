@@ -247,7 +247,7 @@ def pointer_extent(style, size):
         r = 26 * size
         return r, r, r, r
     if style == "glasshand":
-        return 26 * size, 18 * size, 48 * size, 48 * size
+        return 20 * size, 28 * size, 48 * size, 48 * size
     r = 26 * size
     return r, r, r, r
 
@@ -301,16 +301,18 @@ def _draw_lens(cr, theme, x, y, t, size, backdrop):
     cr.fill()
 
 
-# The Liquid Glass hand: rounded pieces that a glass container fuses into one shape.
+# The Liquid Glass hand: rounded pieces that a glass container fuses into one shape. It points the way
+# the app icon's pixel hand always looked like it was pointing: middle finger up, the rest curled.
 # (x, y, w, h, corner radius, rotation in degrees), in px at size 1, with the fingertip at (0, 0), pointing up.
+# The first piece must be the pointing finger (the tip dot sits in it).
 GLASS_HAND = [
-    (-5, 0, 10, 28, 5, 0),        # index finger
-    (-7, 18, 30, 26, 9, 0),       # palm
-    (5, 13, 8, 13, 4, 0),         # curled fingers: knuckles
-    (12, 15, 7, 12, 3.5, 0),
-    (18, 18, 6, 11, 3, 0),
-    (-13, 19, 10, 19, 5, -34),    # thumb, tilted out...
-    (-9, 27, 14, 15, 7, 0),       # ...and the fleshy base that joins it to the palm
+    (-5, 0, 10, 28, 5, 0),        # middle finger, up
+    (-17, 18, 33, 26, 9, 0),      # palm
+    (-13, 14, 8, 12, 4, 0),       # curled index
+    (5, 14, 8, 12, 4, 0),         # curled ring
+    (12, 17, 6, 11, 3, 0),        # curled pinky
+    (-23, 19, 10, 19, 5, -34),    # thumb, tilted out...
+    (-19, 27, 14, 15, 7, 0),      # ...and the fleshy base that joins it to the palm
 ]
 
 
