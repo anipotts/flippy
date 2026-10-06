@@ -309,7 +309,8 @@ GLASS_HAND = [
     (5, 13, 8, 13, 4, 0),         # curled fingers: knuckles
     (12, 15, 7, 12, 3.5, 0),
     (18, 18, 6, 11, 3, 0),
-    (-15, 22, 8, 18, 4, -38),     # thumb, tilted out
+    (-13, 19, 10, 19, 5, -34),    # thumb, tilted out...
+    (-9, 27, 14, 15, 7, 0),       # ...and the fleshy base that joins it to the palm
 ]
 
 
