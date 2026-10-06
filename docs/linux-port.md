@@ -306,5 +306,4 @@ COSMIC's shortcuts file would be a nice extra, not a requirement.
 
 `flippy-ask shot`, `record`, `nudge`, `demo-nudge` and `demo-tip` exist for
 recording the macOS demo. On Linux they answer "not available on this platform
-yet". The Linux reel has its own recorders (`scripts/record_reel.py`,
-`scripts/record_raw.py`). Nothing to port unless you want the same demo there.
+yet". Nothing to port unless you want to record the same kind of demo on Linux.

@@ -17,3 +17,9 @@ flippy-demo/
 *.mp3
 *.m4a
 *.wav
+# dev experiments and video tooling (not part of Flippy)
+spikes/
+scripts/record_*.py
+scripts/edit_*.py
+scripts/reel_music.py
+scripts/demo_*.py

@@ -175,8 +175,9 @@ flippy/     shared: daemon (controller), Claude brain, overlay painting, POINT-t
 flippy/linux/  GTK + gtk4-layer-shell windows, portal screenshots, settings window, pointer editor
 flippy/mac/    AppKit overlay and windows, screencapture, Carbon hotkeys, menu bar, first-run setup
 packaging/macos/  Flippy.app launcher (Swift) and icon
-spikes/     the original standalone experiments (overlay, screenshot, brain)
-scripts/    demo recording and video editing (record_reel.py, edit_reel.py, reel_music.py, Blender scene)
+scripts/    the macOS and Linux installers, release.sh
+tests/      python -m unittest discover tests
+docs/       linux-port.md: the macOS features not on Linux yet, and how to add each
 ```
 
 ## Credits
