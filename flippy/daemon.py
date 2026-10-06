@@ -405,7 +405,7 @@ class Flippy:
             progress = (step + frac) / len(known)
         text = seg.text[:int(pl["shown"])] or " "
         if pl["waiting"] and step == pl["step"]:
-            text += "\n→ Your turn: click it"
+            text += "\nYour turn: click it"
         self.overlay.show_text(text,
                                header=seg.point.label if seg.point else None,
                                follow=pl["pointed"],
