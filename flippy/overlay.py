@@ -20,6 +20,7 @@ CARD_MARGIN_BOTTOM = 110    # clear the dock
 class OverlayBase:
     card_margin_top = CARD_MARGIN_TOP
     card_margin_bottom = CARD_MARGIN_BOTTOM
+    has_backdrop = False      # the platform can put real blurred glass behind the card (Theme.backdrop)
 
     def __init__(self):
         self.card = None          # themes.Card being shown, or None
@@ -204,16 +205,24 @@ class OverlayBase:
             themes.draw_pointer(cr, theme, self.pointer_style(), *self.pos, now - self.t0,
                                 settings.get("look", "pointer_size"), h)
         hits = {}
-        if self.card:
-            name, at = self.pressed
-            opts = {"text_size": settings.get("look", "text_size"), "card_opacity": settings.get("look", "card_opacity"),
-                    "controls": settings.get("look", "controls"),
-                    "pressed": name if (now - at < 0.18 or self.slider) else None}
-            x, y, cw, ch = self._card_rect(w, h, opts)
+        lay = self.card_layout(w, h)
+        if lay:
+            (x, y, cw, ch), opts = lay
             theme.draw(cr, x, y, cw, ch, self.card, now - self.card_t0, opts)
             hits = theme.hit_regions(self.card, x, y, cw, ch, opts)
         self.hits = hits
         self.hits_changed()
+
+    def card_layout(self, w, h):
+        """((x, y, w, h), theme opts) of the card on a w x h screen, or None when there's no card."""
+        if not self.card:
+            return None
+        name, at = self.pressed
+        opts = {"text_size": settings.get("look", "text_size"), "card_opacity": settings.get("look", "card_opacity"),
+                "controls": settings.get("look", "controls"),
+                "pressed": name if (time.monotonic() - at < 0.18 or self.slider) else None,
+                "backdrop": self.has_backdrop and bool(self.theme.backdrop)}
+        return self._card_rect(w, h, opts), opts
 
     # --- platform hooks ---
     def queue_draw(self):

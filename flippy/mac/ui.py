@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import threading
 
+import AppKit
 import objc
 from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyAccessory, NSBackingStoreBuffered,
                     NSColor, NSCursor, NSEvent, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
@@ -34,7 +35,9 @@ from .. import loop, settings, themes
 from ..overlay import OverlayBase
 from . import hotkeys
 from .cairoview import blit
+from .widgets import FlippedView
 
+GLASS = hasattr(AppKit, "NSGlassEffectView")  # macOS 26+
 HIDE_SETTLE_MS = 150        # let the window server drop the question box before the screenshot
 FRAME_MS = 16
 
@@ -103,6 +106,8 @@ class OverlayView(NSView):
 
 
 class Overlay(OverlayBase):
+    has_backdrop = GLASS
+
     def __init__(self):
         super().__init__()
         frame = main_screen().frame()
@@ -117,9 +122,19 @@ class Overlay(OverlayBase):
         p.setHidesOnDeactivate_(False)
         p.setIgnoresMouseEvents_(True)
         p.setReleasedWhenClosed_(False)
-        self.view = OverlayView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, frame.size.height))
+        bounds = NSMakeRect(0, 0, frame.size.width, frame.size.height)
+        root = FlippedView.alloc().initWithFrame_(bounds)
+        self.glass = None
+        if GLASS:  # Liquid Glass behind the card for themes that want it (Theme.backdrop); cairo paints on top
+            self.glass = AppKit.NSGlassEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, 10, 10))
+            self.glass.setStyle_(AppKit.NSGlassEffectViewStyleClear)
+            self.glass.setTintColor_(NSColor.colorWithWhite_alpha_(0.0, 0.12))
+            self.glass.setHidden_(True)
+            root.addSubview_(self.glass)
+        self.view = OverlayView.alloc().initWithFrame_(bounds)
         self.view.owner = self
-        p.setContentView_(self.view)
+        root.addSubview_(self.view)
+        p.setContentView_(root)
         p.orderFrontRegardless()
         self.tick_id = 0
         self.ignoring = True
@@ -134,7 +149,23 @@ class Overlay(OverlayBase):
 
     # --- hooks ---
     def queue_draw(self):
+        self._place_glass()
         self.view.setNeedsDisplay_(True)
+
+    def _place_glass(self):
+        """Keep the glass exactly under the card (it moves when the card follows the pointer)."""
+        if self.glass is None:
+            return
+        lay = self.card_layout(*self.size())
+        if not (lay and lay[1]["backdrop"]):
+            if not self.glass.isHidden():
+                self.glass.setHidden_(True)
+            return
+        x, y, w, h = lay[0]
+        self.glass.setFrame_(NSMakeRect(x, y, w, h))
+        self.glass.setCornerRadius_(self.theme.backdrop["radius"])
+        if self.glass.isHidden():
+            self.glass.setHidden_(False)
 
     def set_opacity(self, a):
         self.panel.setAlphaValue_(a)
@@ -200,6 +231,10 @@ def box_style(theme):
         st.update(bg=_hex("33363f"), border=_hex("9ca1b3"), border_w=2, radius=2, fg=_hex("00ff6a"),
                   font=(themes.PIXEL_FONT, 24), field_bg=_hex("000000"), field_border=_hex("0c0d12"),
                   hint=_hex("7dffa9"), hint_font=(themes.PIXEL_FONT, 16))
+    elif theme.key == "glass" and GLASS:  # Liquid Glass box; the field is a darker, partly opaque pane
+        st.update(glass=True, bg=None, border=_rgba(1, 1, 1, 0.35), radius=theme.LIQUID_R, fg=_hex("ffffff"),
+                  font=(None, 16), field_bg=_rgba(0.02, 0.05, 0.08, 0.5), field_border=_rgba(1, 1, 1, 0.16),
+                  field_radius=12, hint=_rgba(1, 1, 1, 0.75))
     elif theme.key == "glass":
         st.update(bg=_rgba(40 / 255, 46 / 255, 48 / 255, 0.88), border=_rgba(0, 0, 0, 0.7), radius=9, fg=_hex("ffffff"),
                   font=(None, 15), field_bg=_rgba(0, 0, 0, 0.3), field_border=_rgba(0, 0, 0, 0.6), field_radius=12,
@@ -279,6 +314,14 @@ class InputBox:
 
         card = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
         _layer(card, st["bg"], st["border"], st["border_w"], st["radius"])
+        root = card
+        if st.get("glass"):
+            root = AppKit.NSGlassEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+            root.setStyle_(AppKit.NSGlassEffectViewStyleClear)
+            root.setTintColor_(NSColor.colorWithWhite_alpha_(0.0, 0.15))
+            root.setCornerRadius_(st["radius"])
+            root.setContentView_(card)
+            panel.setHasShadow_(False)  # the glass draws its own edge and depth
         field_box = NSView.alloc().initWithFrame_(NSMakeRect(self.PAD_X, h - self.PAD_Y - field_h, self.WIDTH, field_h))
         _layer(field_box, st["field_bg"], st["field_border"], 1, st["field_radius"])
         inset = 8 if st["field_bg"] else 0
@@ -301,7 +344,7 @@ class InputBox:
         hint.setFrame_(NSMakeRect(self.PAD_X, self.PAD_Y - 2, self.WIDTH, hint_h))
         card.addSubview_(field_box)
         card.addSubview_(hint)
-        panel.setContentView_(card)
+        panel.setContentView_(root)
 
         self.panel, self.entry = panel, entry
         panel.makeKeyAndOrderFront_(None)

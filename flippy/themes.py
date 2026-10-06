@@ -306,6 +306,7 @@ class Theme:
     tap = (1.0, 0.25, 0.2)
     pen = (1.0, 0.25, 0.2)
     placeholder = "ask about your screen…"
+    backdrop = None   # {"radius": r}: wants a real blurred-glass backdrop behind the card where the platform has one
 
     def box_css(self):
         return ""
@@ -989,6 +990,8 @@ class Glass(Theme):
     placeholder = "Search or ask…"
     font = "Noto Sans"
     TITLE_H, CTRL_H, R = 26, 46, 9
+    LIQUID_R = 20
+    backdrop = {"radius": LIQUID_R}  # macOS: Liquid Glass (NSGlassEffectView) behind the card
 
     def _w(self, card):
         return 380 if card.follow else 470
@@ -1007,6 +1010,8 @@ class Glass(Theme):
                 "sx0": x + 14, "sx1": x + w - 14}
 
     def hit_regions(self, card, x, y, w, h, opts=None):
+        if opts and opts.get("backdrop"):  # same inset as _chrome
+            x, w = x + 4, w - 8
         G = self._geom(x, y, w, h)
         cy, ox, bx = G["cy"], G["ox"], G["bx"]
         hits = {
@@ -1043,10 +1048,69 @@ class Glass(Theme):
         cr.set_source_rgba(1, 1, 1, hi * 0.35)
         cr.fill()
 
+    def _liquid(self, cr, x, y, w, h, a):
+        """Over a real glass backdrop: just light, no body. Bright rim, sheen, glare, refraction line."""
+        R = self.LIQUID_R
+        cr.save()
+        round_rect(cr, x, y, w, h, R)
+        cr.clip()
+        # a whisper of tint so the controls hold together on bright backgrounds
+        g = cairo.LinearGradient(0, y, 0, y + h)
+        g.add_color_stop_rgba(0, 1, 1, 1, 0.06 * a)
+        g.add_color_stop_rgba(1, 0, 0.05, 0.08, 0.22 * a)
+        cr.set_source(g)
+        cr.paint()
+        # soft sheen pooling in the top-left corner, where the light comes from
+        g = cairo.RadialGradient(x + w * 0.18, y - h * 0.15, 0, x + w * 0.18, y - h * 0.15, w * 0.55)
+        g.add_color_stop_rgba(0, 1, 1, 1, 0.22)
+        g.add_color_stop_rgba(1, 1, 1, 1, 0)
+        cr.set_source(g)
+        cr.paint()
+        # a diagonal glare band across the glass
+        cr.move_to(x + w * 0.52, y)
+        cr.line_to(x + w * 0.66, y)
+        cr.line_to(x + w * 0.46, y + h)
+        cr.line_to(x + w * 0.38, y + h)
+        cr.close_path()
+        g = cairo.LinearGradient(x + w * 0.38, 0, x + w * 0.66, 0)
+        g.add_color_stop_rgba(0, 1, 1, 1, 0)
+        g.add_color_stop_rgba(0.5, 1, 1, 1, 0.07)
+        g.add_color_stop_rgba(1, 1, 1, 1, 0)
+        cr.set_source(g)
+        cr.fill()
+        cr.restore()
+        # rim: bright along the top, fading down the sides; a faint refraction line along the bottom
+        round_rect(cr, x + 0.75, y + 0.75, w - 1.5, h - 1.5, R - 0.5)
+        g = cairo.LinearGradient(0, y, 0, y + h)
+        g.add_color_stop_rgba(0, 1, 1, 1, 0.75)
+        g.add_color_stop_rgba(0.25, 1, 1, 1, 0.18)
+        g.add_color_stop_rgba(0.75, 1, 1, 1, 0.08)
+        g.add_color_stop_rgba(1, 1, 1, 1, 0.35)
+        cr.set_source(g)
+        cr.set_line_width(1.5)
+        cr.stroke()
+        cr.move_to(x + R, y + 1.2)  # specular hotspot on the top edge
+        cr.line_to(x + w - R, y + 1.2)
+        g = cairo.LinearGradient(x, 0, x + w, 0)
+        g.add_color_stop_rgba(0, 1, 1, 1, 0)
+        g.add_color_stop_rgba(0.3, 1, 1, 1, 0.9)
+        g.add_color_stop_rgba(0.7, 1, 1, 1, 0.25)
+        g.add_color_stop_rgba(1, 1, 1, 1, 0)
+        cr.set_source(g)
+        cr.set_line_width(1.2)
+        cr.stroke()
+
     def draw(self, cr, x, y, w, h, card, t, opts):
         a = opts["card_opacity"]
+        liquid = opts.get("backdrop")
+        if liquid:
+            self._liquid(cr, x, y, w, h, a)
+        else:
+            self._classic(cr, x, y, w, h, a)
+        self._chrome(cr, x, y, w, h, card, t, opts, opts.get("pressed"), liquid)
+
+    def _classic(self, cr, x, y, w, h, a):
         R = self.R
-        pressed = opts.get("pressed")
         # glass body: tinted, see-through, darker toward the bottom
         round_rect(cr, x, y, w, h, R)
         g = cairo.LinearGradient(0, y, 0, y + h)
@@ -1079,6 +1143,18 @@ class Glass(Theme):
         cr.set_source_rgba(1, 1, 1, 0.28)
         cr.stroke()
 
+    @staticmethod
+    def _label(cr, lay, x, y, rgba, liquid):
+        """Small text on the controls row; on clear glass it gets a soft dark halo to read over light backgrounds."""
+        if liquid:
+            for dx, dy, al in ((0, 1, 0.6), (1, 0, 0.35), (-1, 0, 0.35), (0, -1, 0.25)):
+                show(cr, lay, x + dx, y + dy, (0, 0, 0, al))
+        show(cr, lay, x, y, rgba)
+
+    def _chrome(self, cr, x, y, w, h, card, t, opts, pressed, liquid):
+        a = opts["card_opacity"]
+        if liquid:  # the rounder liquid corners: pull the edge controls in a little
+            x, w = x + 4, w - 8
         # title bar: orange "now playing" icon, glowing title, window buttons
         ix, iy = x + 9, y + 6
         round_rect(cr, ix, iy, 14, 14, 3)
@@ -1097,7 +1173,8 @@ class Glass(Theme):
                                 ("Error" if card.error else "Flippy"))
         tl = layout(cr, title, self.font, 13, width=w - 120)
         ellipsize_end(tl)
-        for dx, dy, al in ((0, 1, 0.55), (1, 0, 0.25), (-1, 0, 0.25)):  # dark glow behind the text
+        halo = ((0, 1, 0.7), (1, 0, 0.45), (-1, 0, 0.45), (0, -1, 0.3)) if liquid else ((0, 1, 0.55), (1, 0, 0.25), (-1, 0, 0.25))
+        for dx, dy, al in halo:  # dark glow behind the text
             show(cr, tl, ix + 21 + dx, iy - 1 + dy, (0, 0, 0, al))
         show(cr, tl, ix + 21, iy - 1, (1, 1, 1, 1))
         bx = x + w - 9 - 3 * 22
@@ -1125,12 +1202,26 @@ class Glass(Theme):
         body = self._body(cr, card, opts)
         _, bh = lsize(body)
         px, py, pw, ph = x + 10, y + self.TITLE_H + 4, w - 20, bh + 16
-        round_rect(cr, px, py, pw, ph, 5)
-        cr.set_source_rgba(0, 0.03, 0.05, 0.22)
-        cr.fill_preserve()
-        cr.set_source_rgba(1, 1, 1, 0.12)
-        cr.set_line_width(1)
-        cr.stroke()
+        if liquid:  # the text sits on a darker, partly opaque pane so it reads over anything
+            round_rect(cr, px, py, pw, ph, 12)
+            g = cairo.LinearGradient(0, py, 0, py + ph)
+            g.add_color_stop_rgba(0, 0.02, 0.05, 0.08, 0.50 * a)
+            g.add_color_stop_rgba(1, 0.01, 0.03, 0.05, 0.62 * a)
+            cr.set_source(g)
+            cr.fill_preserve()
+            cr.set_source_rgba(1, 1, 1, 0.16)
+            cr.set_line_width(1)
+            cr.stroke()
+            round_rect(cr, px + 1, py + 1, pw - 2, 10, 11)  # inner top highlight
+            cr.set_source_rgba(1, 1, 1, 0.05)
+            cr.fill()
+        else:
+            round_rect(cr, px, py, pw, ph, 5)
+            cr.set_source_rgba(0, 0.03, 0.05, 0.22)
+            cr.fill_preserve()
+            cr.set_source_rgba(1, 1, 1, 0.12)
+            cr.set_line_width(1)
+            cr.stroke()
         for dx, dy in ((1, 1), (0, 1), (1, 0), (-1, 0), (0, -1)):
             show(cr, body, px + 12 + dx, py + 8 + dy, (0, 0, 0, 0.55))
         show(cr, body, px + 12, py + 8, (1.0, 0.62, 0.58, 1) if card.error else (0.97, 0.99, 1.0, 1))
@@ -1161,7 +1252,7 @@ class Glass(Theme):
         cy = y + h - self.CTRL_H / 2 - 2
         counter = "--/--" if card.phase == "thinking" else f"{card.step + 1} / {max(n, 1)}"
         cl = layout(cr, counter, self.font, 12)
-        show(cr, cl, x + 14, cy - lsize(cl)[1] / 2, (0.9, 0.95, 1.0, 0.95))
+        self._label(cr, cl, x + 14, cy - lsize(cl)[1] / 2, (0.9, 0.95, 1.0, 0.95), liquid)
         ox = x + w / 2
         # stop
         self._gloss_button(cr, ox - 92, cy - 9, 22, 18, 4, pressed=pressed == "stop")
@@ -1226,7 +1317,7 @@ class Glass(Theme):
         G = self._geom(x, y, w, h)
         vx, vs0, vs1 = G["vx"], G["vs0"], G["vs1"]
         sl = layout(cr, f"{card.speed:g}×", self.font, 11, bold=True)
-        show(cr, sl, vx - 4, cy - lsize(sl)[1] / 2, (0.85, 0.92, 1.0, 0.95))
+        self._label(cr, sl, vx - 4, cy - lsize(sl)[1] / 2, (0.85, 0.92, 1.0, 0.95), liquid)
         if vs1 > vs0 + 10:
             k = speed_to_frac(card.speed)
             cr.rectangle(vs0, cy - 1, vs1 - vs0, 2)
