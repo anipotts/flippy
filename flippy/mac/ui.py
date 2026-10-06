@@ -17,31 +17,26 @@ import subprocess
 import tempfile
 import threading
 
-import cairo
 import objc
 from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyAccessory, NSBackingStoreBuffered,
                     NSColor, NSCursor, NSEvent, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
-                    NSGraphicsContext, NSImage, NSMenu, NSMenuItem, NSPanel, NSScreen, NSScreenSaverWindowLevel,
+                    NSImage, NSMenu, NSMenuItem, NSPanel, NSScreen, NSScreenSaverWindowLevel,
                     NSStatusBar, NSTextField, NSTrackingActiveAlways, NSTrackingArea, NSTrackingCursorUpdate,
                     NSTrackingInVisibleRect, NSTrackingMouseMoved, NSVariableStatusItemLength, NSView,
                     NSWindowCollectionBehaviorCanJoinAllSpaces, NSWindowCollectionBehaviorFullScreenAuxiliary,
                     NSWindowCollectionBehaviorIgnoresCycle, NSWindowCollectionBehaviorStationary,
                     NSWindowStyleMaskBorderless, NSWindowStyleMaskNonactivatingPanel, NSFloatingWindowLevel)
-from Foundation import NSAttributedString, NSData, NSMakeRect, NSObject
+from Foundation import NSAttributedString, NSMakeRect, NSObject
 from PyObjCTools import AppHelper
-from Quartz import (CGColorSpaceCreateWithName, CGContextDrawImage, CGContextRestoreGState, CGContextSaveGState,
-                    CGContextScaleCTM, CGContextTranslateCTM, CGDataProviderCreateWithCFData, CGImageCreate,
-                    CGPreflightScreenCaptureAccess, CGRectMake, CGRequestScreenCaptureAccess,
-                    kCGBitmapByteOrder32Little, kCGColorSpaceSRGB, kCGImageAlphaPremultipliedFirst,
-                    kCGRenderingIntentDefault)
+from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 
 from .. import loop, settings, themes
 from ..overlay import OverlayBase
 from . import hotkeys
+from .cairoview import blit
 
 HIDE_SETTLE_MS = 150        # let the window server drop the question box before the screenshot
 FRAME_MS = 16
-_SRGB = CGColorSpaceCreateWithName(kCGColorSpaceSRGB)
 
 
 def _rgba(r, g, b, a=1.0):
@@ -134,34 +129,8 @@ class Overlay(OverlayBase):
         return b.size.width, b.size.height
 
     def render(self, view):
-        """Paint into a recording surface, rasterize just the painted area, blit it."""
         w, h = self.size()
-        rec = cairo.RecordingSurface(cairo.CONTENT_COLOR_ALPHA, None)
-        self.paint(cairo.Context(rec), w, h)
-        x0, y0, iw, ih = rec.ink_extents()
-        x0, y0 = max(math.floor(x0), 0), max(math.floor(y0), 0)
-        x1, y1 = min(math.ceil(x0 + iw) + 1, w), min(math.ceil(y0 + ih) + 1, h)
-        if iw <= 0 or ih <= 0 or x1 <= x0 or y1 <= y0:
-            return
-        s = self.panel.backingScaleFactor()
-        pw, ph = int((x1 - x0) * s), int((y1 - y0) * s)
-        img = cairo.ImageSurface(cairo.FORMAT_ARGB32, pw, ph)
-        cr = cairo.Context(img)
-        cr.scale(s, s)
-        cr.translate(-x0, -y0)
-        cr.set_source_surface(rec, 0, 0)
-        cr.paint()
-        img.flush()
-        data = NSData.dataWithBytes_length_(bytes(img.get_data()), img.get_stride() * ph)
-        cg = CGImageCreate(pw, ph, 8, 32, img.get_stride(), _SRGB,
-                           kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little,  # = cairo's ARGB32
-                           CGDataProviderCreateWithCFData(data), None, False, kCGRenderingIntentDefault)
-        ctx = NSGraphicsContext.currentContext().CGContext()
-        CGContextSaveGState(ctx)
-        CGContextTranslateCTM(ctx, x0, y1)  # the view is flipped; CGImages draw bottom-up
-        CGContextScaleCTM(ctx, 1, -1)
-        CGContextDrawImage(ctx, CGRectMake(0, 0, x1 - x0, y1 - y0), cg)
-        CGContextRestoreGState(ctx)
+        blit(lambda cr: self.paint(cr, w, h), w, h, self.panel.backingScaleFactor(), clip_to_ink=True)
 
     # --- hooks ---
     def queue_draw(self):
@@ -408,6 +377,7 @@ class Platform:
     def __init__(self):
         self.overlay = Overlay()
         self.screenshotter = Screenshotter()
+        self.settings_win = None
         self.command = lambda cmd: "not ready"
 
     def input_box(self, on_submit, on_cancel):
@@ -495,12 +465,26 @@ class Platform:
         threading.Thread(target=serve, daemon=True).start()
 
     def open_settings(self, on_preview, on_reset):
-        # TODO(session 2): native settings window. Until then, the config file.
-        settings.save()
-        subprocess.Popen(["open", "-t", settings.PATH])
+        from .settings_window import SettingsWindow  # local: only built when asked for
+        if self.settings_win is None:
+            self.settings_win = SettingsWindow(on_preview, on_reset, lambda: setattr(self, "settings_win", None))
+        self.settings_win.present()
 
     def demo_pointer(self, name, on_saved):
-        print("flippy: demo-pointer isn't available on macOS yet", flush=True)
+        """Scripted demo: draw a pointer in the editor and save it."""
+        from . import pointer_editor
+        from .. import pixelart, pointers
+        ed = pointer_editor.PixelEditor(lambda n: None)
+        ed.present()
+        def set_tool(key):
+            ed.tool = key
+            ed.seg.setSelectedSegment_(ed.tools.index(key))
+
+        def done():
+            ed.name.setStringValue_(name)
+            ed._save()
+            on_saved(pointers.PREFIX + name)
+        pixelart.demo_paint(ed.art, ed._redraw, set_tool, lambda col: setattr(ed, "color", col), done)
 
     def quit(self):
         AppHelper.callAfter(NSApp.terminate_, None)

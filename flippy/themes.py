@@ -27,6 +27,7 @@ from . import pointers  # noqa: E402
 
 FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
 PIXEL_FONT = "VT323"
+PROMPT = "flippy@mac:~" if sys.platform == "darwin" else "flippy@cosmic:~"  # Terminal theme title bar
 
 
 def load_fonts():
@@ -445,13 +446,20 @@ window.flippy-box .flippy-hint { color: rgba(255,255,255,0.5); font-size: 12px; 
 
 
 class Cosmic(Midnight):
-    """Follows the COSMIC desktop's accent color, light/dark mode and corner radius."""
-    key, name = "cosmic", "Follow COSMIC"
+    """Follows the COSMIC desktop's accent color, light/dark mode and corner radius (on macOS: the system's)."""
+    key, name = "cosmic", "Follow macOS" if sys.platform == "darwin" else "Follow COSMIC"
 
     def __init__(self):
         self.refresh()
 
     def refresh(self):
+        if sys.platform == "darwin":  # same idea on macOS: the system accent color and light/dark mode
+            from .mac.system import appearance
+            self.dark, self.accent, self.bg = appearance()
+            self.border = self.head = self.accent
+            self.fg = (0.95, 0.95, 0.95) if self.dark else (0.1, 0.1, 0.12)
+            self.radius = 14
+            return
         base = os.path.expanduser("~/.config/cosmic")
         try:
             dark = open(f"{base}/com.system76.CosmicTheme.Mode/v1/is_dark").read().strip() == "true"
@@ -574,7 +582,7 @@ class Terminal(Theme):
         cursor = "█" if (card.typing or card.phase == "thinking") else ""
         body = layout(cr, (card.text or "") + cursor, self.font, px, width=w)
         head = layout(cr, f"> {card.header}", self.font, px, bold=True) if card.header else None
-        bar = layout(cr, "flippy@cosmic:~", self.font, px - 3)
+        bar = layout(cr, PROMPT, self.font, px - 3)
         return body, head, bar
 
     BAR_CHARS = 12
