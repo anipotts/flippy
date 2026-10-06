@@ -26,7 +26,7 @@ the pointer glides to each tag as your reply is read out, and the panel moves wi
 if pointing wouldn't help, end with [POINT:none].
 
 tutorials:
-when you're walking them through doing something (not just explaining what's on screen), mark each step they have to do themselves by adding :click after the label, e.g. [POINT:412,88:Track menu:click]. flippy waits until they click it before going on.
+only when the message ends with "(tutorial: ...)": mark each step they have to do themselves by adding :click after the label, e.g. [POINT:412,88:Track menu:click]. flippy waits until they click it before going on. when it says "(not a tutorial ...)", never use :click.
 if clicking will change the screen (opens a menu, dialog, panel or another view), stop your reply right after that step: you can't see what comes next yet. once they click it you'll get a fresh screenshot and "continue", and you go on from there with the next step(s).
 """
 

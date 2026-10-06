@@ -9,6 +9,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -63,6 +64,7 @@ class Flippy:
         self.draw_timeout_id = 0
         self.shooter = ui.screenshotter
         self.busy = False
+        self.tutorial = False    # the current answer is a tutorial: its ":click" steps wait for their click
         self.fade_id = 0
         self.fading = False
         self.last_ask = 0.0
@@ -200,7 +202,8 @@ class Flippy:
         event("box")
         self.box.show()
 
-    def submit(self, question):
+    def submit(self, question, tutorial=None):
+        """tutorial: steps they have to do wait for their click (":click"). None = decide from the question."""
         if not question or self.busy:
             return
         if question in ("/new", "/reset"):
@@ -211,7 +214,8 @@ class Flippy:
             self.box.hide()
             self.open_settings()
             return
-        event("ask", question=question)
+        self.tutorial = wants_tutorial(question) if tutorial is None else tutorial
+        event("ask", question=question, tutorial=self.tutorial)
         self.busy = True
         self.gen += 1
         self._stop_playback()
@@ -221,6 +225,8 @@ class Flippy:
             # the marks stay on screen so they're in the screenshot
             question = ("[I drew a red mark on the screen around what I'm asking about. It's my "
                         "annotation, not part of the app.]\n" + question)
+        question += ("\n\n(tutorial: mark the steps I have to do myself with :click)" if self.tutorial else
+                     "\n\n(not a tutorial: just answer and point, no :click)")
         self.overlay.clear(keep_marks=self.marked)
         self.marked = False
         loop.timeout_add(self.ui.hide_settle_ms, self._shoot, question)
@@ -355,6 +361,7 @@ class Flippy:
                 if not pl["waiting"]:
                     pl["waiting"] = True
                     self._listen_for_click(True)
+                    event("waiting", x=pl["target"][0], y=pl["target"][1], label=seg.point.label)
                     self._render_step(pl, segs, now)
                 return True
             self._step_done(pl)
@@ -402,7 +409,7 @@ class Flippy:
 
     # --- tutorials: steps marked :click wait for them to click the thing ---
     def _gated(self, seg):
-        return bool(seg.point and seg.point.action and settings.get("timing", "wait_for_clicks")
+        return bool(seg.point and seg.point.action and self.tutorial and settings.get("timing", "wait_for_clicks")
                     and hasattr(self.ui, "watch_clicks"))
 
     def _listen_for_click(self, on):
@@ -428,7 +435,7 @@ class Flippy:
         log("tutorial: they did it, asking for the next step")
         event("tutorial_continue")
         self._stop_playback()
-        self.submit("Done, I did that. Continue the walkthrough from here.")
+        self.submit("Done, I did that. Continue the walkthrough from here.", tutorial=True)
 
     def _card_at_bottom(self, segs):
         """Centered card (no pointer yet): keep it away from the first point."""
@@ -455,7 +462,7 @@ class Flippy:
     # --- player controls (clicked on the Glass/Y2K skins) ---
     def control(self, name, frac=0.0):
         log("control:", name, f"{frac:.2f}" if name in ("seek", "speed") else "")
-        event("control", name=name)
+        event("control", control=name)
         self.overlay.pressed = (name, time.monotonic())  # light the button up, also when scripted
         if name in ("stop", "close", "min"):
             self.dismiss()
@@ -659,7 +666,7 @@ class Flippy:
         def show_me():
             mark("shown")
             self.submit(f"I'm learning {deck.app_name} and got this tip: \"{tip['text']}\" "
-                        f"Show me where that is on my screen right now, step by step.")
+                        f"Show me where that is on my screen right now, step by step.", tutorial=True)
         self.ui.show_tip(deck.app_name, tip["text"], got_it=lambda: mark("shown"), knew=lambda: mark("knew"),
                          show_me=show_me)
 
@@ -677,7 +684,7 @@ class Flippy:
 
     def _nudge_help(self, offer):
         self.watcher.helped(offer.app)
-        self.submit(offer.question())
+        self.submit(offer.question(), tutorial=True)
 
     def _nudge_mute(self, offer):
         self.watcher.mute(offer.app)
@@ -751,6 +758,7 @@ class Flippy:
         W, H = self.ui.screen_size()
         sc = self._scale()
         spots = [(70, 14, "Workspaces"), (W // 2, 14, "Clock"), (W // 2, H - 40, "Dock")]
+        self.tutorial = tutorial
         if tutorial:
             spots = [(22, 12, "Apple menu:click"), (W // 2, H - 40, "Dock")]
             texts = ("Click the Apple menu to open it", "Nice. That's how tutorials wait for you, then go on")
@@ -895,6 +903,16 @@ class Flippy:
 
     def _scale(self):
         return self.ui.scale()
+
+
+TUTORIAL_RE = re.compile(r"\b(how (do|can|would|should|to) (i|you|we)|how to|walk me|teach me|show me how|guide me|"
+                         r"step[- ]by[- ]step|steps (to|for)|where do i (click|find|go)|help me (set up|make|create|add|"
+                         r"build|record|install|do))\b")
+
+
+def wants_tutorial(question):
+    """Is this a "how do I do X" question (a tutorial, steps wait for their clicks) or just a question?"""
+    return bool(TUTORIAL_RE.search(question.lower()))
 
 
 def _friendly_error(err):
