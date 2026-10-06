@@ -1048,7 +1048,7 @@ class Glass(Theme):
         cr.set_source_rgba(1, 1, 1, hi * 0.35)
         cr.fill()
 
-    def _liquid(self, cr, x, y, w, h, a):
+    def _liquid(self, cr, x, y, w, h, a, gloss=True):
         """Over a real glass backdrop: just light, no body. WMP 11-style gloss on the title and controls bars
         (lighter top half, crisp edge, a bright line on top) and a rim around the glass."""
         R = self.LIQUID_R
@@ -1061,7 +1061,8 @@ class Glass(Theme):
         g.add_color_stop_rgba(1, 0, 0.05, 0.08, 0.07 * a)
         cr.set_source(g)
         cr.paint()
-        for by, bh in ((y, self.TITLE_H + 2), (y + h - self.CTRL_H - 10, self.CTRL_H + 10)):  # title bar, controls bar
+        bars = ((y, self.TITLE_H + 2), (y + h - self.CTRL_H - 10, self.CTRL_H + 10)) if gloss else ()
+        for by, bh in bars:  # title bar, controls bar
             half = bh * 0.5
             g = cairo.LinearGradient(0, by, 0, by + half)
             g.add_color_stop_rgba(0, 1, 1, 1, 0.16)
@@ -1095,7 +1096,7 @@ class Glass(Theme):
         a = opts["card_opacity"]
         liquid = opts.get("backdrop")
         if liquid:
-            self._liquid(cr, x, y, w, h, a)
+            self._liquid(cr, x, y, w, h, a, gloss=opts.get("glass_shine", "wmp") == "wmp")
         else:
             self._classic(cr, x, y, w, h, a)
         self._chrome(cr, x, y, w, h, card, t, opts, opts.get("pressed"), liquid)

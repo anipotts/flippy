@@ -221,7 +221,8 @@ class OverlayBase:
         opts = {"text_size": settings.get("look", "text_size"), "card_opacity": settings.get("look", "card_opacity"),
                 "controls": settings.get("look", "controls"),
                 "pressed": name if (time.monotonic() - at < 0.18 or self.slider) else None,
-                "backdrop": self.has_backdrop and bool(self.theme.backdrop)}
+                "backdrop": self.has_backdrop and bool(self.theme.backdrop),
+                "glass_shine": settings.get("look", "glass_shine")}
         return self._card_rect(w, h, opts), opts
 
     # --- platform hooks ---

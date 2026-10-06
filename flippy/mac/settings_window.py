@@ -25,6 +25,7 @@ IMAGES = [(1366, "1366 px (lightest on usage)"), (1920, "1920 px (balanced)"), (
 POINTERS = [("theme", "Theme default"), ("hand", "Pixel hand"), ("arrow", "Pixel arrow"), ("ring", "Ring"), ("dot", "Dot")]
 PACES = [("slow", "Slow"), ("normal", "Normal"), ("fast", "Fast")]
 CONTROLS = [("all", "On every theme"), ("players", "Only Glass and Y2K")]
+SHINES = [("wmp", "WMP gloss"), ("none", "Plain glass")]
 WIDTH, HEIGHT = 640, 720
 THUMB_W, THUMB_H = 280, 150
 
@@ -227,6 +228,8 @@ class SettingsWindow:
         f.row("Panel opacity", None, self._setting_slider(f, "look", "card_opacity", 0.5, 1.0, 0.02, digits=2))
         f.row("Playback controls", "Clickable play/pause/step buttons on the answer panel",
               self._setting_popup(f, "look", "controls", CONTROLS))
+        f.row("Glass reflections", "Glass theme: Windows Media Player gloss bars, or plain Liquid Glass",
+              self._setting_popup(f, "look", "glass_shine", SHINES))
         f.y += 6
         f.row("Preview", "Plays a short fake walkthrough on your screen", button("Preview", on_preview, f.keep, primary=True))
         return f

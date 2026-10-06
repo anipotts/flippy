@@ -23,6 +23,7 @@ DEFAULTS = {
         "text_size": 15,        # px, answer text
         "card_opacity": 0.94,
         "controls": "all",      # all | players (playback controls on every theme, or only Glass/Y2K)
+        "glass_shine": "wmp",   # wmp | none: gloss bars on the Glass theme's Liquid Glass (macOS), or plain glass
     },
     "timing": {
         "show_seconds": 8,      # answer stays at least this long after it finishes
@@ -44,6 +45,7 @@ CHOICES = {
     ("look", "theme"): ["midnight", "y2k", "glass", "terminal", "cosmic"],  # keep in sync with themes.THEMES
     ("look", "pointer"): ["theme", "hand", "ring", "arrow", "dot"],
     ("look", "controls"): ["all", "players"],
+    ("look", "glass_shine"): ["wmp", "none"],
     ("timing", "step_pace"): ["slow", "normal", "fast"],
 }
 
