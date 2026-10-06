@@ -217,7 +217,7 @@ class SettingsWindow(Adw.PreferencesWindow):
         g.add(spin_row("Text size", "Answer text, in px", "look", "text_size", 11, 24, 1))
         g.add(spin_row("Panel opacity", None, "look", "card_opacity", 0.5, 1.0, 0.02, digits=2))
         g.add(combo_row("Playback controls", "Clickable play/pause/step buttons on the answer panel", "look", "controls",
-                        [("all", "On every theme"), ("players", "Only on Glass and Y2K Player")]))
+                        [("all", "On every theme"), ("players", "Only on Media Player and Y2K Player")]))
         page.add(g)
 
         g = Adw.PreferencesGroup()
@@ -246,7 +246,7 @@ class SettingsWindow(Adw.PreferencesWindow):
         page.add(g)
         g = Adw.PreferencesGroup(title="Walkthroughs")
         g.add(combo_row("Step pace", "How long each pointed step stays", "timing", "step_pace", PACES))
-        g.add(spin_row("Playback speed", "Also on the Glass/Y2K players' slider", "timing", "speed", 0.5, 2.0, 0.05, digits=2))
+        g.add(spin_row("Playback speed", "Also on the Media Player/Y2K players' slider", "timing", "speed", 0.5, 2.0, 0.05, digits=2))
         g.add(spin_row("Glide time", "Seconds for the pointer to travel between steps", "timing", "glide_seconds",
                        0.2, 2.0, 0.1, digits=1))
         g.add(button_row("Try it", None, "Preview", on_preview))

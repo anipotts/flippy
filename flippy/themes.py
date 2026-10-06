@@ -1126,10 +1126,10 @@ window.flippy-box .flippy-hint {{ color: #7dffa9; font-family: "{PIXEL_FONT}"; f
 
 
 
-# ---- Glass (2000s media player mini mode: dark teal glass, glossy orb) -----
+# ---- Media Player (2000s media player mini mode: dark teal glass, glossy orb) -----
 
-class Glass(Theme):
-    key, name = "glass", "Glass"
+class MediaPlayer(Theme):
+    key, name = "mediaplayer", "Media Player"
     pointer = "arrow"
     hand_fill = (1, 1, 1)
     hand_outline = (0, 0, 0)
@@ -1245,7 +1245,7 @@ class Glass(Theme):
         a = opts["card_opacity"]
         liquid = opts.get("backdrop")
         if liquid:
-            self._liquid(cr, x, y, w, h, a, gloss=opts.get("glass_shine", "wmp") == "wmp")
+            self._liquid(cr, x, y, w, h, a, gloss=opts.get("player_shine", "wmp") == "wmp")
         else:
             self._classic(cr, x, y, w, h, a)
         self._chrome(cr, x, y, w, h, card, t, opts, opts.get("pressed"), liquid)
@@ -1485,12 +1485,12 @@ window.flippy-box entry:focus-within { outline: none; border-color: rgba(0,0,0,0
 window.flippy-box .flippy-hint { color: rgba(235,238,240,0.7); font-size: 12px; text-shadow: 0 1px 2px rgba(0,0,0,0.8); }"""
 
 
-# ---- Now Playing (the iOS lock screen player in Liquid Glass) ------------------
+# ---- Glass (the iOS lock screen's now-playing card in Liquid Glass) ------------
 
-class NowPlaying(Theme):
+class Glass(Theme):
     """A rounded glass card: bold title, the answer, a thin progress bar, bare white transport glyphs,
     and round glass buttons for speed and close. On macOS it floats on real Liquid Glass."""
-    key, name = "nowplaying", "Now Playing"
+    key, name = "glass", "Glass"
     pointer = "glass"
     accent = (0.92, 0.94, 1.0)
     tap = (1.0, 1.0, 1.0)
@@ -1629,7 +1629,7 @@ window.flippy-box entry { font-size: 16px; border-radius: 12px; background: rgba
 window.flippy-box .flippy-hint { color: rgba(255,255,255,0.6); font-size: 12px; }"""
 
 
-THEMES = {th.key: th for th in (Midnight(), Y2K(), Glass(), NowPlaying(), Terminal(), Cosmic())}
+THEMES = {th.key: th for th in (Midnight(), Y2K(), MediaPlayer(), Glass(), Terminal(), Cosmic())}
 
 
 def get(key):

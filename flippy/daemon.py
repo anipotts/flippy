@@ -476,7 +476,7 @@ class Flippy:
                                     max(show_s, settings.get("timing", "max_show_seconds"))))
         return False
 
-    # --- player controls (clicked on the Glass/Y2K skins) ---
+    # --- player controls (clicked on the Media Player/Y2K skins) ---
     def control(self, name, frac=0.0):
         log("control:", name, f"{frac:.2f}" if name in ("seek", "speed") else "")
         event("control", control=name)

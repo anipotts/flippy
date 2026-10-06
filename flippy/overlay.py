@@ -40,7 +40,7 @@ class OverlayBase:
         self.on_draw_done = lambda: None
         self.on_draw_cancel = lambda: None
 
-        # player controls (Glass/Y2K): only these rects take clicks; the rest stays click-through
+        # player controls (Media Player/Y2K): only these rects take clicks; the rest stays click-through
         self.hits = {}            # {name: (x, y, w, h)} from the theme, refreshed every frame
         self.on_control = lambda name, frac: None
         self.pressed = (None, 0.0)
@@ -234,7 +234,7 @@ class OverlayBase:
                 "controls": settings.get("look", "controls"),
                 "pressed": name if (time.monotonic() - at < 0.18 or self.slider) else None,
                 "backdrop": self.has_backdrop and bool(self.theme.backdrop),
-                "glass_shine": settings.get("look", "glass_shine")}
+                "player_shine": settings.get("look", "player_shine")}
         return self._card_rect(w, h, opts), opts
 
     # --- platform hooks ---

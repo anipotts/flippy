@@ -42,7 +42,7 @@ from .cairoview import blit
 from .widgets import FlippedView
 
 GLASS = hasattr(AppKit, "NSGlassEffectView")  # macOS 26+
-# The Glass theme's Liquid Glass, per surface (question box, its text field, answer card), 0-1:
+# The Media Player theme's Liquid Glass, per surface (question box, its text field, answer card), 0-1:
 # FROST is how milky (white) it is, SMOKE how dark. Both low = clear glass.
 FROST = {"box": 0.10, "field": 0.30, "card": 0.03}
 SMOKE = {"box": 0.25, "field": 0.40, "card": 0.25}
@@ -295,18 +295,18 @@ def box_style(theme):
         st.update(bg=_hex("33363f"), border=_hex("9ca1b3"), border_w=2, radius=2, fg=_hex("00ff6a"),
                   font=(themes.PIXEL_FONT, 24), field_bg=_hex("000000"), field_border=_hex("0c0d12"),
                   hint=_hex("7dffa9"), hint_font=(themes.PIXEL_FONT, 16))
-    elif theme.key == "glass" and GLASS:  # Liquid Glass box; the field is a frostier, smokier pane
+    elif theme.key == "mediaplayer" and GLASS:  # Liquid Glass box; the field is a frostier, smokier pane
         st.update(glass=True, bg=None, border=_rgba(1, 1, 1, 0.35), radius=theme.LIQUID_R, fg=_hex("ffffff"),
                   font=(None, 16), field_bg=glass_tint("field"), field_border=_rgba(1, 1, 1, 0.3),
                   field_radius=12, hint=_rgba(1, 1, 1, 0.9), hint_shadow=True)
-    elif theme.key == "nowplaying" and GLASS:  # same glass box, the lock screen's rounder corners
+    elif theme.key == "glass" and GLASS:  # same glass box, the lock screen's rounder corners
         st.update(glass=True, bg=None, border=_rgba(1, 1, 1, 0.3), radius=theme.R, fg=_hex("ffffff"),
                   font=(None, 16), field_bg=_rgba(1, 1, 1, 0.12), field_border=None,
                   field_radius=12, hint=_rgba(1, 1, 1, 0.75), hint_shadow=True)
-    elif theme.key == "nowplaying":
+    elif theme.key == "glass":  # (no Liquid Glass on this macOS)
         st.update(bg=_rgba(40 / 255, 40 / 255, 46 / 255, 0.85), border=_rgba(1, 1, 1, 0.3), radius=theme.R,
                   field_bg=_rgba(1, 1, 1, 0.12), field_radius=12)
-    elif theme.key == "glass":
+    elif theme.key == "mediaplayer":
         st.update(bg=_rgba(40 / 255, 46 / 255, 48 / 255, 0.88), border=_rgba(0, 0, 0, 0.7), radius=9, fg=_hex("ffffff"),
                   font=(None, 15), field_bg=_rgba(0, 0, 0, 0.3), field_border=_rgba(0, 0, 0, 0.6), field_radius=12,
                   hint=_rgba(235 / 255, 238 / 255, 240 / 255, 0.7))

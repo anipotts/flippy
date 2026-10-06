@@ -11,7 +11,7 @@ Runs on **macOS** (13+, native AppKit) and on **Linux with COSMIC on Wayland** (
 - **Circle and ask.** A second hotkey lets you draw on the screen to mark something, then ask about it ("what does this say?").
 - **Tutorials that wait for you.** When Claude walks you through doing something, the steps you have to do yourself wait until you click the thing (on macOS). If that click opens a menu or dialog Claude couldn't see yet, Flippy takes a fresh screenshot and Claude carries on from there. Next on the card skips a step. Turn it off with `timing.wait_for_clicks`.
 - **Follow-ups.** Questions share one session, so "and where's bluetooth?" works. `/new` starts fresh; sessions also reset after 15 idle minutes.
-- **Themes.** Midnight, Y2K Player, Glass, Terminal, and one that follows your system's accent color (macOS or COSMIC).
+- **Themes.** Midnight, Y2K Player, Media Player (a 2000s media player skin), Glass (a lock-screen style card), Terminal, and one that follows your system's accent color (macOS or COSMIC). On macOS 26+, Media Player and Glass sit on real Liquid Glass.
 - **Custom pointers.** Built-in hand, ring, arrow and dot, or draw your own in the 20×24 pixel editor, or import an image and pick its tip.
 - **Settings window** for model, effort, theme, pointer, sizes, timing and (on macOS) hotkeys.
 
@@ -121,8 +121,9 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `claude.model` | `default`, `opus`, `sonnet`, `haiku` |
 | `claude.effort` | `low`, `medium`, `high`, `max` |
 | `claude.image` | screenshot size sent to Claude: `1366`, `1920`, `0` (full) |
-| `look.theme` | `midnight`, `y2k`, `glass`, `terminal`, `cosmic` |
-| `look.pointer` | `theme`, `hand`, `ring`, `arrow`, `dot`, or `custom:<name>` |
+| `look.theme` | `midnight`, `y2k`, `mediaplayer`, `glass`, `terminal`, `cosmic` |
+| `look.player_shine` | `wmp` (gloss bars) or `none`: reflections on the Media Player theme's Liquid Glass (macOS) |
+| `look.pointer` | `theme`, `hand`, `ring`, `arrow`, `dot`, `glass` (Liquid Glass lens), `glasshand`, or `custom:<name>` |
 | `look.pointer_size`, `look.text_size`, `look.card_opacity` | numbers |
 | `timing.show_seconds`, `timing.max_show_seconds` | how long answers stay up |
 | `timing.step_pace` | `slow`, `normal`, `fast` |

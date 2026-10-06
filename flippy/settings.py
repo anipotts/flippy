@@ -22,8 +22,8 @@ DEFAULTS = {
         "pointer_size": 1.0,    # multiplier
         "text_size": 15,        # px, answer text
         "card_opacity": 0.94,
-        "controls": "all",      # all | players (playback controls on every theme, or only Glass/Y2K)
-        "glass_shine": "wmp",   # wmp | none: gloss bars on the Glass theme's Liquid Glass (macOS), or plain glass
+        "controls": "all",      # all | players (playback controls on every theme, or only Media Player/Y2K)
+        "player_shine": "wmp",  # wmp | none: gloss bars on the Media Player theme's Liquid Glass (macOS), or plain
     },
     "timing": {
         "show_seconds": 8,      # answer stays at least this long after it finishes
@@ -51,16 +51,32 @@ CHOICES = {
     ("claude", "model"): ["default", "opus", "sonnet", "haiku"],
     ("claude", "effort"): ["low", "medium", "high", "max"],
     ("claude", "image"): [1366, 1920, 0],
-    ("look", "theme"): ["midnight", "y2k", "glass", "nowplaying", "terminal", "cosmic"],  # keep in sync with themes.THEMES
+    ("look", "theme"): ["midnight", "y2k", "mediaplayer", "glass", "terminal", "cosmic"],  # keep in sync with themes.THEMES
     ("look", "pointer"): ["theme", "hand", "ring", "arrow", "dot", "glass", "glasshand"],
     ("look", "controls"): ["all", "players"],
-    ("look", "glass_shine"): ["wmp", "none"],
+    ("look", "player_shine"): ["wmp", "none"],
     ("timing", "step_pace"): ["slow", "normal", "fast"],
     ("help", "mode"): ["off", "quiet", "tips"],
 }
 
+VERSION = 2  # the config file's format; older files are migrated on load (see _migrate)
+
 _data = copy.deepcopy(DEFAULTS)
 _listeners = []
+
+
+def _migrate(user):
+    """Version 1 -> 2: the glossy media player theme was "glass" and is now "mediaplayer"; the lock-screen
+    style one was "nowplaying" and is now "glass". Its reflections setting moved with it."""
+    if user.get("version", 1) >= 2:
+        return user
+    look = user.get("look")
+    if isinstance(look, dict):
+        if "theme" in look:
+            look["theme"] = {"glass": "mediaplayer", "nowplaying": "glass"}.get(look["theme"], look["theme"])
+        if "glass_shine" in look:
+            look["player_shine"] = look.pop("glass_shine")
+    return user
 
 
 def load():
@@ -68,7 +84,7 @@ def load():
     data = copy.deepcopy(DEFAULTS)
     try:
         with open(PATH, "rb") as f:
-            user = tomllib.load(f)
+            user = _migrate(tomllib.load(f))
         for section, values in user.items():
             if section in data and isinstance(values, dict):
                 for k, v in values.items():
@@ -130,7 +146,7 @@ def off_change(fn):
 
 def save():
     os.makedirs(os.path.dirname(PATH), exist_ok=True)
-    lines = ["# Flippy settings. Edit here or via `flippy-ask settings`.\n"]
+    lines = ["# Flippy settings. Edit here or via `flippy-ask settings`.\n", f"version = {VERSION}\n"]
     for section, values in _data.items():
         lines.append(f"\n[{section}]\n")
         for k, v in values.items():
