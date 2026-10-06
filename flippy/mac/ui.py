@@ -484,6 +484,10 @@ class MenuTarget(NSObject, protocols=[objc.protocolNamed("NSMenuDelegate")]):
             p.open_setup()
         elif cmd == "help-toggle":
             p.command(f"help-mode {'off' if settings.get('help', 'mode') != 'off' else 'quiet'}")
+        elif cmd == "tips-toggle":
+            p.command(f"help-mode {'quiet' if settings.get('help', 'mode') == 'tips' else 'tips'}")
+        elif cmd == "goal-front":
+            p.ask_goal()
         elif cmd == "watch-front":
             if p.menu_front:
                 p.command(f"watch-app {p.menu_front[0]}")
@@ -495,7 +499,8 @@ class MenuTarget(NSObject, protocols=[objc.protocolNamed("NSMenuDelegate")]):
 
 
 MENU = [("Ask about the screen", "ask", "ask"), ("Circle and ask", "draw", "draw"), None,
-        ("Help when I'm stuck", "help-toggle", None), ("Watch this app", "watch-front", None), None,
+        ("Help when I'm stuck", "help-toggle", None), ("Tips while I work", "tips-toggle", None),
+        ("Watch this app", "watch-front", None), ("Set a goal…", "goal-front", None), None,
         ("Preview the look", "preview", None), ("Settings…", "settings", None), ("New session", "reset", None),
         None, ("Setup…", "setup", None), ("Quit Flippy", "quit", None)]
 
@@ -564,7 +569,7 @@ class Platform:
             menu.addItem_(item)
             if key:
                 self.menu_items[key] = (item, title)
-            if cmd in ("help-toggle", "watch-front"):
+            if cmd in ("help-toggle", "tips-toggle", "watch-front", "goal-front"):
                 self.help_items[cmd] = item
         menu.setDelegate_(self.target)
         self.status.setMenu_(menu)
@@ -574,18 +579,46 @@ class Platform:
         """The menu is opening: the app in front is the one they're working in (Flippy never activates)."""
         app, name, pid = sensors.frontmost()
         self.menu_front = (app, name) if app and pid != os.getpid() else None
-        on = settings.get("help", "mode") != "off"
-        self.help_items["help-toggle"].setState_(1 if on else 0)
-        watch_item = self.help_items["watch-front"]
+        mode = settings.get("help", "mode")
+        self.help_items["help-toggle"].setState_(1 if mode != "off" else 0)
+        self.help_items["tips-toggle"].setState_(1 if mode == "tips" else 0)
+        watch_item, goal_item = self.help_items["watch-front"], self.help_items["goal-front"]
         if self.menu_front:
             watched = self.menu_front[0] in settings.get_list("help", "apps")
             watch_item.setTitle_(f"Watch {self.menu_front[1]}")
             watch_item.setState_(1 if watched else 0)
-            watch_item.setEnabled_(True)
+            goal_item.setTitle_(f"Set a goal for {self.menu_front[1]}…")
         else:
             watch_item.setTitle_("Watch this app")
             watch_item.setState_(0)
-            watch_item.setEnabled_(False)
+            goal_item.setTitle_("Set a goal…")
+        watch_item.setEnabled_(bool(self.menu_front))
+        goal_item.setEnabled_(bool(self.menu_front))
+
+    def ask_goal(self):
+        """What do they want to do in this app? Steers its tips."""
+        if not self.menu_front:
+            return
+        app, name = self.menu_front
+        from .. import tips
+        deck = tips.Deck.load(app)
+        alert = AppKit.NSAlert.alloc().init()
+        alert.setMessageText_(f"What do you want to do in {name}?")
+        alert.setInformativeText_("Flippy's tips for this app will be about it. For example: make a drum loop, "
+                                  "write a CLI in Rust, mix vocals.")
+        field = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 300, 24))
+        field.setStringValue_(deck.goal if deck else "")
+        alert.setAccessoryView_(field)
+        alert.addButtonWithTitle_("Save")
+        alert.addButtonWithTitle_("Cancel")
+        NSApp.activateIgnoringOtherApps_(True)
+        alert.window().setInitialFirstResponder_(field)
+        if alert.runModal() == AppKit.NSAlertFirstButtonReturn:
+            self.flippy.set_goal(app, str(field.stringValue()), name)
+            if app not in settings.get_list("help", "apps"):
+                self.command(f"watch-app {app}")
+            if settings.get("help", "mode") != "tips":
+                settings.set("help", "mode", "tips")  # a goal is for tips: turn them on
 
     # --- help mode (flippy/watch.py) ---
     def sample(self):
@@ -593,6 +626,10 @@ class Platform:
 
     def show_nudge(self, offer, on_help, on_later, on_mute):
         self.nudge.show(offer, on_help, on_later, on_mute)
+
+    def show_tip(self, app_name, text, got_it, knew, show_me):
+        self.nudge.card(f"Tip for {app_name}", text, [("Knew that", knew), ("Show me", show_me), ("Got it", got_it)],
+                        on_timeout=got_it, timeout_s=25)
 
     def hide_nudge(self):
         self.nudge.hide()
@@ -697,5 +734,6 @@ def run(make_app):
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)  # no Dock icon
     platform = Platform()
     flippy = make_app(platform)
+    platform.flippy = flippy
     platform.start(flippy.command)
     AppHelper.runEventLoop(installInterrupt=True)

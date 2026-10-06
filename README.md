@@ -80,6 +80,8 @@ flippy-ask setup            macOS: open the first-run setup window
 flippy-ask help-mode quiet  help mode on (or off)
 flippy-ask watch-app <id>   toggle watching an app in help mode
 flippy-ask demo-nudge       show the "Need a hand?" card
+flippy-ask goal <id> <text> set what you want to do in an app (steers its tips)
+flippy-ask demo-tip         show a tip card
 flippy-ask preview          play a sample walkthrough with the current look
 flippy-ask set look.theme y2k
 flippy-ask quit             stop the daemon
@@ -97,6 +99,16 @@ It watches only those apps, using simple local rules, with no Claude involved un
 
 A small card in the top-right asks "Need a hand?". **Help** takes a screenshot and asks Claude what you're probably trying to do. **Not now** makes it wait longer in that app next time, and **Don't ask in <app>** turns it off there. Input is only counted, never read. `flippy-ask demo-nudge` shows the card without waiting. Linux support: see [docs/help-mode-linux.md](docs/help-mode-linux.md).
 
+### Tips while you work
+
+Turn on **Tips while I work** in the same menu, and optionally **Set a goal for <app>…** ("make a drum loop", "write a CLI in Rust"). The first time you watch an app, Flippy asks Claude once, text only, for about 25 tips, from beginner to advanced and aimed at your goal. They're saved in `~/.config/flippy/tips/`, and Flippy shows one now and then on its own: after a minute in the app, at most every 5 minutes, and only in a short pause after you've been working, never mid-flow.
+
+- **Got it:** the next one comes later.
+- **Knew that:** two of these at a level skips you to harder tips.
+- **Show me:** the one live call. It takes a screenshot so Claude can point at it on your screen.
+
+When the tips at your level run low, Flippy asks for another batch (one more text call) and tells Claude which ones you already have. Changing the goal replaces the tips you haven't seen. `flippy-ask demo-tip` shows a tip card.
+
 ## Settings
 
 Settings live in `~/.config/flippy/config.toml`. Edit them in the settings window (`flippy-ask settings`), with `flippy-ask set <section.key> <value>`, or by hand.
@@ -112,7 +124,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `timing.show_seconds`, `timing.max_show_seconds` | how long answers stay up |
 | `timing.step_pace` | `slow`, `normal`, `fast` |
 | `timing.speed` | walkthrough playback speed, `0.5`–`2.0` |
-| `help.mode` | `off`, `quiet` |
+| `help.mode` | `off`, `quiet` (offer a hand when stuck), `tips` (that, plus cached tips) |
 | `help.apps`, `help.muted` | comma-separated app ids (macOS bundle ids, e.g. `com.ableton.live`) |
 | `keys.ask`, `keys.draw` | macOS hotkeys, e.g. `cmd+shift+space` (modifiers: `cmd`, `ctrl`, `option`, `shift`) |
 

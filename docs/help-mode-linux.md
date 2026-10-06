@@ -128,10 +128,35 @@ flippy-ask demo-nudge stalled       # show the card without waiting to get stuck
 A COSMIC shortcut running a small script could do "watch whatever's in front":
 read the activated toplevel's `app_id` and call `flippy-ask watch-app`.
 
+## Tips mode
+
+Tips mode (`help.mode = "tips"`) is almost entirely shared and needs only one more
+platform method:
+
+| Piece | File | Platform? |
+|---|---|---|
+| Deck: JSON cache per app, levels, "knew that" → skip ahead, refill when low | `flippy/tips.py` (`Deck`) | shared, tested |
+| Dealer: when to show one (warm-up, spacing, a short pause after activity) | `flippy/tips.py` (`Dealer`) | shared, tested |
+| Writing a deck: one text-only Agent SDK `query()` with its own system prompt | `flippy/brain.py` (`write_tips`, `parse_tips`) | shared |
+| Wiring: write on first watch, deal, buttons, "Show me" → normal ask | `flippy/daemon.py` (`_deck`, `_write_tips`, `_show_tip`, `set_goal`) | shared |
+| The tip card | `show_tip(app_name, text, got_it, knew, show_me)` on the platform | **per platform** |
+
+On macOS, `show_tip` reuses the "Need a hand?" panel (`Nudge.card()` in
+`flippy/mac/nudge.py`) with three buttons and a 25 s timeout that counts as
+"Got it". On COSMIC, draw it with the same overlay card as the help-mode nudge
+(see "The card on COSMIC"): it's the same layout with different text and three
+buttons instead of two. Goals: `flippy-ask goal <app_id> <text>` already works
+on any platform, since it's handled by the shared controller.
+
+The Dealer only needs `app`, `idle_s` and `events` from `sample()`. With the
+idle-notify resume-count substitute for `events`, lower `CALM_BUSY_EVENTS` (10)
+like the help-mode thresholds.
+
 ## Order of work
 
 1. `sample()` with `app` + `thumb` (portal) + `idle_s` (idle-notify), `events`
    from resume counts, `windows=None`. Lower the event thresholds.
 2. The overlay-drawn card and its three buttons.
 3. Try it with `demo-nudge`, then for real in LMMS. Tune `STALL_S` / `AWAY_S`.
-4. Later: ScreenCast or screencopy instead of screenshot PNGs; dialog detection.
+4. `show_tip` on the same overlay card, then try `help.mode = "tips"`.
+5. Later: ScreenCast or screencopy instead of screenshot PNGs; dialog detection.

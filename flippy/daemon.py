@@ -14,7 +14,7 @@ import tempfile
 import threading
 import time
 
-from . import loop, settings, themes, watch
+from . import loop, settings, themes, tips, watch
 from .brain import Brain, BrainError, prepare_image
 from .point import image_to_logical, segments
 
@@ -26,6 +26,7 @@ STEP_TYPE_CPS = 90          # walkthrough step text types in at this many chars/
 STEP_HOLD = {"slow": (3.5, 0.07), "normal": (2.2, 0.045), "fast": (1.2, 0.025)}  # (min s, s per char)
 READ_S_PER_CHAR = 0.04      # extra time the final answer stays up per character
 DRAW_TIMEOUT_S = 60         # leave draw mode (and give the mouse back) if nothing happens
+TIPS_RETRY_S = 300          # after a failed tip deck write, wait this long before trying again
 # Other knobs (model, effort, theme, pointer, timing) live in flippy/settings.py.
 
 
@@ -71,6 +72,10 @@ class Flippy:
         self._apply_theme()
         settings.on_change(self._on_setting)
         self.watcher = watch.Watcher()
+        self.dealer = tips.Dealer()
+        self.decks = {}          # app id -> tips.Deck
+        self.writing = set()     # apps whose tips are being written
+        self.tips_failed = {}    # app id -> when writing its tips last failed
         self.watch_id = 0
         self.sampling = False
         self._apply_help_settings()
@@ -134,6 +139,14 @@ class Flippy:
             offer = watch.Offer("demo", "Ableton Live", reason)
             self.ui.show_nudge(offer, lambda: self._nudge_help(offer), lambda: log("nudge: not now"),
                                lambda: log("nudge: mute"))
+        elif cmd.startswith("goal "):  # goal <app id> <what they want to do>: steers that app's tips
+            parts = cmd.split(maxsplit=2)
+            if len(parts) < 3:
+                return "usage: goal <app id> <what you want to do>"
+            self.set_goal(parts[1], parts[2])
+        elif cmd.startswith("demo-tip"):  # show a tip card
+            self._show_tip(tips.Deck("demo", "Ableton Live"), {"text": "Hold ⌘ while dragging a clip to duplicate it "
+                                                                       "instead of moving it.", "level": 1, "state": "new"})
         elif cmd.startswith("watch-app "):  # watch-app <app id>: toggle help mode for that app
             self.toggle_watch_app(cmd.split(maxsplit=1)[1])
         elif cmd.startswith("q "):  # ask without the box (scripting/testing)
@@ -473,6 +486,7 @@ class Flippy:
         if (self.busy or self.box.visible or self.overlay.showing or self.overlay.drawing
                 or self.ui.nudge_visible() or self.sampling):
             self.watcher.reset()  # Flippy's own stuff on screen isn't the person being stuck
+            self.dealer.reset()
             return True
         if not self.watcher.apps:
             return True
@@ -493,11 +507,78 @@ class Flippy:
         if sample is None or self.busy or self.box.visible or self.overlay.showing:
             return
         offer = self.watcher.feed(sample)
+        tip_time = settings.get("help", "mode") == "tips" and self.dealer.feed(sample, self.watcher.apps,
+                                                                               self.watcher.muted)
         if offer:
             log(f"help mode: offering a hand in {offer.app_name} ({offer.reason})")
             event("nudge", app=offer.app, reason=offer.reason)
+            self.dealer.shown(sample.t)  # no tip right on the heels of an offer
             self.ui.show_nudge(offer, lambda: self._nudge_help(offer), lambda: self.watcher.not_now(offer.app),
                                lambda: self._nudge_mute(offer))
+            return
+        if settings.get("help", "mode") == "tips" and sample.app in self.watcher.apps:
+            deck = self._deck(sample.app, sample.app_name)
+            tip = deck.next_tip() if tip_time else None
+            if tip:
+                self.dealer.shown(sample.t)
+                self._show_tip(deck, tip)
+
+    # --- tips mode (flippy/tips.py): a cached deck per app, dealt out locally ---
+    def _deck(self, app, name):
+        deck = self.decks.get(app) or tips.Deck.load(app) or tips.Deck(app, name or app)
+        if name and deck.app_name != name:
+            deck.app_name = name
+        self.decks[app] = deck
+        if deck.needs_refill():
+            self._write_tips(deck)
+        return deck
+
+    def _write_tips(self, deck):
+        if deck.app in self.writing or time.monotonic() - self.tips_failed.get(deck.app, -1e9) < TIPS_RETRY_S:
+            return
+        self.writing.add(deck.app)
+        n = tips.REFILL_SIZE if deck.tips else tips.DECK_SIZE
+        log(f"tips: writing {n} tips for {deck.app_name}" + (f" (goal: {deck.goal})" if deck.goal else ""))
+
+        def done(new, err):
+            self.writing.discard(deck.app)
+            if err:
+                log(f"tips: couldn't write tips for {deck.app_name}: {err}")
+                self.tips_failed[deck.app] = time.monotonic()
+                return
+            before = len(deck.tips)
+            deck.add(new)
+            deck.save()
+            log(f"tips: {len(deck.tips) - before} new tips for {deck.app_name}")
+        self._run(self.brain.write_tips(deck.app_name, deck.goal, n, deck.texts()), done, timeout=180)
+
+    def _show_tip(self, deck, tip):
+        log(f"tips: showing a level-{tip['level']} tip in {deck.app_name}")
+        event("tip", app=deck.app, text=tip["text"])
+
+        def mark(state):
+            deck.mark(tip, state)
+            if deck.app != "demo":
+                deck.save()
+
+        def show_me():
+            mark("shown")
+            self.submit(f"I'm learning {deck.app_name} and got this tip: \"{tip['text']}\" "
+                        f"Show me where that is on my screen right now, step by step.")
+        self.ui.show_tip(deck.app_name, tip["text"], got_it=lambda: mark("shown"), knew=lambda: mark("knew"),
+                         show_me=show_me)
+
+    def set_goal(self, app, goal, name=None):
+        """A new goal for an app: drop its unseen tips and write fresh ones for the goal."""
+        deck = self.decks.get(app) or tips.Deck.load(app) or tips.Deck(app, name or app)
+        if name:
+            deck.app_name = name
+        self.tips_failed.pop(app, None)
+        deck.goal = goal.strip()
+        deck.tips = [t for t in deck.tips if t["state"] != "new"]
+        deck.save()
+        self.decks[app] = deck
+        self._write_tips(deck)
 
     def _nudge_help(self, offer):
         self.watcher.helped(offer.app)

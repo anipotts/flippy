@@ -33,7 +33,7 @@ DEFAULTS = {
         "speed": 1.0,           # walkthrough playback speed, 0.5-2.0 (the player skins' speed slider)
     },
     "help": {                   # help mode (flippy/watch.py): offer a hand when you seem stuck
-        "mode": "off",          # off | quiet
+        "mode": "off",          # off | quiet (offer a hand when stuck) | tips (that, plus cached tips: flippy/tips.py)
         "apps": "",             # comma-separated app ids to watch (macOS bundle ids)
         "muted": "",            # apps where you chose "don't ask"
     },
@@ -52,7 +52,7 @@ CHOICES = {
     ("look", "controls"): ["all", "players"],
     ("look", "glass_shine"): ["wmp", "none"],
     ("timing", "step_pace"): ["slow", "normal", "fast"],
-    ("help", "mode"): ["off", "quiet"],
+    ("help", "mode"): ["off", "quiet", "tips"],
 }
 
 _data = copy.deepcopy(DEFAULTS)

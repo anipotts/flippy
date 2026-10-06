@@ -5,7 +5,7 @@ import os
 
 from PIL import Image
 from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, StreamEvent,
-                              TextBlock)
+                              TextBlock, query)
 
 from .point import pick_target_size
 
@@ -28,6 +28,14 @@ if pointing wouldn't help, end with [POINT:none].
 # Model and effort come from settings (flippy-ask settings); env vars override for testing.
 ENV_MODEL = os.environ.get("FLIPPY_MODEL")
 ENV_EFFORT = os.environ.get("FLIPPY_EFFORT")
+
+
+TIPS_PROMPT = """\
+you write short tips for someone learning an app. each tip is one or two plain sentences (no markdown),
+concrete and actionable: name the menu, panel, button or shortcut. skip the obvious. order them from
+beginner to advanced and give each a level: 1 (first hour), 2 (first week) or 3 (power user).
+reply with only a JSON array: [{"text": "...", "level": 1}, ...]
+"""
 
 
 class BrainError(Exception):
@@ -87,6 +95,27 @@ class Brain:
         await self.stop()
         await self.start()
 
+    async def write_tips(self, app_name: str, goal: str, n: int, skip: list[str]) -> list[dict]:
+        """One text-only call, outside the conversation: n tips for app_name. skip: tips they already have."""
+        opts = ClaudeAgentOptions(system_prompt=TIPS_PROMPT, tools=[], allowed_tools=[], mcp_servers={},
+                                  strict_mcp_config=True, setting_sources=[], max_turns=1,
+                                  model=self.options.model, effort="low", cwd=os.path.expanduser("~"))
+        ask = f"App: {app_name}\n"
+        if goal:
+            ask += f"What they want to do: {goal}\n"
+        if skip:
+            ask += "They already have these (don't repeat them):\n" + "\n".join(f"- {t}" for t in skip[-60:]) + "\n"
+        ask += f"Write {n} tips."
+        parts = []
+        async for msg in query(prompt=ask, options=opts):
+            if isinstance(msg, AssistantMessage):
+                if getattr(msg, "error", None):
+                    raise BrainError(str(msg.error))
+                parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
+            elif isinstance(msg, ResultMessage) and msg.is_error:
+                raise BrainError(msg.result or msg.subtype or "unknown error")
+        return parse_tips("".join(parts))
+
     async def ask(self, question: str, b64_jpeg: str, img_size: tuple[int, int], on_text=None) -> str:
         """Returns the full reply. on_text(delta) is called with text chunks as they stream in."""
         if self.client is None:
@@ -118,3 +147,23 @@ class Brain:
         if not text:
             raise BrainError("empty reply")
         return text
+
+
+def parse_tips(text: str) -> list[dict]:
+    """The JSON array out of a reply (tolerates code fences and chatter around it)."""
+    import json
+    start, end = text.find("["), text.rfind("]")
+    if start < 0 or end <= start:
+        raise BrainError("no tips in the reply")
+    try:
+        raw = json.loads(text[start:end + 1])
+    except ValueError as e:
+        raise BrainError(f"couldn't read the tips: {e}") from e
+    tips = []
+    for item in raw:
+        if isinstance(item, dict) and str(item.get("text", "")).strip():
+            level = item.get("level", 2)
+            tips.append({"text": str(item["text"]).strip(), "level": level if level in (1, 2, 3) else 2})
+    if not tips:
+        raise BrainError("no tips in the reply")
+    return tips
