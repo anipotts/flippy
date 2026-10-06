@@ -830,7 +830,7 @@ class Flippy:
         self.overlay.clear()
         self.overlay.start_drawing()
         event("draw_start")
-        self.overlay.show_text("draw around something, then let go to ask · right-click to cancel")
+        self.overlay.show_text("draw around something, then let go to ask · Esc or right-click to cancel")
         self.draw_timeout_id = loop.timeout_add_seconds(DRAW_TIMEOUT_S, self._draw_timed_out)
 
     def _draw_timed_out(self):
@@ -899,6 +899,7 @@ class Flippy:
         self.ui.demo_pointer(name, saved)
 
     def cancel_draw(self):
+        event("draw_cancel")
         self._end_draw_mode()
         self.marked = False
         self.overlay.clear()

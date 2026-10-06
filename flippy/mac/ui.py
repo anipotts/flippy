@@ -68,6 +68,7 @@ def _glass_view(radius, tint):
     v.setCornerRadius_(radius)
     v.setHidden_(True)
     return v
+ESC_HOTKEY = 4              # hotkey id for Esc while drawing (1-2: ask/draw)
 HIDE_SETTLE_MS = 150        # let the window server drop the question box before the screenshot
 FRAME_MS = 16
 
@@ -245,6 +246,13 @@ class Overlay(OverlayBase):
     def set_drawing_input(self, on):
         self._set_ignoring(not on)
         self.update_cursor()
+        # the overlay never takes the keyboard, so Esc is a global hotkey, only while drawing
+        if on:
+            err = hotkeys.register(ESC_HOTKEY, "escape", lambda: self.on_draw_cancel())
+            if err:
+                print(f"flippy: Esc while drawing: {err}", flush=True)
+        else:
+            hotkeys.unregister(ESC_HOTKEY)
 
     def _mouse(self):
         """Mouse position in overlay (flipped, logical) coordinates."""
