@@ -27,6 +27,8 @@ POINTERS = [("theme", "Theme default"), ("hand", "Pixel hand"), ("arrow", "Pixel
 PACES = [("slow", "Slow"), ("normal", "Normal"), ("fast", "Fast")]
 CONTROLS = [("all", "On every theme"), ("players", "Only Media Player and Y2K")]
 SHINES = [("wmp", "WMP gloss"), ("none", "Plain glass")]
+TINT_COLORS = [("smoke", "Smoke"), ("blue", "Blue"), ("purple", "Purple"), ("pink", "Pink"), ("red", "Red"),
+               ("orange", "Orange"), ("green", "Green"), ("teal", "Teal")]
 PAUSE_KEYS = [("double-cmd", "⌘ ⌘  (double-tap)"), ("double-option", "⌥ ⌥  (double-tap)"),
               ("double-ctrl", "⌃ ⌃  (double-tap)"), ("double-shift", "⇧ ⇧  (double-tap)"), ("off", "Off")]
 WIDTH, HEIGHT = 640, 720
@@ -230,6 +232,9 @@ class SettingsWindow:
         f.row("Pointer size", None, self._setting_slider(f, "look", "pointer_size", 0.5, 2.0, 0.1, digits=1))
         f.row("Text size", "Answer text, in px", self._setting_slider(f, "look", "text_size", 11, 24, 1))
         f.row("Panel opacity", None, self._setting_slider(f, "look", "card_opacity", 0.5, 1.0, 0.02, digits=2))
+        f.row("Glass tint", "How tinted Liquid Glass is (Glass, Media Player, the ask box)",
+              self._setting_slider(f, "look", "glass_tint", 0.0, 1.0, 0.05, digits=2))
+        f.row("Tint color", None, self._setting_popup(f, "look", "glass_color", TINT_COLORS))
         f.row("Playback controls", "Clickable play/pause/step buttons on the answer panel",
               self._setting_popup(f, "look", "controls", CONTROLS))
         f.row("Media Player reflections", "Windows Media Player gloss bars on its Liquid Glass, or plain glass",

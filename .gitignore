@@ -23,3 +23,10 @@ scripts/record_*.py
 scripts/edit_*.py
 scripts/reel_music.py
 scripts/demo_*.py
+scripts/beat_music.py
+scripts/keysounds.py
+scripts/song_music.py
+scripts/demo_song.py
+scripts/keysamples.py
+scripts/demo_features.py
+scripts/edit_song.py

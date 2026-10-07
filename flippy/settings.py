@@ -22,6 +22,8 @@ DEFAULTS = {
         "pointer_size": 1.0,    # multiplier
         "text_size": 15,        # px, answer text
         "card_opacity": 0.94,
+        "glass_tint": 0.5,      # 0-1: how strongly Liquid Glass (Glass and Media Player themes, the ask box) is tinted
+        "glass_color": "smoke", # smoke | blue | purple | pink | red | orange | green | teal: the tint's color
         "controls": "all",      # all | players (playback controls on every theme, or only Media Player/Y2K)
         "player_shine": "wmp",  # wmp | none: gloss bars on the Media Player theme's Liquid Glass (macOS), or plain
     },

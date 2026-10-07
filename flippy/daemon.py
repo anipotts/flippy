@@ -32,6 +32,9 @@ NOT_HERE = "not available on this platform yet (see docs/linux-port.md)"
 TIPS_RETRY_S = 300          # after a failed tip deck write, wait this long before trying again
 CLICK_RADIUS = 55           # a click this close (logical px) to a :click step's target counts as doing it
 CLICK_SETTLE_S = 0.5        # after their click, let the app react before moving on
+TYPE_STEP_RE = re.compile(r"\b(type|enter)\b", re.I)   # a step that has them type something after the click
+TYPE_IDLE_S = 1.2           # ...look again once they've typed and paused this long
+TYPE_WAIT_S = 25.0          # ...or after this long anyway
 # Other knobs (model, effort, theme, pointer, timing) live in flippy/settings.py.
 
 
@@ -399,7 +402,7 @@ class Flippy:
             pl["typed_at"] = now
         if self._gated(seg) and pl["step"] not in pl["acted"]:
             # a step they have to do: hold here until they click the thing (flippy/point.py ":click")
-            if pl["clicked_at"] is None or now - pl["clicked_at"] < CLICK_SETTLE_S:
+            if pl["clicked_at"] is None or now - pl["clicked_at"] < CLICK_SETTLE_S or self._still_typing(pl, seg, now):
                 if not pl["waiting"]:
                     pl["waiting"] = True
                     self._listen_for_click(True)
@@ -442,8 +445,6 @@ class Flippy:
                 frac += min((now - pl["typed_at"]) / self._hold_s(seg), 1) * 0.5
             progress = (step + frac) / len(known)
         text = seg.text[:int(pl["shown"])] or " "
-        if pl["waiting"] and step == pl["step"]:
-            text += "\nYour turn: click it"
         self.overlay.show_text(text,
                                header=seg.point.label if seg.point else None,
                                follow=pl["pointed"],
@@ -462,6 +463,17 @@ class Flippy:
     def _listen_for_click(self, on):
         if hasattr(self.ui, "watch_clicks"):
             self.ui.watch_clicks(self._on_user_click) if on else self.ui.unwatch_clicks()
+
+    def _still_typing(self, pl, seg, now):
+        """A "click the box and type X" step: the click is only half of it. Wait until they typed and paused,
+        so the next screenshot shows what they typed (else it'd tell them to type it again)."""
+        if not (TYPE_STEP_RE.search(seg.text) and hasattr(self.ui, "key_idle_s")):
+            return False
+        since = now - pl["clicked_at"]
+        if since >= TYPE_WAIT_S:
+            return False
+        idle = self.ui.key_idle_s()
+        return idle >= since or idle < TYPE_IDLE_S   # nothing typed since the click yet, or still typing
 
     def _on_user_click(self, x, y):
         pl = self.play
@@ -850,7 +862,7 @@ class Flippy:
                 event("path", drag=drag, n=len(points))
                 return self.ui.path(points, drag)
             if verb == "type":
-                return self.ui.type_text(rest)
+                return self.ui.type_text(rest, on_key=lambda ch: event("typed", ch=ch))
             if verb == "key":
                 event("keys", combo=rest.strip())
                 return self.ui.key(rest.strip())
@@ -927,7 +939,10 @@ class Flippy:
         self.overlay.clear()
         W, H = self.ui.screen_size()
         sc = self._scale()
-        spots = [(70, 14, "Workspaces"), (W // 2, 14, "Clock"), (W // 2, H - 40, "Dock")]
+        if sys.platform == "darwin":  # the clock sits at the right end of the menu bar (the middle is the notch)
+            spots, first = [(22, 12, "Apple menu"), (W - 70, 12, "Clock"), (W // 2, H - 40, "Dock")], "the Apple menu"
+        else:
+            spots, first = [(70, 14, "Workspaces"), (W // 2, 14, "Clock"), (W // 2, H - 40, "Dock")], "the workspaces button"
         self.tutorial = tutorial
         if tutorial:
             spots = [(22, 12, "Apple menu:click"), (W // 2, H - 40, "Dock")]
@@ -938,7 +953,7 @@ class Flippy:
             self.play["raw"], self.play["done"] = raw, True
             return
         raw = " ".join(f"{txt} [POINT:{int(x * sc)},{int(y * sc)}:{lbl}]." for (x, y, lbl), txt in zip(spots, (
-            "This is a preview of how answers look: the pointer starts at the workspaces button",
+            f"This is a preview of how answers look: the pointer starts at {first}",
             "then glides to the clock while the panel follows it",
             "and ends on the dock, one step per thing it explains")))
         shot = (int(W * sc), int(H * sc))
@@ -982,7 +997,7 @@ class Flippy:
         self._show_box()
 
     # --- scripted demo helpers (used by scripts/record_demo.py) ---
-    def demo_type(self, text, delay_ms=55):
+    def demo_type(self, text, delay_ms=65):
         if not self.box.visible:
             self.open_box()
         state = {"i": 0}
@@ -992,6 +1007,7 @@ class Flippy:
                 return False
             state["i"] += 1
             self.box.set_text(text[:state["i"]])
+            event("typed", ch=text[state["i"] - 1])  # each key as it lands, so a demo edit can sync key sounds
             if state["i"] >= len(text):
                 loop.timeout_add(450, lambda: self.box.visible and self.box.activate() and False)
                 return False

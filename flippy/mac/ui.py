@@ -51,10 +51,25 @@ SMOKE = {"box": 0.25, "field": 0.40, "card": 0.25}
 LENS = {"frost": 0.04, "smoke": 0.06}  # the glass pointer: nearly clear
 
 
-def glass_color(frost, smoke):
-    """Frost over smoke as one tint: white at `frost` on top of black at `smoke`."""
+# the tint colors you can pick for Liquid Glass (Settings > Look > Tint color): deep shades, so white text reads
+TINTS = {"smoke": (0, 0, 0), "blue": (0.04, 0.18, 0.62), "purple": (0.30, 0.10, 0.62), "pink": (0.66, 0.10, 0.42),
+         "red": (0.66, 0.07, 0.08), "orange": (0.72, 0.30, 0.02), "green": (0.04, 0.44, 0.18),
+         "teal": (0.02, 0.40, 0.46)}
+
+
+def glass_color(frost, smoke, rgb=(0, 0, 0)):
+    """Frost over smoke as one tint: white at `frost` on top of `rgb` (black by default) at `smoke`."""
     a = frost + smoke * (1 - frost)
-    return NSColor.colorWithWhite_alpha_(frost / a if a else 0, a)
+    if not a:
+        return NSColor.colorWithWhite_alpha_(0, 0)
+    r, g, b = ((frost + smoke * (1 - frost) * c) / a for c in rgb)
+    return NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, a)
+
+
+def user_tint(frost, smoke):
+    """A surface's glass tint with the user's Glass tint strength and color on top."""
+    smoke += (1 - smoke) * min(max(float(settings.get("look", "glass_tint")), 0.0), 1.0) * 0.8
+    return glass_color(frost, smoke, TINTS.get(settings.get("look", "glass_color"), TINTS["smoke"]))
 
 
 def glass_tint(part):
@@ -212,10 +227,12 @@ class Overlay(OverlayBase):
         lay = self.card_layout(*self.size())
         if lay and lay[1]["backdrop"]:
             theme = self.theme
-            if theme is not self.glass_theme:  # per-theme tint (Glass uses FROST/SMOKE["card"])
-                self.glass_theme = theme
+            key = (theme, settings.get("look", "glass_tint"), settings.get("look", "glass_color"))
+            if key != self.glass_theme:  # per-theme tint (Glass uses its own frost/smoke), plus the user's tint
+                self.glass_theme = key
                 bd = theme.backdrop
-                self.glass.setTintColor_(glass_color(bd["frost"], bd["smoke"]) if "frost" in bd else glass_tint("card"))
+                frost, smoke = (bd["frost"], bd["smoke"]) if "frost" in bd else (FROST["card"], SMOKE["card"])
+                self.glass.setTintColor_(user_tint(frost, smoke))
                 self.glass.setCornerRadius_(bd["radius"])
             self.glass.setFrame_(NSMakeRect(*lay[0]))
             _show(self.glass, True)
@@ -389,7 +406,7 @@ class InputBox:
         panel = KeyPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(x, y, w, h), NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel,
             NSBackingStoreBuffered, False)
-        panel.setLevel_(NSFloatingWindowLevel)
+        panel.setLevel_(NSScreenSaverWindowLevel + 1)  # over the overlay, so a circle you drew never crosses it
         panel.setCollectionBehavior_(NSWindowCollectionBehaviorCanJoinAllSpaces
                                      | NSWindowCollectionBehaviorFullScreenAuxiliary)
         panel.setOpaque_(False)
@@ -405,7 +422,7 @@ class InputBox:
         if st.get("glass"):
             root = AppKit.NSGlassEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
             root.setStyle_(AppKit.NSGlassEffectViewStyleClear)
-            root.setTintColor_(glass_tint("box"))
+            root.setTintColor_(user_tint(FROST["box"], SMOKE["box"]))
             root.setCornerRadius_(st["radius"])
             root.setContentView_(card)
             panel.setHasShadow_(False)  # the glass draws its own edge and depth
@@ -786,6 +803,11 @@ class Platform:
                 time.sleep(0.03)
         return "ok"
 
+    def key_idle_s(self):
+        """Seconds since the last key press anywhere (an event counter: no keylogging, no permission)."""
+        return Quartz.CGEventSourceSecondsSinceLastEventType(Quartz.kCGEventSourceStateCombinedSessionState,
+                                                             Quartz.kCGEventKeyDown)
+
     def watch_clicks(self, fn):
         """fn(x, y) on every left click in other apps (logical px, top-left origin). No permission needed."""
         self.unwatch_clicks()
@@ -841,8 +863,8 @@ class Platform:
         threading.Thread(target=run, daemon=True).start()
         return "ok"
 
-    def type_text(self, text):
-        """Real keystrokes, at a human-ish pace."""
+    def type_text(self, text, on_key=None):
+        """Real keystrokes, at a human-ish pace. on_key(ch) runs as each one is posted (on a worker thread)."""
         err = self._can_post()
         if err:
             return err
@@ -850,10 +872,17 @@ class Platform:
         def run():
             import random
             for ch in text:
+                # The real key code where there is one (apps that read key codes, like GarageBand's
+                # shortcuts, would otherwise see "a"), no stray modifiers, and the text for the field.
+                code = hotkeys.KEYS.get("space" if ch == " " else ch.lower(), 0)
+                flags = Quartz.kCGEventFlagMaskShift if ch.isupper() else 0
                 for down in (True, False):
-                    ev = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
+                    ev = Quartz.CGEventCreateKeyboardEvent(None, code, down)
+                    Quartz.CGEventSetFlags(ev, flags)
                     Quartz.CGEventKeyboardSetUnicodeString(ev, len(ch.encode("utf-16-le")) // 2, ch)
                     Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+                if on_key:
+                    on_key(ch)
                 time.sleep(random.uniform(0.045, 0.11) + (0.12 if ch in " ,." else 0))
         threading.Thread(target=run, daemon=True).start()
         return "ok"
