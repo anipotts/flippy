@@ -1,34 +1,22 @@
 .venv/
 __pycache__/
 *.pyc
-# local notes, env and renders
+.gstack/
+# local notes and env
 plan.md
 env.sh
-*.mp4
-*.music.wav
-*.raw.webm
+# not part of the Flippy build: dev experiments, demo recording/editing tooling and its media
+spikes/
+flippy-demo/
 demo_raw/
 reel_raw/
-# demo recording/editing (local only)
-scripts/demo_mac.py
-scripts/edit_demo_mac.py
-flippy-demo/
+scripts/*
+!scripts/install_mac.sh
+!scripts/install_linux.sh
+!scripts/release.sh
+*.mp4
 *.mov
+*.webm
+*.wav
 *.mp3
 *.m4a
-*.wav
-# dev experiments and video tooling (not part of Flippy)
-spikes/
-scripts/record_*.py
-scripts/edit_*.py
-scripts/reel_music.py
-scripts/demo_*.py
-scripts/beat_music.py
-scripts/keysounds.py
-scripts/song_music.py
-scripts/demo_song.py
-scripts/keysamples.py
-scripts/demo_features.py
-scripts/edit_song.py
-scripts/takeinfo.py
-scripts/export_stems.sh
