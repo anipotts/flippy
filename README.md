@@ -2,7 +2,7 @@
 
 An AI tutor that sits on top of your desktop. Press a hotkey, type a question about whatever's on screen, and Claude answers in a small card, with a pointer that flies to the exact button, menu or setting it's talking about.
 
-Runs on **macOS** (13+, native AppKit) and on **Linux with COSMIC on Wayland** (Pop!_OS 24.04). Modeled on [farzaa/clicky](https://github.com/farzaa/clicky) (macOS), rewritten from scratch in Python. If you like what I made, Farza is the pioneer! go check out (and star his repo if you starred this) heyclicky.com(https://www.heyclicky.com/)
+Runs on **macOS** (13+, native AppKit) and on **Linux with COSMIC on Wayland** (Pop!_OS 24.04). Modeled on [farzaa/clicky](https://github.com/farzaa/clicky) (macOS), rewritten from scratch in Python. If you like what I made, Farza is the pioneer! go check out (and star his repo if you starred this) [heyclicky.com](https://www.heyclicky.com/)
 
 ## What it does
 
