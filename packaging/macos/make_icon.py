@@ -2,6 +2,7 @@
 
 Usage: python packaging/macos/make_icon.py <out.icns>
 """
+import math
 import os
 import subprocess
 import sys
@@ -31,7 +32,7 @@ def draw(size):
     # the hand sprite, crisp: one sprite pixel = a 27px block
     rows, px = themes.HAND, 27
     w, h = len(rows[0]) * px, len(rows) * px
-    ox, oy = (1024 - w) / 2 + 10, (1024 - h) / 2 + 60
+    ox, oy = (1024 - w) / 2 + 10, (1024 - h) / 2 + 90
     cr.set_antialias(cairo.ANTIALIAS_NONE)  # no seams between the blocks
     for dx, dy, shadow in ((10, 14, True), (0, 0, False)):
         for r, row in enumerate(rows):
@@ -45,11 +46,16 @@ def draw(size):
                 cr.rectangle(ox + c * px + dx, oy + r * px + dy, px, px)
                 cr.fill()
     cr.set_antialias(cairo.ANTIALIAS_DEFAULT)
-    # the tap ring at the fingertip
-    tip_x = ox + (themes.HAND_TIP_COL + 0.5) * px
-    cr.set_source_rgba(0.35, 0.63, 1.0, 0.9)
-    cr.set_line_width(14)
-    cr.arc(tip_x, oy - 30, 36, 0, 6.2832)
+    # click rays off the fingertip, like the menu bar icon (flippy/mac/statusicon.py, scaled to this hand)
+    tip_x, tip_y = ox + (themes.HAND_TIP_COL + 0.5) * px, oy
+    start, length = 0.15 * h, 0.19 * h
+    cr.set_source_rgba(0.35, 0.63, 1.0, 0.95)
+    cr.set_line_width(0.075 * h)
+    cr.set_line_cap(cairo.LINE_CAP_ROUND)
+    for a in (-90, -130, -50, -165, -15):
+        r = math.radians(a)
+        cr.move_to(tip_x + start * math.cos(r), tip_y + start * math.sin(r))
+        cr.line_to(tip_x + (start + length) * math.cos(r), tip_y + (start + length) * math.sin(r))
     cr.stroke()
     return s
 
