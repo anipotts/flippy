@@ -30,3 +30,5 @@ scripts/demo_song.py
 scripts/keysamples.py
 scripts/demo_features.py
 scripts/edit_song.py
+scripts/takeinfo.py
+scripts/export_stems.sh
