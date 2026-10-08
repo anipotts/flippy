@@ -303,9 +303,7 @@ class Platform:
 
     def start(self, command):
         """The panel icon and the Wayland watcher, once the controller exists."""
-        from ..video import Review
-        self.video = Review(self.flippy)
-        self.command = lambda cmd: self._route(cmd, command)
+        self.command = command
         wl.connection()  # start counting input now, so help mode's first minute has history
         try:
             from .tray import Tray
@@ -315,13 +313,6 @@ class Platform:
         from .setup_window import needs_setup
         if needs_setup():
             loop.timeout_add(300, lambda: self.open_setup() and False)
-
-    def _route(self, cmd, handle):
-        """Commands the controller doesn't know yet (video review, flippy/video.py) are handled here; the
-        rest go to it. Once macOS has video review too, this moves into Flippy.command."""
-        if (cmd == "video" or cmd.startswith("video ")) and getattr(self, "video", None):
-            return self.video.command(cmd)
-        return handle(cmd)
 
     # --- video review (flippy/video.py): the window in front, grabbed a few times a second
     def video_window(self):
@@ -475,8 +466,6 @@ class Platform:
 
     def listen(self, path, handle):
         """Serve the flippy-ask socket: one command line in, handle(cmd) -> one reply line out."""
-        outer = handle
-        handle = lambda cmd: self._route(cmd, outer)  # noqa: E731
         self.service = Gio.SocketService()
         self.service.add_address(Gio.UnixSocketAddress.new(path), Gio.SocketType.STREAM,
                                  Gio.SocketProtocol.DEFAULT, None)

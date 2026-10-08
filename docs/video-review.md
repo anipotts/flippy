@@ -5,7 +5,7 @@ back, press it again and ask. Flippy shows Claude the frames that matter and the
 answers, pointing at your timeline if that helps.
 
 Status: **working on COSMIC** (tested end to end; see [What was tested](#what-was-tested)).
-**macOS: not built yet.** [The macOS version](#the-macos-version) is the plan for it.
+**macOS: built** (`⌃⌥V`, menu bar "Check a video edit"); see [The macOS version](#the-macos-version).
 
 ## How it works
 
@@ -42,8 +42,8 @@ picking on synthetic thumbnails.
 | Which window to record | `Platform.video_window() -> (handle, app name)` or `(None, why not)` | **per platform** |
 | A grab of that window | `Platform.video_frame(handle) -> PIL.Image or None` (worker thread; `None` = window gone, stops) | **per platform** |
 | The "Recording…" / "Your edit is ready" cards | `ui.nudge.card(...)` / `ui.nudge.hide()` (help mode's card; same API on both) | per platform, exists |
-| Routing `video …` commands to `Review` | COSMIC: `Platform._route` in `flippy/linux/ui.py`. Later: `Flippy.command` | see below |
-| Shortcut, menu item | COSMIC: `Super+Shift+V` → `flippy-ask video` (setup offers it), panel menu "Check a video edit" | per platform |
+| Routing `video …` commands to `Review` | `Flippy.command` (`NOT_HERE` without `video_window`) | shared |
+| Shortcut, menu item | COSMIC: `Super+Shift+V` → `flippy-ask video` (setup offers it), panel menu "Check a video edit". macOS: `keys.video` (`ctrl+option+v`), hotkey id 3, menu bar "Check a video edit" | per platform |
 
 ### Commands
 
@@ -115,8 +115,10 @@ These all happened (or nearly did) while building the COSMIC side:
 
 ## The macOS version
 
-What macOS needs is small: two Platform methods, a shortcut, a menu item and the
-command routing. `flippy/video.py` is used as is.
+Built as planned below. `video_window` uses `sensors.front_window(pid)` (first layer-0
+window of the frontmost app, front to back); `video_frame` uses `CGWindowListCreateImage`
+(still works on macOS 27, ~16 ms a grab) and falls back to `screencapture -l <id>` if it
+ever stops returning frames. `flippy/video.py` is used as is.
 
 ### 1. `Platform.video_window()` (flippy/mac/ui.py)
 
@@ -187,8 +189,8 @@ ffmpeg -f lavfi -i testsrc2=size=960x540:rate=30:duration=5 -f lavfi -i smptebar
 
 ## Merging the two
 
-Once macOS has `video_window` / `video_frame`, move the routing into the controller and
-delete COSMIC's stopgap:
+Done (steps 1-3): `Flippy` owns `self.video` and routes `video …`; COSMIC's `_route`
+stopgap is gone. Step 4 is still open:
 
 1. `Flippy.__init__`: `self.video = video.Review(self)` (import `video` with the other
    modules).

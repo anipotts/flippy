@@ -282,7 +282,8 @@ class SettingsWindow:
         f = Form(WIDTH - 40)
         self.keep.append(f)
         f.group("Shortcuts", "Work from any app. Click one, then press the new combination (Esc cancels).")
-        for name, what in (("ask", "Ask about the screen"), ("draw", "Circle something, then ask")):
+        for name, what in (("ask", "Ask about the screen"), ("draw", "Circle something, then ask"),
+                           ("video", "Record a video edit, then ask")):
             rec = KeyRecorder(name, f.keep)
             self.recorders.append(rec)
             f.row(what, None, rec.btn)

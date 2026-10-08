@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 
-from . import loop, settings, themes, tips, updates, watch
+from . import loop, settings, themes, tips, updates, video, watch
 from .brain import Brain, BrainError, prepare_image
 from .point import image_to_logical, segments
 
@@ -90,6 +90,7 @@ class Flippy:
         self.watch_id = 0
         self.sampling = False
         self._apply_help_settings()
+        self.video = video.Review(self)
         self._run(self.brain.start(), lambda r, e: log("claude session ready" if not e else f"session start failed: {e}"))
 
         try:
@@ -117,6 +118,10 @@ class Flippy:
             self.open_box()
         elif cmd == "draw":
             self.start_draw()
+        elif cmd == "video" or cmd.startswith("video "):  # video review (flippy/video.py)
+            if not hasattr(self.ui, "video_window"):
+                return NOT_HERE
+            return self.video.command(cmd)
         elif cmd.startswith("demo-type "):  # scripted demo: type into the box like a person
             self.demo_type(cmd[len("demo-type "):])
         elif cmd.startswith("demo-draw "):  # scripted demo: circle (cx, cy, rx, ry) in logical px, then ask

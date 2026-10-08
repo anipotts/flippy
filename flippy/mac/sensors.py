@@ -57,6 +57,23 @@ def windows(pid):
     return sorted(out, key=lambda w: -w[1][2] * w[1][3])
 
 
+def front_window(pid):
+    """pid's frontmost normal on-screen window id, or None. CGWindowListCopyWindowInfo lists front to back."""
+    info = Quartz.CGWindowListCopyWindowInfo(
+        Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements, Quartz.kCGNullWindowID)
+    for win in info or []:
+        b = win.get("kCGWindowBounds") or {}
+        if (win.get("kCGWindowOwnerPID") == pid and win.get("kCGWindowLayer", 0) == 0
+                and b.get("Width", 0) > 50 and b.get("Height", 0) > 50):
+            return int(win["kCGWindowNumber"])
+    return None
+
+
+def window_exists(wid):
+    info = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionIncludingWindow, wid)
+    return bool(info) and info[0].get("kCGWindowIsOnscreen", True)
+
+
 def sample(want_thumb=True):
     app, name, pid = frontmost()
     if pid == _SELF:  # our own windows (settings, the prompt) aren't the app being learned

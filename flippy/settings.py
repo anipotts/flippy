@@ -49,6 +49,7 @@ DEFAULTS = {
     "keys": {                   # global hotkeys (macOS; on COSMIC they're set in COSMIC Settings)
         "ask": "cmd+shift+space",
         "draw": "ctrl+shift+space",
+        "video": "ctrl+option+v",  # video review: start recording the window in front; again: stop and ask
         "pause": "double-cmd",  # pause/resume the walkthrough: double-cmd | double-option | double-ctrl | double-shift | off
     },
 }

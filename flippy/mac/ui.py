@@ -90,7 +90,7 @@ def event_hook(name, **data):
 
 
 PLATFORM = None             # the running Platform (for windows that need it, like setup's Restart)
-ESC_HOTKEY = 4              # hotkey id for Esc while drawing (1-2: ask/draw)
+ESC_HOTKEY = 4              # hotkey id for Esc while drawing (1-3: ask/draw/video)
 HIDE_SETTLE_MS = 150        # let the window server drop the question box before the screenshot
 FRAME_MS = 16
 
@@ -540,7 +540,8 @@ class MenuTarget(NSObject, protocols=[objc.protocolNamed("NSMenuDelegate")]):
         self.platform.refresh_help_menu()
 
 
-MENU = [("Ask about the screen", "ask", "ask"), ("Circle and ask", "draw", "draw"), None,
+MENU = [("Ask about the screen", "ask", "ask"), ("Circle and ask", "draw", "draw"),
+        ("Check a video edit", "video", "video"), None,
         ("Help when I'm stuck", "help-toggle", None), ("Tips while I work", "tips-toggle", None),
         ("Watch this app", "watch-front", None), ("Set a goal…", "goal-front", None), None,
         ("Preview the look", "preview", None), ("Settings…", "settings", None), ("New session", "reset", None),
@@ -584,7 +585,7 @@ class Platform:
         self.setup_win.present()
 
     def _bind_keys(self):
-        for hid, name in ((1, "ask"), (2, "draw")):
+        for hid, name in ((1, "ask"), (2, "draw"), (3, "video")):
             err = hotkeys.register(hid, settings.get("keys", name), lambda n=name: self.command(f"hotkey {n}"))
             if err:
                 print(f"flippy: hotkey for {name}: {err}", flush=True)
@@ -668,6 +669,43 @@ class Platform:
                 self.command(f"watch-app {app}")
             if settings.get("help", "mode") != "tips":
                 settings.set("help", "mode", "tips")  # a goal is for tips: turn them on
+
+    # --- video review (flippy/video.py): the window in front, grabbed a few times a second ---
+    def video_window(self):
+        """(window id, app name) of the frontmost app's front window, or (None, why not)."""
+        app, name, pid = sensors.frontmost()
+        if pid == os.getpid():
+            return None, "That's Flippy's own window. Click your video editor first."
+        wid = sensors.front_window(pid) if pid else None
+        if wid is None:
+            return None, "Click your video editor first, so it's the window in front."
+        return wid, name
+
+    def video_frame(self, wid):
+        """That one window as a PIL image (nothing above it, so Flippy's cards stay out), or None if it closed.
+        Called from the recording thread."""
+        from PIL import Image
+        img = Quartz.CGWindowListCreateImage(
+            Quartz.CGRectNull, Quartz.kCGWindowListOptionIncludingWindow, wid,
+            Quartz.kCGWindowImageBoundsIgnoreFraming | Quartz.kCGWindowImageNominalResolution)
+        if img is not None and Quartz.CGImageGetWidth(img) > 1:
+            w, h = Quartz.CGImageGetWidth(img), Quartz.CGImageGetHeight(img)
+            data = Quartz.CGDataProviderCopyData(Quartz.CGImageGetDataProvider(img))
+            return Image.frombuffer("RGBA", (w, h), bytes(data), "raw", "BGRA", Quartz.CGImageGetBytesPerRow(img), 1)
+        if not sensors.window_exists(wid):
+            return None
+        # CGWindowListCreateImage is deprecated (macOS 14+): if it stops returning frames, screencapture still can
+        fd, path = tempfile.mkstemp(prefix="flippy-video-", suffix=".png")
+        os.close(fd)
+        try:
+            r = subprocess.run(["/usr/sbin/screencapture", "-x", "-o", "-l", str(wid), "-t", "png", path],
+                               capture_output=True, timeout=5)
+            if r.returncode != 0 or os.path.getsize(path) == 0:
+                return None
+            with Image.open(path) as im:
+                return im.convert("RGB")
+        finally:
+            os.unlink(path)
 
     # --- help mode (flippy/watch.py) ---
     def sample(self):
