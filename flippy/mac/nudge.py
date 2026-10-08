@@ -32,7 +32,7 @@ class Nudge:
         self.card(offer.headline(), offer.detail(), [("Not now", on_later), ("Help", on_help)],
                   (f"Don't ask in {offer.app_name}", on_mute), on_timeout=on_later)
 
-    def card(self, head_text, detail_text, buttons, link=None, on_timeout=None, timeout_s=TIMEOUT_S):
+    def card(self, head_text, detail_text, buttons, link=None, on_timeout=None, timeout_s=TIMEOUT_S, width=W):
         """head + detail, a right-aligned row of buttons [(title, fn)] (the last one is the default),
         and an optional small link (title, fn) underneath. Any choice closes it."""
         self.hide()
@@ -43,8 +43,8 @@ class Nudge:
                 self.hide()
                 fn()
             return go
-        head = label(head_text, 13, bold=True, color=NSColor.whiteColor(), wrap_width=W - 2 * PAD)
-        detail = label(detail_text, 12, color=NSColor.colorWithWhite_alpha_(1, 0.8), wrap_width=W - 2 * PAD)
+        head = label(head_text, 13, bold=True, color=NSColor.whiteColor(), wrap_width=width - 2 * PAD)
+        detail = label(detail_text, 12, color=NSColor.colorWithWhite_alpha_(1, 0.8), wrap_width=width - 2 * PAD)
         btns = [button(title, act(fn), self.keep, primary=(i == len(buttons) - 1)) for i, (title, fn) in enumerate(buttons)]
         self.buttons = {title.lower(): b for (title, _), b in zip(buttons, btns)}
         small = None
@@ -60,12 +60,12 @@ class Nudge:
         hh, dh = head.frame().size.height, detail.frame().size.height
         bh = max(b.frame().size.height for b in btns)
         h = PAD + hh + 4 + dh + 12 + bh + (6 + small.frame().size.height - 4 if small else 0) + PAD
-        content = FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, W, h))
+        content = FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, width, h))
         for v, x, yy in ((head, PAD, y), (detail, PAD, y + hh + 4)):
             v.setFrameOrigin_((x, yy))
             content.addSubview_(v)
         y += hh + 4 + dh + 12
-        x = W - PAD
+        x = width - PAD
         for b in reversed(btns):
             x -= b.frame().size.width
             b.setFrameOrigin_((x, y))
@@ -76,7 +76,7 @@ class Nudge:
             content.addSubview_(small)
 
         if hasattr(AppKit, "NSGlassEffectView"):  # Liquid Glass, smoky so white text reads anywhere
-            root = AppKit.NSGlassEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, W, h))
+            root = AppKit.NSGlassEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, width, h))
             root.setCornerRadius_(18)
             root.setTintColor_(NSColor.colorWithWhite_alpha_(0.08, 0.55))
             root.setContentView_(content)
@@ -87,10 +87,10 @@ class Nudge:
             content.layer().setCornerRadius_(14)
 
         vis = NSScreen.screens()[0].visibleFrame()
-        x = vis.origin.x + vis.size.width - W - 12
+        x = vis.origin.x + vis.size.width - width - 12
         top = vis.origin.y + vis.size.height - 12
         panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-            NSMakeRect(x, top - h, W, h), NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel,
+            NSMakeRect(x, top - h, width, h), NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel,
             NSBackingStoreBuffered, False)
         panel.setLevel_(NSFloatingWindowLevel)
         panel.setCollectionBehavior_(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary)

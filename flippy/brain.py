@@ -1,7 +1,8 @@
-"""Claude via the Agent SDK on the Pro/Max subscription. Answer-only: no tools."""
+"""Claude via the Agent SDK on the Pro/Max subscription. Tutor answers and opt-in desktop tasks."""
 import base64
 import io
 import os
+from dataclasses import replace
 
 from PIL import Image
 from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, StreamEvent,
@@ -99,6 +100,34 @@ class Brain:
     async def reset(self):
         await self.stop()
         await self.start()
+
+    async def act(self, question, desktop):
+        """An isolated tool session using the tutor's existing model/auth settings.
+
+        No API client or key is introduced. Tutor and tip sessions remain tool-free.
+        The local handlers enforce approval even though MCP tools are allowed here.
+        """
+        from .actions import PROMPT
+        opts = replace(self.options, system_prompt=PROMPT, max_turns=16,
+                       include_partial_messages=False, mcp_servers={"desktop": desktop.server()},
+                       allowed_tools=[f"mcp__desktop__{name}" for name in ("screenshot", "click", "type", "key")])
+        async with ClaudeSDKClient(options=opts) as client:
+            await client.query(question)
+            text = ""
+            async for msg in client.receive_response():
+                if isinstance(msg, AssistantMessage):
+                    self.last_model = msg.model
+                    if getattr(msg, "error", None):
+                        raise BrainError(str(msg.error))
+                    # Only the last assistant message is the task's final answer.
+                    text = "".join(b.text for b in msg.content if isinstance(b, TextBlock))
+                elif isinstance(msg, ResultMessage):
+                    if msg.is_error or msg.subtype != "success":
+                        raise BrainError(msg.result or "Desktop task did not finish.")
+                    text = msg.result or text
+            if desktop.cancel.is_set():
+                return f"Task stopped: {desktop.failure or 'canceled'}. Check the screen before continuing."
+            return text.strip() or "Task finished without a final answer; check the screen."
 
     async def write_tips(self, app_name: str, goal: str, n: int, skip: list[str]) -> list[dict]:
         """One text-only call, outside the conversation: n tips for app_name. skip: tips they already have."""

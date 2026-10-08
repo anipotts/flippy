@@ -442,7 +442,7 @@ class InputBox:
         entry.cell().setScrollable_(True)
         entry.setDelegate_(self.delegate)
         field_box.addSubview_(entry)
-        hint = NSTextField.labelWithString_("Enter to ask · Esc to close · /new fresh session · /settings")
+        hint = NSTextField.labelWithString_("Enter to ask · /act <task> to act · Esc to close · /new · /settings")
         hint.setFont_(hint_font)
         hint.setTextColor_(st["hint"])
         if st.get("hint_shadow"):  # white hint on light frost: a soft shadow keeps it readable
@@ -559,6 +559,7 @@ class Platform:
         self.settings_win = None
         self.setup_win = None
         self.nudge = Nudge()
+        self.action_card = Nudge()  # separate from tips and update cards
         self.double_tap = hotkeys.DoubleTap()
         self.command = lambda cmd: "not ready"
 
@@ -823,7 +824,7 @@ class Platform:
                 json.dump({"stopped": stopped}, f)
         self.recorder = None
 
-    def click(self, x, y, double=False):
+    def click(self, x, y, double=False, check=None):
         """Post a real left click at (x, y) on the main display (logical px, top-left origin)."""
         if not Quartz.CGPreflightPostEventAccess():
             Quartz.CGRequestPostEventAccess()  # the system prompt, the first time
@@ -834,6 +835,8 @@ class Platform:
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, move)
         time.sleep(0.05)
         for n in (1, 2) if double else (1,):
+            if check:
+                check()  # moving the pointer must not turn a canceled proposal into a click
             for kind in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
                 ev = Quartz.CGEventCreateMouseEvent(None, kind, pt, Quartz.kCGMouseButtonLeft)
                 Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventClickState, n)
@@ -901,7 +904,7 @@ class Platform:
         threading.Thread(target=run, daemon=True).start()
         return "ok"
 
-    def type_text(self, text, on_key=None):
+    def type_text(self, text, on_key=None, wait=False, check=None):
         """Real keystrokes, at a human-ish pace. on_key(ch) runs as each one is posted (on a worker thread)."""
         err = self._can_post()
         if err:
@@ -910,6 +913,8 @@ class Platform:
         def run():
             import random
             for ch in text:
+                if check:
+                    check()  # agent input can stop between characters or if focus changes
                 # The real key code where there is one (apps that read key codes, like GarageBand's
                 # shortcuts, would otherwise see "a"), no stray modifiers, and the text for the field.
                 code = hotkeys.KEYS.get("space" if ch == " " else ch.lower(), 0)
@@ -922,8 +927,48 @@ class Platform:
                 if on_key:
                     on_key(ch)
                 time.sleep(random.uniform(0.045, 0.11) + (0.12 if ch in " ,." else 0))
+            return "ok"
+        if wait:
+            return run()  # called on the agent's worker, never the Cocoa run loop
         threading.Thread(target=run, daemon=True).start()
         return "ok"
+
+    def action_state(self):
+        """Identity and geometry of the foreground target. One display, like the tutor."""
+        from ..actions import ActionError
+        if len(NSScreen.screens()) != 1:
+            raise ActionError("Desktop tasks currently require a single display.")
+        app, _, pid = sensors.frontmost()
+        if pid is None or pid == os.getpid():
+            raise ActionError("Put the app you want to use in front, then start /act again.")
+        window = sensors.front_window(pid)
+        bounds = next((bounds for wid, bounds in sensors.windows(pid) if wid == window), None)
+        return app, pid, window, bounds, self.screen_size()
+
+    def action_input(self, name, args, shot, cancel):
+        """An approved action. Recheck focus after approval and throughout typing."""
+        from ..actions import ActionError
+
+        def check():
+            if cancel.is_set():
+                raise ActionError("Task canceled.")
+            if self.action_state() != shot.target:
+                raise ActionError("The foreground window or display changed. Start a new /act request.")
+        check()
+        if not Quartz.CGPreflightPostEventAccess():
+            raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+        if name == "click":
+            x = args["x"] * shot.logical_size[0] / shot.size[0]
+            y = args["y"] * shot.logical_size[1] / shot.size[1]
+            result = self.click(x, y, check=check)
+        elif name == "type":
+            result = self.type_text(args["text"], wait=True, check=check)
+        elif name == "key":
+            result = self.key(args["combo"])
+        else:
+            raise ActionError("Unsupported desktop action.")
+        if result != "ok":
+            raise ActionError("Desktop input failed. Check Accessibility permission.")
 
     FLAGS = {"cmd": Quartz.kCGEventFlagMaskCommand, "shift": Quartz.kCGEventFlagMaskShift,
              "option": Quartz.kCGEventFlagMaskAlternate, "ctrl": Quartz.kCGEventFlagMaskControl}
