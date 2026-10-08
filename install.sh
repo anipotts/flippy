@@ -21,6 +21,12 @@ if [ ! -f "$ROOT/flippy/daemon.py" ]; then  # piped from the web: get the code f
     fi
     exec bash "$DEST/install.sh" "$@"
 fi
+want="$( [ "$(uname)" = Darwin ] && echo macos || echo linux )"
+if [ -f "$ROOT/PACKAGE" ] && [ "$(cat "$ROOT/PACKAGE")" != "$want" ]; then
+    echo "flippy: this is the $(cat "$ROOT/PACKAGE") download. Get flippy-<version>-$want.tar.gz from" \
+         "https://github.com/kap-il/flippy/releases/latest" >&2
+    exit 1
+fi
 case "$(uname)" in
     Darwin) exec "$ROOT/scripts/install_mac.sh" "$@" ;;
     Linux) exec "$ROOT/scripts/install_linux.sh" "$@" ;;

@@ -1,18 +1,25 @@
 """Updates: when a newer GitHub Release is out, offer to install it.
 
-The install is a git checkout (see install.sh), so an update is a fast-forward
-of that checkout to the latest main, plus the Python packages if the
+An install is either a git checkout (install.sh) or a release download
+(flippy-<version>-macos.tar.gz / -linux.tar.gz, made by scripts/package.sh, with a
+PACKAGE file naming its platform). A checkout updates by fast-forwarding to the
+latest main; a download fetches its platform's file from the latest release and
+unpacks it over itself. Either way the Python packages are reinstalled if the
 requirements changed. Releases (tags like v0.3, made with scripts/release.sh)
 decide what counts as a new version: pushing to main alone doesn't prompt anyone.
 
 The check is one unauthenticated request to the GitHub API, at most once a day
 (settings: updates.check). Nothing about the user is sent.
 """
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -28,8 +35,12 @@ class UpdateError(Exception):
 
 
 def current_version():
+    return current_version_at(ROOT)
+
+
+def current_version_at(root):
     try:
-        with open(os.path.join(ROOT, "VERSION")) as f:
+        with open(os.path.join(root, "VERSION")) as f:
             return f.read().strip()
     except OSError:
         return "0"
@@ -72,7 +83,8 @@ def latest_release(slug=None, timeout=10):
     except (OSError, ValueError) as e:
         raise UpdateError(f"couldn't reach GitHub ({e})") from e
     return {"version": d.get("tag_name", "").lstrip("v"), "name": d.get("name") or d.get("tag_name", ""),
-            "notes": (d.get("body") or "").strip(), "url": d.get("html_url", "")}
+            "notes": (d.get("body") or "").strip(), "url": d.get("html_url", ""),
+            "assets": {a["name"]: a["browser_download_url"] for a in d.get("assets") or [] if "name" in a}}
 
 
 # ---- remembering checks and "Later"
@@ -127,10 +139,25 @@ def _git(*args, root=ROOT, timeout=120):
     return r.stdout.strip()
 
 
+def platform_name():
+    return "macos" if sys.platform == "darwin" else "linux"
+
+
+def package_platform(root=ROOT):
+    """'macos' / 'linux' for a release download, None for a git checkout."""
+    try:
+        with open(os.path.join(root, "PACKAGE")) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
 def blocked(root=ROOT):
-    """Why this checkout can't update itself, or None."""
+    """Why this copy can't update itself, or None."""
     if not os.path.isdir(os.path.join(root, ".git")):
-        return "this copy of Flippy isn't a git checkout"
+        if package_platform(root):
+            return None
+        return "this copy of Flippy isn't a git checkout or a release download"
     if _git("rev-parse", "--abbrev-ref", "HEAD", root=root) != "main":
         return "this copy is on a branch other than main"
     if _git("status", "--porcelain", "--untracked-files=no", root=root):
@@ -142,18 +169,96 @@ def requirements_file():
     return "requirements-mac.txt" if sys.platform == "darwin" else "requirements-linux.txt"
 
 
+# the parts of a release download that are Flippy's (replaced on update); everything else (.venv) is left alone
+PACKAGE_DIRS = ("bin", "flippy", "packaging", "scripts", "docs")
+
+
+def _files(root):
+    """{relative path: sha256} of Flippy's own files in a release download."""
+    out = {}
+    for top in os.listdir(root):
+        full = os.path.join(root, top)
+        if os.path.isfile(full):
+            paths = [top]
+        elif top in PACKAGE_DIRS:
+            paths = [os.path.relpath(os.path.join(d, n), root) for d, dirs, names in os.walk(full)
+                     if "__pycache__" not in d for n in names]
+        else:
+            continue
+        for rel in paths:
+            with open(os.path.join(root, rel), "rb") as f:
+                out[rel] = hashlib.sha256(f.read()).hexdigest()
+    return out
+
+
+def _download(url, dest, timeout=120):
+    req = urllib.request.Request(url, headers={"User-Agent": "flippy-updater"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r, open(dest, "wb") as f:
+            shutil.copyfileobj(r, f)
+    except (OSError, urllib.error.URLError) as e:
+        raise UpdateError(f"couldn't download the update ({e})") from e
+
+
+def unpack(archive, root, log=print):
+    """Unpack a release download (one top folder inside) over root. Returns the changed paths."""
+    before = _files(root)
+    with tempfile.TemporaryDirectory() as tmp:
+        with tarfile.open(archive) as tar:
+            if hasattr(tarfile, "data_filter"):
+                tar.extractall(tmp, filter="data")  # no absolute paths, .., devices or links out of tmp
+            else:
+                for m in tar.getmembers():
+                    if m.name.startswith("/") or ".." in m.name.split("/") or not (m.isfile() or m.isdir()):
+                        raise UpdateError(f"unexpected file in the update: {m.name}")
+                tar.extractall(tmp)
+        tops = os.listdir(tmp)
+        if len(tops) != 1 or not os.path.isfile(os.path.join(tmp, tops[0], "flippy", "daemon.py")):
+            raise UpdateError("the update doesn't look like Flippy")
+        src = os.path.join(tmp, tops[0])
+        if package_platform(src) != package_platform(root):
+            raise UpdateError(f"the update is for {package_platform(src)}, this copy is {package_platform(root)}")
+        new = _files(src)
+        for rel in new:
+            if before.get(rel) != new[rel]:
+                os.makedirs(os.path.dirname(os.path.join(root, rel)) or root, exist_ok=True)
+                shutil.copy2(os.path.join(src, rel), os.path.join(root, rel))
+        for rel in set(before) - set(new):  # files the new version dropped
+            if rel.split(os.sep)[0] in PACKAGE_DIRS:
+                os.unlink(os.path.join(root, rel))
+    log(f"update: unpacked {archive}")
+    return sorted(rel for rel in set(before) | set(new) if before.get(rel) != new.get(rel))
+
+
 def install(root=ROOT, log=print):
-    """Fast-forward to origin/main; reinstall packages if the requirements changed.
+    """Update to the latest: fast-forward a checkout to origin/main, or unpack the latest release over a download;
+    reinstall packages if the requirements changed.
     Returns {'from', 'to', 'packages', 'app'}: app = the macOS launcher changed (needs ./install.sh)."""
     why = blocked(root)
     if why:
         raise UpdateError(why)
-    before = _git("rev-parse", "HEAD", root=root)
-    log("update: fetching")
-    _git("fetch", "--tags", "origin", "main", root=root)
-    _git("merge", "--ff-only", "origin/main", root=root)
-    after = _git("rev-parse", "HEAD", root=root)
-    changed = _git("diff", "--name-only", before, after, root=root).splitlines() if before != after else []
+    if package_platform(root):
+        before = current_version_at(root)
+        rel = latest_release()
+        if not rel or not is_newer(rel["version"], before):
+            return {"from": before, "to": before, "packages": False, "app": False}
+        name = f"flippy-{rel['version']}-{package_platform(root)}.tar.gz"
+        url = rel.get("assets", {}).get(name)
+        if not url:
+            raise UpdateError(f"the {rel['version']} release has no {name}")
+        log(f"update: downloading {name}")
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = os.path.join(tmp, name)
+            _download(url, archive)
+            changed = unpack(archive, root, log)
+        after = current_version_at(root)
+    else:
+        before = _git("rev-parse", "HEAD", root=root)
+        log("update: fetching")
+        _git("fetch", "--tags", "origin", "main", root=root)
+        _git("merge", "--ff-only", "origin/main", root=root)
+        after = _git("rev-parse", "HEAD", root=root)
+        changed = _git("diff", "--name-only", before, after, root=root).splitlines() if before != after else []
     req = requirements_file()
     packages = req in changed
     if packages:

@@ -10,10 +10,12 @@ spikes/
 flippy-demo/
 demo_raw/
 reel_raw/
+dist/
 scripts/*
 !scripts/install_mac.sh
 !scripts/install_linux.sh
 !scripts/release.sh
+!scripts/package.sh
 *.mp4
 *.mov
 *.webm

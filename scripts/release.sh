@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Publish a Flippy release: bump VERSION, commit, tag, push, and create the GitHub Release.
+# Publish a Flippy release: bump VERSION, commit, tag, push, and create the GitHub Release with the
+# macOS and Linux downloads (scripts/package.sh) attached.
 # Installs see it within a day and offer to update (flippy/updates.py).
 #   scripts/release.sh 0.3 "What changed, one line per bullet"
+# The notes' first line is what the "Flippy <version> is out" card shows, so make it the headline.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -19,5 +21,8 @@ if [ "$(cat VERSION)" != "$VERSION" ]; then
 fi
 git tag -a "v$VERSION" -m "Flippy $VERSION"
 git push -q origin main "v$VERSION"
-gh release create "v$VERSION" --title "Flippy $VERSION" --notes "$NOTES"
+rm -f dist/flippy-"$VERSION"-*.tar.gz
+scripts/package.sh
+gh release create "v$VERSION" --title "Flippy $VERSION" --notes "$NOTES" \
+    "dist/flippy-$VERSION-macos.tar.gz#Flippy $VERSION for macOS" "dist/flippy-$VERSION-linux.tar.gz#Flippy $VERSION for Linux (COSMIC)"
 echo "Released Flippy $VERSION"

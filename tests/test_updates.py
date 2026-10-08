@@ -69,3 +69,69 @@ class TestInstall(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def package(base, name, platform, files):
+    """A release download like scripts/package.sh makes: <name>/ with a PACKAGE file, as a .tar.gz."""
+    import tarfile
+    src = os.path.join(base, "src-" + name)
+    for rel, text in {**files, "PACKAGE": platform + "\n", "flippy/daemon.py": "# daemon\n"}.items():
+        os.makedirs(os.path.dirname(os.path.join(src, name, rel)), exist_ok=True)
+        with open(os.path.join(src, name, rel), "w") as f:
+            f.write(text)
+    archive = os.path.join(base, name + ".tar.gz")
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(os.path.join(src, name), arcname=name)
+    return archive
+
+
+class TestPackageInstall(unittest.TestCase):
+    """A release download (no .git) updates from its platform's file on the latest release."""
+
+    def setUp(self):
+        import tarfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = self.tmp.name
+        old = package(self.base, "flippy-0.2.1-macos", "macos",
+                      {"VERSION": "0.2.1\n", "flippy/gone.py": "x\n", "requirements-mac.txt": "a\n"})
+        with tarfile.open(old) as tar:
+            tar.extractall(self.base)
+        self.root = os.path.join(self.base, "flippy-0.2.1-macos")
+        os.makedirs(os.path.join(self.root, ".venv"))
+        open(os.path.join(self.root, ".venv", "keep"), "w").write("mine")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def install(self, new):
+        rel = {"version": "0.2.2", "assets": {os.path.basename(new): "https://example/" + os.path.basename(new)}}
+        with mock.patch.object(updates, "latest_release", return_value=rel), \
+                mock.patch.object(updates, "_download", lambda url, dest: __import__("shutil").copy(new, dest)), \
+                mock.patch("subprocess.run", return_value=mock.Mock(returncode=0, stderr="")) as run:
+            return updates.install(root=self.root, log=lambda *a: None), run
+
+    def test_updates_from_the_release(self):
+        self.assertIsNone(updates.blocked(self.root))
+        new = package(self.base, "flippy-0.2.2-macos", "macos",
+                      {"VERSION": "0.2.2\n", "flippy/video.py": "v\n", "requirements-mac.txt": "a\nb\n"})
+        res, run = self.install(new)
+        self.assertEqual((res["from"], res["to"], res["packages"]), ("0.2.1", "0.2.2", True))
+        self.assertEqual(updates.current_version_at(self.root), "0.2.2")
+        self.assertTrue(os.path.exists(os.path.join(self.root, "flippy", "video.py")))
+        self.assertFalse(os.path.exists(os.path.join(self.root, "flippy", "gone.py")))  # dropped by the new version
+        self.assertEqual(open(os.path.join(self.root, ".venv", "keep")).read(), "mine")  # left alone
+        self.assertTrue(run.called)  # pip, for the changed requirements
+
+    def test_wrong_platform_is_refused(self):
+        new = package(self.base, "flippy-0.2.2-linux", "linux", {"VERSION": "0.2.2\n"})
+        rel = {"version": "0.2.2", "assets": {"flippy-0.2.2-macos.tar.gz": "https://example/x"}}
+        with mock.patch.object(updates, "latest_release", return_value=rel), \
+                mock.patch.object(updates, "_download", lambda url, dest: __import__("shutil").copy(new, dest)):
+            with self.assertRaises(updates.UpdateError):
+                updates.install(root=self.root, log=lambda *a: None)
+        self.assertEqual(updates.current_version_at(self.root), "0.2.1")
+
+    def test_up_to_date(self):
+        with mock.patch.object(updates, "latest_release", return_value={"version": "0.2.1", "assets": {}}):
+            res = updates.install(root=self.root, log=lambda *a: None)
+        self.assertEqual(res["from"], res["to"])

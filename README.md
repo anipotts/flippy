@@ -32,6 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/kap-il/flippy/main/install.sh | bas
 
 It downloads Flippy to `~/flippy` (set `FLIPPY_DIR` to put it elsewhere) and runs the right installer for your OS. Run it again any time to update. Prefer to look first? `git clone https://github.com/kap-il/flippy && cd flippy && ./install.sh` does the same.
 
+Or download your platform's copy from the [latest release](https://github.com/kap-il/flippy/releases/latest): `flippy-<version>-macos.tar.gz` or `flippy-<version>-linux.tar.gz`. Each has only the code that platform needs. Unpack it where you want Flippy to live and run `./install.sh` inside. Downloads update themselves from releases, like a git install does.
+
 ### macOS
 
 Needs [Homebrew](https://brew.sh) (for cairo) and the Xcode Command Line Tools (the installer offers them if missing).
@@ -73,7 +75,7 @@ Single monitor only for now, on both platforms. A few macOS features aren't poss
 
 Flippy checks GitHub for a new release once a day. When one is out, Flippy shows a card (**Install / Later / What's new**); **Install** updates your copy and restarts Flippy. Check any time from the menu bar or panel icon (**Check for updates…**) or with `flippy-ask update`; `flippy-ask update install` installs without asking, and `flippy-ask version` shows what you have. Turn the daily check off with `updates.check = false`. If you've edited Flippy's files yourself, it won't overwrite them: update with `git pull` instead.
 
-Releasing (for maintainers): `scripts/release.sh 0.3 "what changed"` bumps `VERSION`, tags, pushes and publishes the GitHub Release.
+Releasing (for maintainers): `scripts/release.sh 0.3 "what changed"` bumps `VERSION`, tags, pushes and publishes the GitHub Release with the macOS and Linux downloads attached. The notes' first line is what the update card shows.
 
 ## Usage
 
@@ -191,7 +193,7 @@ flippy/     shared: daemon (controller), Claude brain, overlay painting, POINT-t
 flippy/linux/  GTK + gtk4-layer-shell windows, portal screenshots, Wayland watcher (help mode, clicks), panel icon, settings, setup
 flippy/mac/    AppKit overlay and windows, screencapture, Carbon hotkeys, menu bar, first-run setup
 packaging/macos/  Flippy.app launcher (Swift) and icon
-scripts/    the macOS and Linux installers, release.sh
+scripts/    the macOS and Linux installers, release.sh, package.sh (the per-platform release downloads)
 tests/      python -m unittest discover tests
 docs/       linux-port.md: how the macOS features work on COSMIC, and what's still blocked;
             video-review.md: video review, and how to build it on macOS
