@@ -1,11 +1,17 @@
-"""Linux (COSMIC/Wayland) windows: gtk4-layer-shell overlay, GTK question box, portal screenshots.
+"""Linux (COSMIC/Wayland) windows: gtk4-layer-shell overlay, GTK question box, portal screenshots, panel icon.
 
 COSMIC quirk: unmapping a layer surface (hide or destroy) makes the compositor
 drop our whole Wayland connection, and resizing a mapped one renders garbled.
 So both surfaces are mapped once and never unmapped or resized:
   - the overlay is a permanent full-screen, click-through surface; the answer
     card and pointer are drawn inside it and toggled at the widget level;
-  - the input box is a regular window instead (see InputBox).
+  - the input box is a regular window instead (see InputBox), and so is the
+    invisible window that catches Esc while drawing (see KeyCatcher);
+  - help mode's, tips' and updates' cards are drawn in the overlay too
+    (flippy/linux/notice.py), not in a surface of their own.
+
+What happens in other apps (the active window, input idle time, where the mouse
+is) comes from a second, private Wayland connection: flippy/linux/wl.py.
 
 Run via bin/flippy-daemon (sets LD_PRELOAD for gtk4-layer-shell).
 """
@@ -20,13 +26,16 @@ gi.require_version("Gtk4LayerShell", "1.0")
 from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
 
-from .. import pointers, settings, themes  # noqa: E402
+from .. import loop, pointers, settings, themes  # noqa: E402
 from ..overlay import OverlayBase  # noqa: E402
-from . import pointer_editor  # noqa: E402
+from . import pointer_editor, sensors, wl  # noqa: E402
+from .notice import Notice, NoticeLayer  # noqa: E402
 from .screenshot import Screenshotter  # noqa: E402
 from .settings_window import SettingsWindow  # noqa: E402
 
 HIDE_SETTLE_MS = 700        # box closed -> COSMIC's dock drops its icon and re-centers (~0.5s); wait it out
+NUDGE_TIMEOUT_S = 15        # "Need a hand?" goes away by itself (counts as "Not now"), like flippy/mac/nudge.py
+TIP_TIMEOUT_S = 25          # a tip card goes away by itself (counts as "Got it")
 
 BASE_CSS = """
 window.flippy-overlay, window.flippy-box { background: transparent; }
@@ -50,7 +59,7 @@ def layer_window(app, ns, keyboard):
     return win
 
 
-class Overlay(OverlayBase):
+class Overlay(NoticeLayer, OverlayBase):
     """Permanent full-screen layer surface (see flippy/overlay.py for what's on it).
 
     Click-through (empty input region) except in draw mode, where the input
@@ -60,6 +69,8 @@ class Overlay(OverlayBase):
 
     def __init__(self, app):
         super().__init__()
+        self.app = app
+        self.keys = None          # KeyCatcher while drawing
         self.win = layer_window(app, "flippy-overlay", LayerShell.KeyboardMode.NONE)
         for e in (LayerShell.Edge.TOP, LayerShell.Edge.BOTTOM, LayerShell.Edge.LEFT, LayerShell.Edge.RIGHT):
             LayerShell.set_anchor(self.win, e, True)
@@ -104,12 +115,17 @@ class Overlay(OverlayBase):
     def set_drawing_input(self, on):
         self.win.get_surface().set_input_region(FULL_REGION if on else EMPTY_REGION)
         self.win.set_cursor(Gdk.Cursor.new_from_name("crosshair", None) if on else None)
+        if on and self.keys is None:
+            self.keys = KeyCatcher(self.app, lambda: self.drawing and self.on_draw_cancel())
+        elif not on and self.keys is not None:
+            self.keys.close()
+            self.keys = None
         if not on:
             self.region_key = None  # let the next frame restore the controls' region
 
     def hits_changed(self):
         """Clickable = the visible card's controls only. Draw mode manages its own (full) region."""
-        if self.drawing:
+        if self.drawing or self.in_base_paint:  # NoticeLayer.paint adds the notice's buttons, then calls this
             return
         key = tuple(sorted((n, round(r[0]), round(r[1]), round(r[2]), round(r[3])) for n, r in self.hits.items()))
         if key == self.region_key:
@@ -121,6 +137,76 @@ class Overlay(OverlayBase):
         if surface is not None:
             surface.set_input_region(region)
         self.win.set_cursor(Gdk.Cursor.new_from_name("pointer", None) if self.hits else None)
+
+
+class KeyCatcher:
+    """While drawing: a tiny, transparent regular window that holds the keyboard, so Esc cancels.
+
+    The overlay can't take keys itself (KeyboardMode.NONE, see InputBox for why).
+    This sits under the overlay, which keeps the mouse, and closing it hands the
+    keyboard back to the app underneath, the same way the question box does.
+    """
+
+    def __init__(self, app, on_escape):
+        self.win = Gtk.Window(application=app, title="Flippy", decorated=False, resizable=False,
+                              default_width=1, default_height=1)
+        self.win.set_titlebar(Gtk.Box(visible=False))
+        self.win.add_css_class("flippy-box")  # transparent
+        self.win.set_child(Gtk.Box())
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", lambda c, keyval, code, state: keyval == Gdk.KEY_Escape and (on_escape() or True))
+        self.win.add_controller(keys)
+        self.win.connect("close-request", lambda w: True)  # only close() closes it
+        self.win.present()
+
+    def close(self):
+        win, self.win = self.win, None
+        GLib.idle_add(lambda: win.destroy())  # not from inside its own event handler
+
+
+class Nudge:
+    """Help mode's and tips' cards, drawn in the overlay's top-right corner (flippy/linux/notice.py).
+    Same API as flippy/mac/nudge.py."""
+
+    def __init__(self, overlay):
+        self.overlay = overlay
+        self.timer = 0
+
+    @property
+    def visible(self):
+        return self.overlay.notice_card is not None
+
+    def show(self, offer, on_help, on_later, on_mute):
+        self.card(offer.headline(), offer.detail(), [("Not now", on_later), ("Help", on_help)],
+                  (f"Don't ask in {offer.app_name}", on_mute), on_timeout=on_later)
+
+    def card(self, head, detail, buttons, link=None, on_timeout=None, timeout_s=NUDGE_TIMEOUT_S):
+        """Any choice (or the timeout) closes it, then runs that choice."""
+        self.hide()
+
+        def act(fn):
+            def go():
+                self.hide()
+                fn()
+            return go
+        self.overlay.show_notice(Notice(head, detail, [(t, act(fn)) for t, fn in buttons],
+                                        (link[0], act(link[1])) if link else None))
+        if on_timeout:
+            self.timer = loop.timeout_add(int(timeout_s * 1000), lambda: act(on_timeout)() and False)
+
+    def press(self, title):
+        """Click a button on screen (scripted demos): its title, case-insensitive, or "link"."""
+        name = self.overlay.notice_buttons().get(title.lower())
+        if name is None:
+            return False
+        self.overlay.press_notice(name)
+        return True
+
+    def hide(self):
+        if self.timer:
+            loop.source_remove(self.timer)
+            self.timer = 0
+        self.overlay.hide_notice()
 
 
 class InputBox:
@@ -205,9 +291,181 @@ class Platform:
         self.theme_css = Gtk.CssProvider()  # the active theme's question-box styling
         Gtk.StyleContext.add_provider_for_display(display, self.theme_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
         self.settings_win = None
+        self.setup_win = None
         self.overlay = Overlay(app)
         self.screenshotter = Screenshotter()
+        self.nudge = Nudge(self.overlay)
+        self.clicks = None
+        self.tray = None
+        self.command = lambda cmd: "not ready"
         self.hold = app.hold()
+        Gtk.Window.set_default_icon_name("dev.flippy.daemon")  # flippy/linux/desktop.py installs it
+
+    def start(self, command):
+        """The panel icon and the Wayland watcher, once the controller exists."""
+        from ..video import Review
+        self.video = Review(self.flippy)
+        self.command = lambda cmd: self._route(cmd, command)
+        wl.connection()  # start counting input now, so help mode's first minute has history
+        try:
+            from .tray import Tray
+            self.tray = Tray(self)
+        except Exception as e:  # no tray is no reason not to run
+            print(f"flippy: panel icon unavailable: {e}", flush=True)
+        from .setup_window import needs_setup
+        if needs_setup():
+            loop.timeout_add(300, lambda: self.open_setup() and False)
+
+    def _route(self, cmd, handle):
+        """Commands the controller doesn't know yet (video review, flippy/video.py) are handled here; the
+        rest go to it. Once macOS has video review too, this moves into Flippy.command."""
+        if (cmd == "video" or cmd.startswith("video ")) and getattr(self, "video", None):
+            return self.video.command(cmd)
+        return handle(cmd)
+
+    # --- video review (flippy/video.py): the window in front, grabbed a few times a second
+    def video_window(self):
+        conn = wl.connection()
+        tl = conn.active() if conn else None
+        if tl is None or not tl.app_id:
+            return None, "Click your video editor first, so it's the window in front."
+        if tl.app_id == wl.SELF_APP_ID:
+            return None, "That's Flippy's own window. Click your video editor first."
+        return tl, sensors.app_name(tl.app_id)
+
+    def video_frame(self, tl):
+        from PIL import Image
+        conn = wl.connection()
+        if conn is None or tl.ext_id not in conn.toplevels:
+            return None  # closed
+        img = conn.capture_window(tl)
+        if img is None:
+            return None
+        w, h, stride, mode, data = img
+        return Image.frombuffer("RGBA" if mode in ("RGBA", "BGRA") else "RGBX", (w, h), data, "raw", mode, stride, 1)
+
+    def open_setup(self):
+        from .setup_window import SetupWindow
+        if self.setup_win is None:
+            self.setup_win = SetupWindow(self.app, lambda: self.command("settings"),
+                                         lambda: setattr(self, "setup_win", None))
+        self.setup_win.present()
+
+    def ask_goal(self, app_id, name):
+        """What do they want to do in this app? Steers its tips (the panel menu's "Set a goal for <app>…")."""
+        import gi
+        gi.require_version("Adw", "1")
+        from gi.repository import Adw
+        from .. import tips
+        Adw.init()
+        deck = tips.Deck.load(app_id)
+        dlg = Adw.MessageDialog(heading=f"What do you want to do in {name}?",
+                                body="Flippy's tips for this app will be about it. For example: make a drum loop, "
+                                     "write a CLI in Rust, mix vocals.")
+        dlg.set_application(self.app)
+        entry = Gtk.Entry(text=deck.goal if deck else "", activates_default=True)
+        dlg.set_extra_child(entry)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("save", "Save")
+        dlg.set_default_response("save")
+        dlg.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+
+        def on_response(d, resp):
+            if resp != "save" or not entry.get_text().strip():
+                return
+            self.flippy.set_goal(app_id, entry.get_text(), name)
+            if app_id not in settings.get_list("help", "apps"):
+                self.command(f"watch-app {app_id}")
+            if settings.get("help", "mode") != "tips":
+                settings.set("help", "mode", "tips")  # a goal is for tips: turn them on
+        dlg.connect("response", on_response)
+        dlg.present()
+
+    # --- help mode (flippy/watch.py) and tips ---
+    def sample(self):
+        return sensors.sample()
+
+    def show_nudge(self, offer, on_help, on_later, on_mute):
+        self.nudge.show(offer, on_help, on_later, on_mute)
+
+    def show_tip(self, app_name, text, got_it, knew, show_me):
+        self.nudge.card(f"Tip for {app_name}", text, [("Knew that", knew), ("Show me", show_me), ("Got it", got_it)],
+                        on_timeout=got_it, timeout_s=TIP_TIMEOUT_S)
+
+    def hide_nudge(self):
+        self.nudge.hide()
+
+    def nudge_visible(self):
+        return self.nudge.visible
+
+    def press_nudge(self, title):
+        return self.nudge.press(title)
+
+    def show_update(self, rel, install, later):
+        import subprocess
+        notes = next((ln.strip("-*# ").strip() for ln in rel["notes"].splitlines() if ln.strip("-*# ").strip()),
+                     "A new version is ready.")
+        self.nudge.card(f"Flippy {rel['version']} is out", notes,
+                        [("What's new", lambda: subprocess.Popen(["xdg-open", rel["url"]])), ("Later", later),
+                         ("Install", install)])
+
+    # --- tutorials: steps that wait for their click (see sensors.ClickWatcher for how a click is noticed) ---
+    def watch_clicks(self, fn):
+        self.unwatch_clicks()
+        self.clicks = sensors.ClickWatcher(fn, self.scale(), self.screen_size(), lambda: self.overlay.ink)
+
+    def unwatch_clicks(self):
+        if self.clicks:
+            self.clicks.stop()
+            self.clicks = None
+
+    def key_idle_s(self):
+        """Seconds since the last input (Wayland has no key-only count; mouse moves count too)."""
+        return sensors.input_idle_s()
+
+    # --- scripted input (flippy-ask type/key/tap, behind automation.clicks); the mouse can't be driven on COSMIC
+    NO_MOUSE = ("moving or clicking the mouse isn't possible on COSMIC yet: no RemoteDesktop portal or virtual "
+                "pointer (docs/linux-port.md)")
+
+    def type_text(self, text, on_key=None):
+        from . import keyboard
+        return keyboard.type_text(text, on_key)
+
+    def key(self, combo):
+        from . import keyboard
+        return keyboard.key(combo)
+
+    def tap(self, mod, times):
+        from . import keyboard
+        return keyboard.tap(mod, times)
+
+    def move(self, x, y):
+        return self.NO_MOUSE
+
+    def path(self, points, drag):
+        return self.NO_MOUSE
+
+    def start_recording(self, path):
+        """Demo recording through the ScreenCast portal (flippy/linux/recorder.py)."""
+        if getattr(self, "recorder", None) is None:
+            from .recorder import Recorder
+            self.recorder = Recorder(self.screenshotter.bus)
+        self.recorder.start(path)
+
+    def stop_recording(self):
+        if getattr(self, "recorder", None) is not None:
+            self.recorder.stop()
+
+    def screenshot_to(self, path):
+        """Demo scripts: a screenshot through the portal, moved to path."""
+        import shutil
+
+        def done(shot, err):
+            if err:
+                print(f"flippy: shot: {err}", flush=True)
+            else:
+                shutil.move(shot, path)
+        self.screenshotter.take(done)
 
     def input_box(self, on_submit, on_cancel):
         return InputBox(self.app, on_submit, on_cancel)
@@ -217,6 +475,8 @@ class Platform:
 
     def listen(self, path, handle):
         """Serve the flippy-ask socket: one command line in, handle(cmd) -> one reply line out."""
+        outer = handle
+        handle = lambda cmd: self._route(cmd, outer)  # noqa: E731
         self.service = Gio.SocketService()
         self.service.add_address(Gio.UnixSocketAddress.new(path), Gio.SocketType.STREAM,
                                  Gio.SocketProtocol.DEFAULT, None)
@@ -233,7 +493,8 @@ class Platform:
 
     def open_settings(self, on_preview, on_reset):
         if self.settings_win is None:
-            self.settings_win = SettingsWindow(self.app, on_preview=on_preview, on_reset=on_reset)
+            self.settings_win = SettingsWindow(self.app, on_preview=on_preview, on_reset=on_reset,
+                                               command=self.command)
             self.settings_win.connect("close-request", lambda w: setattr(self, "settings_win", None) or False)
         self.settings_win.present()
 
@@ -244,15 +505,20 @@ class Platform:
         pointer_editor.demo_paint(ed, name, lambda n: on_saved(pointers.PREFIX + n))
 
     def restart(self, full_install=False):
-        """Start a fresh daemon (through flippy-ask, after this one's gone) and quit."""
+        """Start a fresh daemon (through flippy-ask, after this one's gone) and quit. After an update, refresh the
+        app library entry and icon (flippy/linux/desktop.py), instead of rerunning install.sh for full_install:
+        its apt step needs sudo, which can't ask from here."""
         import os
         import subprocess
+        from . import desktop
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        cmd = f"sleep 1; '{root}/install.sh'; " if full_install else "sleep 1; "
+        refresh = os.path.exists(desktop.ENTRY)  # installed by install.sh; cheap, so every restart
+        cmd = f"sleep 1; cd '{root}' && .venv/bin/python -m flippy.linux.desktop install; " if refresh else "sleep 1; "
         subprocess.Popen(["/bin/sh", "-c", cmd + f"'{root}/bin/flippy-ask' start"], start_new_session=True)
         self.quit()
 
     def quit(self):
+        self.stop_recording()
         GLib.idle_add(self.app.quit)
 
     # --- monitor info (v1: single monitor) ---
@@ -274,5 +540,12 @@ def run(make_app):
         sys.exit("compositor doesn't support wlr-layer-shell (or LD_PRELOAD missing)")
     app = Gtk.Application(application_id="dev.flippy.daemon", flags=Gio.ApplicationFlags.NON_UNIQUE)
     state = {}
-    app.connect("activate", lambda a: state.setdefault("flippy", make_app(Platform(a))))
+
+    def activate(a):
+        if "flippy" in state:
+            return
+        platform = Platform(a)
+        state["flippy"] = platform.flippy = make_app(platform)
+        platform.start(state["flippy"].command)
+    app.connect("activate", activate)
     app.run(None)

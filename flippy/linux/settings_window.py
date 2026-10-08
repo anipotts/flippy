@@ -10,7 +10,7 @@ import cairo
 import gi
 
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gtk  # noqa: E402
+from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from . import pointer_editor  # noqa: E402
 from .. import pointers, settings, themes  # noqa: E402
@@ -100,8 +100,17 @@ class ThemePicker(Gtk.FlowBox):
         themes.draw_pointer(cr, theme, theme.pointer if style == "theme" else style, 22, 18, 1.0, 0.45, 10_000)
 
 
+def switch_row(title, subtitle, section, key):
+    row = Adw.SwitchRow(title=title, subtitle=subtitle or "", active=settings.get(section, key))
+    row.connect("notify::active", lambda r, _p: settings.set(section, key, r.get_active()))
+    return row
+
+
+HELP_MODES = [("off", "Off"), ("quiet", "Offer a hand when I'm stuck"), ("tips", "That, plus tips while I work")]
+
+
 class SettingsWindow(Adw.PreferencesWindow):
-    def __init__(self, app, on_preview, on_reset):
+    def __init__(self, app, on_preview, on_reset, command=lambda cmd: None):
         global _adw_ready
         if not _adw_ready:
             Adw.init()
@@ -109,11 +118,13 @@ class SettingsWindow(Adw.PreferencesWindow):
         super().__init__(application=app, title="Flippy Settings", default_width=640, default_height=760)
         self.set_modal(False)  # Adw.PreferencesWindow is modal by default, which blocks the pointer editors
         self.set_search_enabled(False)
+        self.command = command
         self.add(self._appearance(on_preview))
         self.add(self._claude(on_reset))
         self.add(self._timing(on_preview))
+        self.add(self._help())
         self.add(self._hotkeys())
-        self._listener = lambda s, k, v: s == "look" and self.picker_redraw()
+        self._listener = lambda s, k, v: (s == "look" and self.picker_redraw()) or (s == "help" and self._fill_apps())
         settings.on_change(self._listener)
         self.connect("close-request", lambda *_: settings.off_change(self._listener) or False)
 
@@ -236,6 +247,11 @@ class SettingsWindow(Adw.PreferencesWindow):
         g = Adw.PreferencesGroup(title="Session")
         g.add(button_row("Start fresh session", "Forget the conversation so far", "Reset", on_reset))
         page.add(g)
+        g = Adw.PreferencesGroup(title="Updates")
+        g.add(switch_row("Check for updates daily", "When a new version is out, Flippy offers to install it",
+                         "updates", "check"))
+        g.add(button_row("Check now", None, "Check", lambda: self.command("update")))
+        page.add(g)
         return page
 
     def _timing(self, on_preview):
@@ -249,17 +265,56 @@ class SettingsWindow(Adw.PreferencesWindow):
         g.add(spin_row("Playback speed", "Also on the Media Player/Y2K players' slider", "timing", "speed", 0.5, 2.0, 0.05, digits=2))
         g.add(spin_row("Glide time", "Seconds for the pointer to travel between steps", "timing", "glide_seconds",
                        0.2, 2.0, 0.1, digits=1))
+        g.add(switch_row("Wait for my clicks", "Tutorials pause on steps you have to do until you click the thing",
+                         "timing", "wait_for_clicks"))
         g.add(button_row("Try it", None, "Preview", on_preview))
         page.add(g)
         return page
+
+    def _help(self):
+        page = Adw.PreferencesPage(title="Help", icon_name="help-browser-symbolic")
+        g = Adw.PreferencesGroup(title="Help mode", description="Flippy watches only the apps below, with simple "
+                                 "local rules, and asks nothing of Claude until you press Help or Show me.")
+        g.add(combo_row("When I'm learning an app", None, "help", "mode", HELP_MODES))
+        page.add(g)
+        self.apps_group = Adw.PreferencesGroup(title="Watched apps", description="Add the app in front from "
+                                               "Flippy's panel icon → Watch &lt;app&gt;.")
+        self.muted_group = Adw.PreferencesGroup(title="Don't ask in", description="Apps where you chose "
+                                                "“Don't ask in <app>”.")
+        page.add(self.apps_group)
+        page.add(self.muted_group)
+        self.app_rows = []
+        self._fill_apps()
+        return page
+
+    def _fill_apps(self):
+        for group, row in self.app_rows:
+            group.remove(row)
+        self.app_rows = []
+        from .sensors import app_name
+        for group, key, empty in ((self.apps_group, "apps", "None yet"), (self.muted_group, "muted", "None")):
+            ids = sorted(settings.get_list("help", key))
+            for app in ids:
+                row = Adw.ActionRow(title=GLib.markup_escape_text(app_name(app)), subtitle=GLib.markup_escape_text(app))
+                btn = Gtk.Button(icon_name="list-remove-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Remove")
+                btn.add_css_class("flat")
+                btn.connect("clicked", lambda *_, k=key, a=app: settings.set_list("help", k, settings.get_list("help", k) - {a}))
+                row.add_suffix(btn)
+                group.add(row)
+                self.app_rows.append((group, row))
+            if not ids:
+                row = Adw.ActionRow(title=empty)
+                group.add(row)
+                self.app_rows.append((group, row))
 
     def _hotkeys(self):
         page = Adw.PreferencesPage(title="Hotkeys", icon_name="input-keyboard-symbolic")
         g = Adw.PreferencesGroup(title="Shortcuts", description="Set in COSMIC Settings → Keyboard → Custom shortcuts.")
         found = False
-        for keys, cmd in _flippy_shortcuts():
+        for keys, cmd in flippy_shortcuts():
             found = True
-            action = {"": "Ask a question", "draw": "Draw mode (circle something)"}.get(cmd, cmd)
+            action = {"": "Ask a question", "draw": "Draw mode (circle something)",
+                      "pause-toggle": "Pause / resume a walkthrough", "video": "Check a video edit"}.get(cmd, cmd)
             row = Adw.ActionRow(title=action, subtitle=f"flippy-ask {cmd}".strip())
             row.add_suffix(Gtk.ShortcutLabel(accelerator=keys, valign=Gtk.Align.CENTER))
             g.add(row)
@@ -268,6 +323,10 @@ class SettingsWindow(Adw.PreferencesWindow):
                                 subtitle="Add one that runs ~/.local/bin/flippy-ask"))
         g.add(button_row("Change shortcuts", None, "Open COSMIC Settings",
                          lambda: subprocess.Popen(["cosmic-settings", "keyboard"])))
+        page.add(g)
+        g = Adw.PreferencesGroup(title="Scripts")
+        g.add(switch_row("Let scripts type", "flippy-ask type/key/tap send real keystrokes (for demos). Any program "
+                         "running as you could use it; Claude's answers never do.", "automation", "clicks"))
         page.add(g)
         g = Adw.PreferencesGroup(title="In the question box")
         for cmd, what in (("/new", "Start a fresh session"), ("/settings", "Open this window"), ("Esc", "Close")):
@@ -280,7 +339,14 @@ class SettingsWindow(Adw.PreferencesWindow):
         return page
 
 
-def _flippy_shortcuts():
+def pretty_accel(accel):
+    """"<Super><Shift>space" -> "Super+Shift+Space"."""
+    mods = re.findall(r"<([^>]+)>", accel)
+    key = re.sub(r"<[^>]+>", "", accel)
+    return "+".join(mods + ([key[:1].upper() + key[1:]] if key else []))
+
+
+def flippy_shortcuts():
     """[(gtk accelerator, flippy-ask args)] from COSMIC's custom shortcuts file."""
     try:
         text = open(SHORTCUTS).read()

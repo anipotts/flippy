@@ -32,11 +32,18 @@ mkdir -p "$BIN_DIR"
 ln -sf "$ROOT/bin/flippy-ask" "$BIN_DIR/flippy-ask"
 ln -sf "$ROOT/bin/flippy-daemon" "$BIN_DIR/flippy-daemon"
 
+# 5. Flippy in the app library, with its icon (flippy/linux/desktop.py).
+say "Adding Flippy to the app library"
+(cd "$ROOT" && "$ROOT/.venv/bin/python" -m flippy.linux.desktop install)
+
 cat <<MSG
 
-Done. Two things left:
+Done. Two things left (or run \`$BIN_DIR/flippy-ask setup\`, which does both for you):
   1. Log in to Claude if you haven't: run \`claude\` once and /login with your Pro/Max account.
   2. Add the hotkeys in COSMIC Settings -> Keyboard -> Keyboard shortcuts -> Custom shortcuts:
        Super+Shift+Space   $BIN_DIR/flippy-ask
        Super+Alt           $BIN_DIR/flippy-ask draw
+       Super+P (optional)  $BIN_DIR/flippy-ask pause-toggle
+       Super+Shift+V (opt.) $BIN_DIR/flippy-ask video
+Flippy's icon shows up in the panel once it's running (help mode, tips, settings, updates).
 MSG
