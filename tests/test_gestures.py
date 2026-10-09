@@ -11,7 +11,7 @@ class TestGestures(unittest.TestCase):
         source = ast.parse((Path(__file__).parents[1] / 'flippy/mac/ui.py').read_text())
         platform = next(n for n in source.body if isinstance(n, ast.ClassDef) and n.name == 'Platform')
         methods = [n for n in platform.body if isinstance(n, ast.FunctionDef)
-                   and n.name in ('_gesture', 'drag', 'scroll', 'key', 'type_text', 'click')]
+                   and n.name in ('_gesture', 'drag', 'scroll', 'key', 'type_text', 'click', '_check_physical_input')]
         namespace = {'__name__': 'flippy.mac.ui', '__package__': 'flippy.mac', 'Quartz': Mock(), 'time': SimpleNamespace(sleep=Mock()),
                      'hotkeys': SimpleNamespace(KEYS={'return': 36})}
         for n in methods:
@@ -23,7 +23,7 @@ class TestGestures(unittest.TestCase):
                             ('kCGEventLeftMouseDragged',3),('kCGEventLeftMouseUp',4),
                             ('kCGScrollEventUnitLine',5)]:
             setattr(self.q,name,value)
-        cls = type('Adapter', (), {name: namespace[name] for name in ('_gesture','drag','scroll','key','type_text','click')})
+        cls = type('Adapter', (), {name: namespace[name] for name in ('_gesture','drag','scroll','key','type_text','click','_check_physical_input')})
         self.ui = cls()
         self.ui._can_post = Mock(return_value=None)
         self.ui._mouse = Mock()
@@ -104,6 +104,27 @@ class TestGestures(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.ui.scroll(1,2,'down',3,check)
         self.q.CGEventCreateScrollWheelEvent.assert_not_called()
+
+    def test_physical_held_click_posts_no_events(self):
+        from flippy.actions import ActionError
+        self.q.CGEventSourceButtonState.return_value=True
+        with self.assertRaises(ActionError): self.ui.click(10,20)
+        self.q.CGEventPost.assert_not_called()
+
+    def test_physical_held_key_and_typing_post_no_events(self):
+        from flippy.actions import ActionError
+        self.q.CGEventSourceKeyState.side_effect=lambda state,code: code == 36
+        with self.assertRaises(ActionError): self.ui.key('return')
+        self.q.CGEventPost.assert_not_called()
+        self.q.CGEventSourceKeyState.side_effect=lambda state,code: code == 0
+        with self.assertRaises(ActionError): self.ui.type_text('a',wait=True)
+        self.q.CGEventPost.assert_not_called()
+
+    def test_physical_modifier_blocks_typing(self):
+        from flippy.actions import ActionError
+        self.q.CGEventSourceKeyState.side_effect=lambda state,code: code == 55
+        with self.assertRaises(ActionError): self.ui.type_text('a',wait=True)
+        self.q.CGEventPost.assert_not_called()
 
     def test_click_post_failure_releases_mouse(self):
         count = 0

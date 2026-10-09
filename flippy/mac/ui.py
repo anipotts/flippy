@@ -844,6 +844,7 @@ class Platform:
             Quartz.CGRequestPostEventAccess()  # the system prompt, the first time
             return ("Flippy needs the Accessibility permission to click: System Settings > Privacy & Security > "
                     "Accessibility, turn on Flippy, then restart it")
+        self._check_physical_input(mouse=True)
         pt = Quartz.CGPointMake(x, y)
         move = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, pt, Quartz.kCGMouseButtonLeft)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, move)
@@ -1017,6 +1018,7 @@ class Platform:
                 # shortcuts, would otherwise see "a"), no stray modifiers, and the text for the field.
                 code = hotkeys.KEYS.get("space" if ch == " " else ch.lower(), 0)
                 flags = Quartz.kCGEventFlagMaskShift if ch.isupper() else 0
+                self._check_physical_input(code=code)
                 try:
                     ev = Quartz.CGEventCreateKeyboardEvent(None, code, True)
                     Quartz.CGEventSetFlags(ev, flags)
@@ -1097,6 +1099,17 @@ class Platform:
              "option": Quartz.kCGEventFlagMaskAlternate, "ctrl": Quartz.kCGEventFlagMaskControl}
     MOD_KEYS = {"cmd": 55, "shift": 56, "option": 58, "ctrl": 59}
 
+    def _check_physical_input(self, code=None, mouse=False):
+        """Never pair synthetic release with input the user already holds."""
+        state = Quartz.kCGEventSourceStateCombinedSessionState
+        held = mouse and Quartz.CGEventSourceButtonState(state, Quartz.kCGMouseButtonLeft)
+        codes = set(self.MOD_KEYS.values())
+        if code is not None:
+            codes.add(code)
+        if held or any(Quartz.CGEventSourceKeyState(state, key) for key in codes):
+            from ..actions import ActionError
+            raise ActionError("Release physical keys and mouse buttons before Flippy acts.")
+
     def key(self, combo, check=None):
         """A shortcut like cmd+shift+space, escape or return, pressed for real."""
         err = self._can_post()
@@ -1112,6 +1125,7 @@ class Platform:
             flags |= self.FLAGS.get({"opt": "option", "alt": "option", "control": "ctrl"}.get(m, m), 0)
         if check:
             check()
+        self._check_physical_input(code=code)
         try:
             ev = Quartz.CGEventCreateKeyboardEvent(None, code, True)
             Quartz.CGEventSetFlags(ev, flags)
