@@ -10,6 +10,7 @@ ACTIONS maps an action name to (app name, required args, script). The tool contr
 """
 import html
 import subprocess
+import urllib.parse
 
 from ..actions import ActionError, RetryableActionError
 
@@ -66,7 +67,7 @@ def _check(action, values):
     if action == "safari.open_url" and not values["url"].startswith(("https://", "http://")):
         raise RetryableActionError("Only http(s) addresses can be opened.")
     if action == "spotify.open_search":
-        values["query"] = values["query"].replace(" ", "+")
+        values["query"] = urllib.parse.quote(values["query"], safe="")  # "city pop" -> city%20pop, not city+pop
 
 
 def run(action, args):

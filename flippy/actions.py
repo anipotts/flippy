@@ -387,6 +387,10 @@ Your tools, in the order to prefer them (all but the last work in the background
 3. click / scroll / drag at a position with real_pointer false, for things that aren't in the controls list.
 4. Last resort: the same with real_pointer true (Flippy waits for the user to pause and briefly takes the pointer).
    Only after the background ways didn't work.
+Escalate down this list until the job is done. You may only report that you couldn't do something after you tried
+the next way down, including real_pointer when a click is what's left (for example, after spotify.open_search the
+result still has to be clicked: try click, then click with real_pointer true). Check the result yourself before
+finishing (look again; for Spotify, app_action spotify.now_playing) instead of saying you couldn't verify it.
 Start with look. It shows the target app's window and a numbered list of its controls (buttons, fields, rows...)
 with what you can do to each, plus its menus and their items. An app with no window, or a minimized one, is not a
 dead end: use its menus (Spotify's Playback > Next), media for playback, or a menu that opens a window. Act on controls by their number: press, set_text, focus, then type

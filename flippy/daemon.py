@@ -519,6 +519,9 @@ class Flippy:
         return frame
 
     async def _app_perform(self, name, args, shot, cancel, req):
+        # which tool each step used (names only, never the task's text), so a task that gives up shows where
+        log("act: step " + name + (f" {args.get('action')}" if name in ("app_action", "media") else "")
+            + (" (real pointer)" if args.get("real_pointer") else ""))
         what = "needs the pointer for a moment, waiting for you to pause" if args.get("real_pointer") else \
             name.replace("_", " ")
         await self._action_main(lambda: self._acting(req, what), req)
