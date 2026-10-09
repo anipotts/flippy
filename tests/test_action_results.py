@@ -78,6 +78,17 @@ class TestActionResults(unittest.TestCase):
                 self.assertFalse(f.last_action['cleanup_failed'])
                 self.assertNotIn('Restart Flippy',str(f._fail.call_args))
 
+    def test_the_real_reason_shows_once(self):
+        # Codex wraps a stopped task as "Desktop task stopped. Check the screen..." and the controller wrapped it again
+        tools=SimpleNamespace(failure='Spotify quit. Start a new /act request.',failure_code=None,actions=2,cleanup_failed=False)
+        f,event=controller(tools)
+        f._action_done(tools,SimpleNamespace(identity=21),None,
+                       CodexError('Desktop task stopped. Check the screen before continuing.'))
+        shown=f._fail.call_args.args[0]
+        self.assertEqual(shown.count('Desktop task stopped'),1)
+        self.assertEqual(shown.count('Check the screen before continuing'),1)
+        self.assertIn('Spotify quit',shown)
+
     def test_success_counts_inputs_and_doctor_exposes_only_safe_receipt(self):
         tools=SimpleNamespace(failure=None,actions=2,cleanup_failed=False)
         f,event=controller(tools)

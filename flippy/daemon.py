@@ -512,7 +512,11 @@ class Flippy:
     async def _app_look(self, req):
         if not self._owns(req):
             raise ActionError("Task stopped.")
-        return AppFrame(*await asyncio.to_thread(self.ui.app_look, *self.action_app))
+        frame = AppFrame(*await asyncio.to_thread(self.ui.app_look, *self.action_app))
+        if frame.target[1] != self.action_app[2]:  # the app reopened under a new process: follow it
+            log(f"act: {self.action_app[1]} is now process {frame.target[1]}")
+            self.action_app = (frame.target[0], self.action_app[1], frame.target[1])
+        return frame
 
     async def _app_perform(self, name, args, shot, cancel, req):
         what = "needs the pointer for a moment, waiting for you to pause" if args.get("real_pointer") else \
@@ -682,8 +686,16 @@ class Flippy:
                 "permission": "Check macOS Screen Recording and Accessibility permissions.",
                 "operation_failed": "The operation failed or timed out.",
             }
-            message = (str(error) if isinstance(error, PlanLimitReached) else
-                       error.safe_message if isinstance(error, CodexError) else messages[reason])
+            if isinstance(error, PlanLimitReached):
+                message = str(error)
+            elif reason == "operation_failed" and tools.failure:
+                message = tools.failure  # the refusal itself says what happened (Flippy's own fixed wording)
+            elif isinstance(error, CodexError) and not tools.failure:
+                message = error.safe_message
+            else:
+                message = messages[reason]
+            message = message.removeprefix("Desktop task stopped. ").removeprefix("Task stopped: ")
+            message = message.replace(" Check the screen before continuing.", "")
             self._fail("Desktop task stopped: " + message + " Check the screen before continuing.")
         else:
             self.overlay.show_text(result)

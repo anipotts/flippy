@@ -96,6 +96,15 @@ def running_app(pid):
     return app if app is not None and not app.isTerminated() else None
 
 
+def _relaunched(bundle, old_pid):
+    """The same app under a new process (it restarted, or swapped processes), or None if it's really gone."""
+    if not bundle:
+        return None
+    apps = [a for a in AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_(bundle) or []
+            if not a.isTerminated() and a.activationPolicy() == AppKit.NSApplicationActivationPolicyRegular]
+    return apps[0].processIdentifier() if apps else None
+
+
 def front_app():
     """(bundle id, name, pid) of the app in front, if it isn't Flippy."""
     app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
@@ -178,7 +187,9 @@ def look(bundle, name, pid):
     No window, or one that's minimized or can't be captured, isn't a dead end: its controls (if any) and the
     app's menus are still listed, and menus and media keys work without a window."""
     if running_app(pid) is None:
-        raise ActionError(f"{name} quit. Start a new /act request.")
+        pid = _relaunched(bundle, pid)
+        if pid is None:
+            raise ActionError(f"{name} quit. Start a new /act request.")
     win = _window(pid)
     minimized = bool(win is not None and _attr(win, "AXMinimized"))
     frame = _frame(win) if win is not None else None
