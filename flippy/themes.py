@@ -1691,23 +1691,23 @@ class Mono(Theme):
         return hits
 
     def _slider(self, cr, x, cy, w, frac, pressed):
-        """macOS-style: white fill up to the knob, dark track after it, a light pill knob."""
+        """A sharp bar: white fill up to the value, dark track after it. The knob shows only while it's held."""
         frac = max(0.0, min(frac, 1.0))
-        round_rect(cr, x, cy - 3, w, 6, 3)
+        cr.rectangle(x, cy - 3, w, 6)
         cr.set_source_rgba(0.16, 0.16, 0.17, 1)
         cr.fill()
-        kw, kh = 22, 14
-        kx = x + (w - kw) * frac
-        round_rect(cr, x, cy - 3, kx + kw / 2 - x, 6, 3)
+        cr.rectangle(x, cy - 3, w * frac, 6)
         cr.set_source_rgba(*self.fg, 1)
         cr.fill()
-        round_rect(cr, kx, cy - kh / 2 + 1, kw, kh, kh / 2)  # shadow
-        cr.set_source_rgba(0, 0, 0, 0.5)
-        cr.fill()
-        round_rect(cr, kx, cy - kh / 2, kw, kh, kh / 2)
-        shade = 0.72 if pressed else 0.85
-        cr.set_source_rgba(shade, shade, shade + 0.01, 1)
-        cr.fill()
+        if pressed:
+            kw, kh = 22, 14
+            kx = x + (w - kw) * frac
+            round_rect(cr, kx, cy - kh / 2 + 1, kw, kh, kh / 2)  # shadow
+            cr.set_source_rgba(0, 0, 0, 0.5)
+            cr.fill()
+            round_rect(cr, kx, cy - kh / 2, kw, kh, kh / 2)
+            cr.set_source_rgba(0.85, 0.85, 0.86, 1)
+            cr.fill()
 
     def _button(self, cr, bx, by, name, pressed):
         B = self.BTN
