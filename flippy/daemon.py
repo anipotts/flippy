@@ -148,8 +148,9 @@ class Flippy:
     def _connection_tick(self):
         if self.quitting:
             return False
-        from .providers import setup_ready
-        if not self.busy and (not setup_ready() or getattr(self.ui, "setup_win", None)):
+        # only while the setup window is open, to keep its marks live; a lost login is caught at launch and
+        # when a request fails (flippy/setup_gate.py), not by checking `claude auth status` forever
+        if not self.busy and getattr(self.ui, "setup_win", None):
             if self.connection_future is None or self.connection_future.done():
                 self.connection_future = self._run(self.brain.connections(), lambda r, e: None)
         return True
