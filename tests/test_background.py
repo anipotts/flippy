@@ -184,3 +184,34 @@ class StopAndWording(unittest.TestCase):
             with patch.object(brain, "ClaudeSDKClient", Client), self.assertRaises(RuntimeError):
                 asyncio.run(b.act("x", tools))
             self.assertEqual(seen["effort"], expected, setting)
+
+
+class StopFreesFlippy(unittest.TestCase):
+    def _flippy(self, mode):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from flippy.requests import Request
+        req = Request(1, mode)
+        req.future = SimpleNamespace(cancel=Mock())
+        tools = SimpleNamespace(stop=Mock())
+        f = SimpleNamespace(followup_token=None, request=req, action_tools=tools, action_future=object(), busy=True,
+                            gen=1, box=Mock(), ui=SimpleNamespace(action_card=Mock()), marked=False,
+                            video=SimpleNamespace(recording=False), overlay=SimpleNamespace(drawing=False, clear=Mock()),
+                            _stop_playback=Mock(), _cancel_fade=Mock())
+        return f, req, tools
+
+    def test_stopping_a_task_frees_flippy_right_away(self):
+        from flippy import daemon
+        f, req, tools = self._flippy("action")
+        daemon.Flippy.dismiss(f)
+        tools.stop.assert_called_once()
+        self.assertTrue(req.canceled.is_set())
+        self.assertFalse(f.busy)              # a new /act can start now
+        self.assertIsNone(f.action_tools)
+
+    def test_a_question_still_waits_for_its_session(self):
+        from flippy import daemon
+        f, req, _ = self._flippy("tutor")
+        f.action_tools = None
+        daemon.Flippy.dismiss(f)
+        self.assertTrue(f.busy)  # cleared by the request's own finally, once the shared conversation is drained

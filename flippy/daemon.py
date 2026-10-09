@@ -1098,6 +1098,13 @@ class Flippy:
             self.ui.action_card.hide()
         if req:
             req.cancel(loop.source_remove)
+            if req.mode == "action":
+                # A stopped desktop task can take a few seconds to close its Claude session. Each task has its own
+                # session and stop signal, and a canceled request's results are already ignored, so don't make
+                # the user wait for that: free Flippy now and let the old task finish closing in the background.
+                # (Questions keep waiting: they share one conversation.)
+                self.busy = False
+                self.action_tools = self.action_future = None
         self.gen += 1
         self.box.hide()
         self._stop_playback()
