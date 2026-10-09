@@ -581,9 +581,8 @@ class Platform:
         self._bind_keys()
         settings.on_change(lambda section, key, value: section == "keys" and self._bind_keys())
         self._menu_bar()
-        from .setup_window import needs_setup
-        if needs_setup():
-            loop.timeout_add(300, lambda: self.open_setup())
+        # setup opens by itself only on install, a new major version or a lost login (flippy/setup_gate.py,
+        # decided once the first login check is done)
 
     def open_setup(self):
         from .setup_window import SetupWindow

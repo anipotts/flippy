@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 
-from . import act_memory, loop, onboarding, settings, themes, tips, updates, video, watch
+from . import act_memory, loop, onboarding, settings, setup_gate, themes, tips, updates, video, watch
 from .brain import BrainError
 from .providers import Brain, ProviderChoiceRequired
 from .codex_provider import CodexError
@@ -115,7 +115,7 @@ class Flippy:
         self.tour = onboarding.Tour(self)
         LISTENERS.append(self.tour.on_event)
         loop.timeout_add(3000, self._maybe_start_tour)
-        self._run(self.brain.start(), lambda r, e: log("claude session ready" if not e else f"session start failed: {e}"))
+        self._run(self.brain.start(), self._started)
         self.connection_future = None
         loop.timeout_add(5000, self._connection_tick)
 
@@ -123,6 +123,26 @@ class Flippy:
         os.chmod(SOCK_PATH, 0o600)
         self.instance.listening()
         log(f"listening on {SOCK_PATH}")
+
+    def _started(self, result, err):
+        log("claude session ready" if not err else f"session start failed: {err}")
+        self._open_setup_if(setup_gate.launch_reason)  # the login check is done: no race with it
+
+    def _open_setup_if(self, reason_of, *args):
+        """Open setup when reason_of(...) gives a reason: a new install, a new major version, a lost login."""
+        from .providers import CONNECTION_STATUS
+        if not hasattr(self.ui, "open_setup") or getattr(self.ui, "setup_win", None):
+            return
+        reason = reason_of(*args, dict(CONNECTION_STATUS), settings.get("provider", "mode"))
+        if not reason:
+            return
+        log(f"setup: opening ({reason if isinstance(reason, str) else 'login needed'})")
+        self.ui.open_setup()
+        if reason in ("install", "major"):
+            try:
+                setup_gate.mark_seen()
+            except OSError as e:
+                log(f"setup: couldn't record it was shown ({type(e).__name__})")
 
     # --- plumbing ---
     def _connection_tick(self):
@@ -706,6 +726,8 @@ class Flippy:
             message = message.removeprefix("Desktop task stopped. ").removeprefix("Task stopped: ")
             message = message.replace(" Check the screen before continuing.", "")
             self._fail("Desktop task stopped: " + message + " Check the screen before continuing.")
+            if error:
+                self._open_setup_if(setup_gate.login_error, error)
         else:
             self.overlay.show_text(result)
             self._schedule_fade(settings.get("timing", "max_show_seconds"))
@@ -727,6 +749,7 @@ class Flippy:
         if err:
             self._stop_playback()
             self._fail(_friendly_error(err))
+            self._open_setup_if(setup_gate.login_error, err)
             return
         raw, gen = result
         event("answer", outcome="completed")
