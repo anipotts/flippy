@@ -1677,7 +1677,8 @@ class Mono(Theme):
                 "seek": (x + P + 52, r1, w - 2 * P - 52),
                 "prev": (x + P, r2 - B / 2), "toggle": (x + P + B + 6, r2 - B / 2),
                 "next": (x + P + 2 * (B + 6), r2 - B / 2), "close": (close_x, r2 - B / 2),
-                "speed": (close_x - 14 - 110, r2, 110), "speed_label": close_x - 14 - 110 - 8}
+                "speed": (close_x - 14 - 110, r2, 110),
+                "speed_cycle": (close_x - 14 - 110 - 8 - 46, r2 - B / 2, 46, B)}  # the "1.25×" button
 
     def hit_regions(self, card, x, y, w, h, opts=None):
         if not lean_controls(card, opts or {}):
@@ -1688,6 +1689,7 @@ class Mono(Theme):
         hits["seek"] = (sx, sy - 9, sw, 18)
         vx, vy, vw = G["speed"]
         hits["speed"] = (vx, vy - 9, vw, 18)
+        hits["speed_cycle"] = G["speed_cycle"]
         return hits
 
     def _slider(self, cr, x, cy, w, frac, pressed):
@@ -1751,8 +1753,17 @@ class Mono(Theme):
             g = name if name != "toggle" else ("pause" if playing(card) else "play")
             self._button(cr, *G[name], g, pressed == name)
         vx, vy, vw = G["speed"]
+        bx, by, bw, bh = G["speed_cycle"]  # a square-cornered button: click steps through the speeds
+        if pressed == "speed_cycle":
+            cr.rectangle(bx, by, bw, bh)
+            cr.set_source_rgba(0.16, 0.16, 0.17, 1)
+            cr.fill()
+        cr.rectangle(bx + 0.5, by + 0.5, bw - 1, bh - 1)
+        cr.set_source_rgba(*self.outline, 1)
+        cr.set_line_width(1)
+        cr.stroke()
         sl = layout(cr, f"{card.speed:g}×", self.font, 11, bold=True)
-        show(cr, sl, G["speed_label"] - lsize(sl)[0], vy - lsize(sl)[1] / 2, (*self.fg, 1))
+        show(cr, sl, bx + (bw - lsize(sl)[0]) / 2, by + (bh - lsize(sl)[1]) / 2, (*self.fg, 1))
         self._slider(cr, vx, vy, vw, speed_to_frac(card.speed), pressed == "speed")
 
     def box_css(self):
