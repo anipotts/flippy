@@ -1,5 +1,6 @@
 """Eligibility is checked before request ownership, capture or model inference."""
 import ast
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -47,3 +48,22 @@ class TestActionEligibility(unittest.TestCase):
         q.CGRequestPostEventAccess.assert_not_called()
         q.CGPreflightPostEventAccess.return_value=True
         self.assertIsNone(preflight(SimpleNamespace()))
+
+    def test_target_requires_window_geometry_and_tracks_display_identity(self):
+        screen=SimpleNamespace(deviceDescription=Mock(return_value={'NSScreenNumber':11}))
+        sensors=SimpleNamespace(frontmost=lambda: ('fixture','Fixture',123456),
+            front_window=Mock(return_value=7), windows=Mock(return_value=[(7,(20,20,80,80))]))
+        namespace={'__name__':'flippy.mac.ui','__package__':'flippy.mac','os':os,
+            'NSScreen':SimpleNamespace(screens=lambda: [screen]),'sensors':sensors}
+        state=method(ROOT/'flippy/mac/ui.py','Platform','action_state',namespace)
+        ui=SimpleNamespace(screen_size=lambda: (100,100))
+        original=state(ui)
+        self.assertEqual(original,('fixture',123456,7,(20,20,80,80),(11,(100,100))))
+        screen.deviceDescription.return_value={'NSScreenNumber':12}
+        replacement=state(ui)
+        self.assertNotEqual(original[-1],replacement[-1])
+        sensors.front_window.return_value=None
+        with self.assertRaisesRegex(ActionError,'foreground window'): state(ui)
+        sensors.front_window.return_value=7
+        sensors.windows.return_value=[]
+        with self.assertRaisesRegex(ActionError,'foreground window'): state(ui)
