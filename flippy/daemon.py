@@ -466,6 +466,11 @@ class Flippy:
             return "Input cleanup could not be confirmed. Restart Flippy before acting again."
         if not hasattr(self.ui, "action_state"):
             return "desktop tasks are available on macOS only for now"
+        try:
+            if hasattr(self.ui, "action_preflight"):
+                self.ui.action_preflight()
+        except ActionError as error:
+            return str(error)
         req = self._begin_request("action")
         self.box.hide()
         tools = DesktopTools(lambda: self._capture_frame(req, targeted=True),

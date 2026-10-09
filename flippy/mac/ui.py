@@ -1043,6 +1043,14 @@ class Platform:
         threading.Thread(target=run, daemon=True).start()
         return "ok"
 
+    def action_preflight(self):
+        """Check task eligibility before inference without inspecting foreground focus."""
+        from ..actions import ActionError
+        if len(NSScreen.screens()) != 1:
+            raise ActionError("Desktop tasks require one display. Disconnect extra displays before /act.")
+        if not Quartz.CGPreflightPostEventAccess():
+            raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+
     def action_state(self):
         """Identity and geometry of the foreground target. One display, like the tutor."""
         from ..actions import ActionError
