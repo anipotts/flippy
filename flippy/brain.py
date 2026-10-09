@@ -49,6 +49,11 @@ class BrainError(Exception):
 NO_TRANSCRIPTS = {"no-session-persistence": None}
 
 
+# Claude Code saves every session to ~/.claude/projects/, screenshots included. Flippy's sessions live only in
+# memory: follow-ups still work, nothing is written to disk, and they stay out of your Claude Code history.
+NO_TRANSCRIPTS = {"no-session-persistence": None}
+
+
 class Brain:
     def __init__(self):
         # Never bill the API: the SDK picks up ANTHROPIC_API_KEY if it's set.
