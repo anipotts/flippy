@@ -27,7 +27,7 @@ AGENT = os.path.expanduser(f"~/Library/LaunchAgents/{AGENT_LABEL}.plist")
 SCREEN_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
 ACCESSIBILITY_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 WIDTH = 560
-BODY_HEIGHT = 674
+BODY_HEIGHT = 700
 FOOTER_HEIGHT = 52
 
 
@@ -183,6 +183,8 @@ class SetupWindow:
         self._shortcut = None
         self.edit_button = style.button("Edit…", open_settings, self.keep)
         style.place(b, self.edit_button, 454, 635, 82, 28)
+        style.text(b, "There are more, like circling something or checking a video. Change any in Edit…",
+                   62, 672, WIDTH - 86, 10, muted=True)
         self.edit_button.setAccessibilityLabel_("Edit Flippy shortcuts")
 
         # The footer stays visible; the body scrolls only on smaller displays.
