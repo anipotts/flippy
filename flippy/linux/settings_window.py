@@ -17,12 +17,11 @@ from .. import pointers, settings, themes  # noqa: E402
 
 _adw_ready = False
 
-MODELS = [("default", "Account default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")]
-EFFORTS = [("low", "Low (fastest)"), ("medium", "Medium"), ("high", "High"), ("max", "Max (slowest)")]
-IMAGES = [(1366, "1366 px (lightest on usage)"), (1920, "1920 px (balanced)"), (0, "Full resolution (sharpest)")]
-POINTERS = [("theme", "Theme default"), ("hand", "Pixel hand"), ("arrow", "Pixel arrow"), ("ring", "Ring"), ("dot", "Dot"),
-            ("glass", "Liquid glass lens"), ("glasshand", "Liquid glass hand")]
-PACES = [("slow", "Slow"), ("normal", "Normal"), ("fast", "Fast")]
+MODELS = settings.options('claude', 'model')
+EFFORTS = settings.options('claude', 'effort')
+IMAGES = settings.options('claude', 'image')
+POINTERS = settings.options('look', 'pointer')
+PACES = settings.options('timing', 'step_pace')
 SHORTCUTS = os.path.expanduser("~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom")
 
 
@@ -36,12 +35,13 @@ def combo_row(title, subtitle, section, key, options):
     return row
 
 
-def spin_row(title, subtitle, section, key, lo, hi, step, digits=0):
-    adj = Gtk.Adjustment(value=settings.get(section, key), lower=lo, upper=hi, step_increment=step)
-    row = Adw.SpinRow(title=title, subtitle=subtitle or "", adjustment=adj, digits=digits)
+def spin_row(title, subtitle, section, key):
+    spec = settings.SETTINGS[section, key]
+    adj = Gtk.Adjustment(value=settings.get(section, key), lower=spec.minimum, upper=spec.maximum, step_increment=spec.step)
+    row = Adw.SpinRow(title=title, subtitle=subtitle or "", adjustment=adj, digits=spec.digits)
     as_int = isinstance(settings.DEFAULTS[section][key], int)
     row.connect("notify::value", lambda r, _p: settings.set(section, key, int(r.get_value()) if as_int
-                                                             else round(r.get_value(), 2)))
+                                                             else round(r.get_value(), spec.digits)))
     return row
 
 
@@ -106,7 +106,7 @@ def switch_row(title, subtitle, section, key):
     return row
 
 
-HELP_MODES = [("off", "Off"), ("quiet", "Offer a hand when I'm stuck"), ("tips", "That, plus tips while I work")]
+HELP_MODES = settings.options('help', 'mode')
 
 
 class SettingsWindow(Adw.PreferencesWindow):
@@ -224,11 +224,11 @@ class SettingsWindow(Adw.PreferencesWindow):
         custom.add_suffix(self.del_btn)
         g.add(custom)
         self._update_custom_buttons()
-        g.add(spin_row("Pointer size", None, "look", "pointer_size", 0.5, 2.0, 0.1, digits=1))
-        g.add(spin_row("Text size", "Answer text, in px", "look", "text_size", 11, 24, 1))
-        g.add(spin_row("Panel opacity", None, "look", "card_opacity", 0.5, 1.0, 0.02, digits=2))
+        g.add(spin_row("Pointer size", None, "look", "pointer_size"))
+        g.add(spin_row("Text size", "Answer text, in px", "look", "text_size"))
+        g.add(spin_row("Panel opacity", None, "look", "card_opacity"))
         g.add(combo_row("Playback controls", "Clickable play/pause/step buttons on the answer panel", "look", "controls",
-                        [("all", "On every theme"), ("players", "Only on Media Player and Y2K Player")]))
+                        settings.options("look", "controls")))
         page.add(g)
 
         g = Adw.PreferencesGroup()
@@ -257,14 +257,13 @@ class SettingsWindow(Adw.PreferencesWindow):
     def _timing(self, on_preview):
         page = Adw.PreferencesPage(title="Timing", icon_name="preferences-system-time-symbolic")
         g = Adw.PreferencesGroup(title="Answers")
-        g.add(spin_row("Stay up for", "Seconds after the answer finishes", "timing", "show_seconds", 3, 60, 1))
-        g.add(spin_row("Longest stay", "Cap for long answers, in seconds", "timing", "max_show_seconds", 5, 120, 1))
+        g.add(spin_row("Stay up for", "Seconds after the answer finishes", "timing", "show_seconds"))
+        g.add(spin_row("Longest stay", "Cap for long answers, in seconds", "timing", "max_show_seconds"))
         page.add(g)
         g = Adw.PreferencesGroup(title="Walkthroughs")
         g.add(combo_row("Step pace", "How long each pointed step stays", "timing", "step_pace", PACES))
-        g.add(spin_row("Playback speed", "Also on the Media Player/Y2K players' slider", "timing", "speed", 0.5, 2.0, 0.05, digits=2))
-        g.add(spin_row("Glide time", "Seconds for the pointer to travel between steps", "timing", "glide_seconds",
-                       0.2, 2.0, 0.1, digits=1))
+        g.add(spin_row("Playback speed", "Also on the Media Player/Y2K players' slider", "timing", "speed"))
+        g.add(spin_row("Glide time", "Seconds for the pointer to travel between steps", "timing", "glide_seconds"))
         g.add(switch_row("Wait for my clicks", "Tutorials pause on steps you have to do until you click the thing",
                          "timing", "wait_for_clicks"))
         g.add(button_row("Try it", None, "Preview", on_preview))

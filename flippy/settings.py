@@ -6,6 +6,9 @@ daemon reacts through on_change listeners; hand-editing the file works too
 """
 import copy
 import os
+import math
+import tempfile
+from dataclasses import dataclass
 import tomllib
 from .profile import current
 
@@ -42,7 +45,7 @@ DEFAULTS = {
         "muted": "",            # apps where you chose "don't ask"
     },
     "onboarding": {
-        "done": False,          # the first-run tour (flippy/onboarding.py) was finished or dismissed
+        "done": False,          # the first-run tour was finished or dismissed
     },
     "updates": {
         "check": True,          # look for a new GitHub Release once a day and offer to install it
@@ -64,18 +67,53 @@ if current().demo:
     DEFAULTS["updates"]["check"] = False
 
 
-CHOICES = {
-    ("claude", "model"): ["default", "opus", "sonnet", "haiku"],
-    ("claude", "effort"): ["low", "medium", "high", "max"],
-    ("claude", "image"): [1366, 1920, 0],
-    ("look", "theme"): ["midnight", "y2k", "mediaplayer", "glass", "terminal", "cosmic"],  # keep in sync with themes.THEMES
-    ("look", "pointer"): ["theme", "hand", "ring", "arrow", "dot", "glass", "glasshand"],
-    ("look", "controls"): ["all", "players"],
-    ("look", "player_shine"): ["wmp", "none"],
-    ("timing", "step_pace"): ["slow", "normal", "fast"],
-    ("help", "mode"): ["off", "quiet", "tips"],
-    ("keys", "pause"): ["double-cmd", "double-option", "double-ctrl", "double-shift", "off"],
+@dataclass(frozen=True)
+class Setting:
+    default: object
+    choices: tuple = ()
+    minimum: float | None = None
+    maximum: float | None = None
+    step: float | None = None
+    digits: int = 0
+
+
+_OPTIONS = {
+    ('claude', 'model'): [('default', 'Account default'), ('opus', 'Opus'), ('sonnet', 'Sonnet'), ('haiku', 'Haiku')],
+    ('claude', 'effort'): [('low', 'Low (fastest)'), ('medium', 'Medium'), ('high', 'High'), ('max', 'Max (slowest)')],
+    ('claude', 'image'): [(1366, '1366 px (lightest on usage)'), (1920, '1920 px (balanced)'), (0, 'Full resolution (sharpest)')],
+    ('look', 'pointer'): [('theme', 'Theme default'), ('hand', 'Pixel hand'), ('arrow', 'Pixel arrow'), ('ring', 'Ring'), ('dot', 'Dot'), ('glass', 'Liquid glass lens'), ('glasshand', 'Liquid glass hand')],
+    ('timing', 'step_pace'): [('slow', 'Slow'), ('normal', 'Normal'), ('fast', 'Fast')],
+    ('look', 'controls'): [('all', 'On every theme'), ('players', 'Only Media Player and Y2K')],
+    ('look', 'player_shine'): [('wmp', 'WMP gloss'), ('none', 'Plain glass')],
+    ('look', 'glass_color'): [('smoke', 'Smoke'), ('blue', 'Blue'), ('purple', 'Purple'), ('pink', 'Pink'), ('red', 'Red'), ('orange', 'Orange'), ('green', 'Green'), ('teal', 'Teal')],
+    ('keys', 'pause'): [('double-cmd', '⌘ ⌘  (double-tap)'), ('double-option', '⌥ ⌥  (double-tap)'), ('double-ctrl', '⌃ ⌃  (double-tap)'), ('double-shift', '⇧ ⇧  (double-tap)'), ('off', 'Off')],
+    ('help', 'mode'): [('off', 'Off'), ('quiet', "Offer a hand when I'm stuck"), ('tips', 'That, plus tips while I work')],
+    ('look', 'theme'): [('midnight', 'Midnight'), ('y2k', 'Y2K'), ('mediaplayer', 'Mediaplayer'), ('glass', 'Glass'), ('terminal', 'Terminal'), ('cosmic', 'Cosmic')],
 }
+_BOUNDS = {
+    ('look', 'pointer_size'): (0.5, 2.0, 0.1, 1),
+    ('look', 'text_size'): (11, 24, 1, 0),
+    ('look', 'card_opacity'): (0.5, 1.0, 0.02, 2),
+    ('look', 'glass_tint'): (0.0, 1.0, 0.05, 2),
+    ('timing', 'show_seconds'): (3, 60, 1, 0),
+    ('timing', 'max_show_seconds'): (5, 120, 1, 0),
+    ('timing', 'speed'): (0.5, 2.0, 0.05, 2),
+    ('timing', 'glide_seconds'): (0.2, 2.0, 0.1, 1),
+}
+SETTINGS = {
+    (section, key): Setting(value, tuple(_OPTIONS.get((section, key), ())),
+                           *_BOUNDS.get((section, key), (None, None, None, 0)))
+    for section, values in DEFAULTS.items() for key, value in values.items()
+}
+DEFAULTS = {section: {key: SETTINGS[section, key].default for key in values}
+            for section, values in DEFAULTS.items()}
+CHOICES = {key: [value for value, _ in spec.choices]
+           for key, spec in SETTINGS.items() if spec.choices}
+
+
+def options(section, key):
+    return list(SETTINGS[section, key].choices)
+
 
 VERSION = 2  # the config file's format; older files are migrated on load (see _migrate)
 
@@ -86,11 +124,11 @@ _listeners = []
 def _migrate(user):
     """Version 1 -> 2: the glossy media player theme was "glass" and is now "mediaplayer"; the lock-screen
     style one was "nowplaying" and is now "glass". Its reflections setting moved with it."""
-    if user.get("version", 1) >= 2:
+    if isinstance(user.get("version", 1), int) and user.get("version", 1) >= 2:
         return user
     look = user.get("look")
     if isinstance(look, dict):
-        if "theme" in look:
+        if isinstance(look.get("theme"), str):
             look["theme"] = {"glass": "mediaplayer", "nowplaying": "glass"}.get(look["theme"], look["theme"])
         if "glass_shine" in look:
             look["player_shine"] = look.pop("glass_shine")
@@ -108,27 +146,66 @@ def load():
                 for k, v in values.items():
                     if k in data[section] and _valid(section, k, v):
                         data[section][k] = v
+                    elif k in data[section]:
+                        print(f"flippy: ignoring invalid setting {section}.{k}", flush=True)
     except FileNotFoundError:
         pass
-    except (tomllib.TOMLDecodeError, OSError) as e:
-        print(f"flippy: ignoring broken {PATH}: {e}", flush=True)
+    except (tomllib.TOMLDecodeError, OSError):
+        print("flippy: ignoring unreadable or invalid settings file", flush=True)
     _data = data
 
 
 def _valid(section, key, value):
-    default = DEFAULTS[section][key]
-    if isinstance(default, bool) != isinstance(value, bool):
+    spec = SETTINGS.get((section, key))
+    if spec is None:
         return False
-    if isinstance(default, (int, float)) and not isinstance(default, bool):
-        if not isinstance(value, (int, float)):
+    default = spec.default
+    if isinstance(default, bool):
+        if type(value) is not bool:
+            return False
+    elif isinstance(default, (int, float)):
+        if type(value) not in (int, float):
+            return False
+        try:
+            if not math.isfinite(value):
+                return False
+        except OverflowError:
+            return False
+        if type(default) is int and type(value) is not int:
+            return False
+        if spec.minimum is not None and not spec.minimum <= value <= spec.maximum:
             return False
     elif type(value) is not type(default):
         return False
     if (section, key) == ("look", "pointer") and value.startswith("custom:"):
-        from . import pointers  # local: keep this module light
+        from . import pointers
         return pointers.exists(value[len("custom:"):])
-    choices = CHOICES.get((section, key))
-    return choices is None or value in choices
+    return not spec.choices or value in CHOICES[section, key]
+
+
+def parse_value(key, raw):
+    """Parse a CLI section.key using exactly the programmatic validation rules."""
+    if isinstance(key, str):
+        key = tuple(key.split("."))
+    spec = SETTINGS.get(key)
+    if spec is None:
+        raise ValueError("unknown setting")
+    try:
+        if isinstance(spec.default, bool):
+            if raw.lower() not in ("true", "false"):
+                raise ValueError("expected true or false")
+            value = raw.lower() == "true"
+        elif type(spec.default) is int:
+            value = int(raw)
+        elif type(spec.default) is float:
+            value = float(raw)
+        else:
+            value = raw
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError("invalid setting value") from None
+    if not _valid(*key, value):
+        raise ValueError("invalid setting value")
+    return value
 
 
 def get(section, key):
@@ -144,11 +221,16 @@ def set_list(section, key, values):
     set(section, key, ",".join(sorted(values)))
 
 
-def set(section, key, value):  # noqa: A001 (module-level API reads nicely as settings.set)
-    if _data[section].get(key) == value:
+def set(section, key, value):  # noqa: A001
+    global _data
+    if not _valid(section, key, value):
+        raise ValueError(f"invalid setting {section}.{key}")
+    if _data[section][key] == value:
         return
-    _data[section][key] = value
-    save()
+    candidate = copy.deepcopy(_data)
+    candidate[section][key] = value
+    _save(candidate)
+    _data = candidate
     for fn in list(_listeners):
         fn(section, key, value)
 
@@ -163,24 +245,37 @@ def off_change(fn):
 
 
 def save():
+    _save(_data)
+
+
+def _save(data):
     os.makedirs(os.path.dirname(PATH), exist_ok=True)
     lines = ["# Flippy settings. Edit here or via `flippy-ask settings`.\n", f"version = {VERSION}\n"]
-    for section, values in _data.items():
+    for section, values in data.items():
         lines.append(f"\n[{section}]\n")
         for k, v in values.items():
             lines.append(f"{k} = {_toml(v)}\n")
-    tmp = PATH + ".tmp"
-    with open(tmp, "w") as f:
-        f.writelines(lines)
-    os.replace(tmp, PATH)
+    fd, tmp = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=os.path.dirname(PATH))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, PATH)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 def _toml(v):
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, (int, float)):
-        return repr(round(v, 3)) if isinstance(v, float) else str(v)
-    return '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
+        return repr(v) if isinstance(v, float) else str(v)
+    escapes = {"\\": "\\\\", '"': '\\"', "\b": "\\b", "\t": "\\t", "\n": "\\n", "\f": "\\f", "\r": "\\r"}
+    text = "".join(escapes.get(c, f"\\u{ord(c):04x}" if ord(c) < 32 or ord(c) == 127 else c)
+                   for c in str(v))
+    return '"' + text + '"'
 
 
 load()

@@ -1190,17 +1190,13 @@ class Flippy:
         try:
             path, raw = arg.split(maxsplit=1)
             section, key = path.split(".")
-            default = settings.DEFAULTS[section][key]
-            if isinstance(default, bool):
-                value = raw.lower() in ("1", "true", "on", "yes")
-            else:
-                value = type(default)(float(raw)) if isinstance(default, (int, float)) else raw
-            if not settings._valid(section, key, value):
-                return f"invalid value for {path}; choices: {settings.CHOICES.get((section, key), type(default).__name__)}"
+            value = settings.parse_value(path, raw)
             settings.set(section, key, value)
             return "ok"
         except (ValueError, KeyError):
-            return "usage: set <section.key> <value>  (see ~/.config/flippy/config.toml)"
+            return "invalid setting; usage: set <section.key> <value>"
+        except OSError:
+            return "could not save settings"
 
     def _on_setting(self, section, key, value):
         log(f"setting {section}.{key} = {value!r}")
