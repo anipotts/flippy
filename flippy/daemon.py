@@ -21,7 +21,8 @@ from .brain import Brain, BrainError
 from .frames import prepare_frame
 from .requests import Request
 from .profile import current, Instance
-from .actions import ActionError, ApprovalPolicy, DesktopTools, Screenshot, approval_text
+from .actions import (BACKGROUND_CATALOG, BACKGROUND_PROMPT, ActionError, AppFrame, ApprovalPolicy, DesktopTools,
+                      Screenshot, approval_text)
 from .point import image_to_logical, segments
 
 PROFILE = current()
@@ -515,22 +516,26 @@ class Flippy:
             return "Flippy is busy; dismiss the current task first"
         if self.input_disabled:
             return "Input cleanup could not be confirmed. Restart Flippy before acting again."
-        if not hasattr(self.ui, "action_state"):
+        if not hasattr(self.ui, "app_look"):
             return "desktop tasks are available on macOS only for now"
         try:
-            if hasattr(self.ui, "action_preflight"):
-                self.ui.action_preflight()
+            self.ui.app_preflight()
+            self.action_app = self.ui.app_front()  # the app you were in: the task starts there
         except ActionError as error:
             return str(error)
         req = self._begin_request("action")
         self.action_policy = ApprovalPolicy(settings.get("act", "mode"))
         limits = settings.ACT_LIMITS[self.action_policy.mode]
         self.box.hide()
-        tools = DesktopTools(lambda: self._capture_frame(req, targeted=True),
+        # Background: the task works on one app's window and controls (flippy/mac/ax.py), never the real pointer
+        # or keyboard, so you keep using your Mac. (The pointer-driving path below, _capture_frame and
+        # _action_perform, is kept for the borrow-the-mouse-while-you're-idle fallback.)
+        tools = DesktopTools(lambda: self._app_look(req),
                              lambda name, args, shot: self._action_approve(name, args, shot, req),
-                             lambda name, args, shot, cancel: self._action_perform(name, args, shot, cancel, req),
+                             lambda name, args, shot, cancel: self._app_perform(name, args, shot, cancel, req),
                              max_actions=limits.max_actions, max_text=limits.max_text,
-                             approval_mode=self.action_policy.mode)
+                             approval_mode=self.action_policy.mode,
+                             catalog=BACKGROUND_CATALOG, prompt=BACKGROUND_PROMPT)
         tools.max_turns = limits.max_turns
         self.action_tools = tools
         async def run():
@@ -544,6 +549,18 @@ class Flippy:
             lambda r, e, owner: self._action_done(tools, owner, r, e), limits.timeout_seconds)
         self._acting(req)
         return "desktop task started; " + self.action_policy.mode + " approval mode"
+
+    async def _app_look(self, req):
+        if not self._owns(req):
+            raise ActionError("Task stopped.")
+        return AppFrame(*await asyncio.to_thread(self.ui.app_look, *self.action_app))
+
+    async def _app_perform(self, name, args, shot, cancel, req):
+        await self._action_main(lambda: self._acting(req, name.replace("_", " ")), req)
+        if name == "use_app":
+            self.action_app = await asyncio.to_thread(self.ui.app_open, args["name"], cancel)
+            return
+        await asyncio.to_thread(self.ui.app_act, name, args, shot, cancel)
 
     async def _action_main(self, fn, req=None):
         running = asyncio.get_running_loop()
@@ -624,7 +641,8 @@ class Flippy:
                 buttons = [("Stop", lambda: chosen(False)), (f"Allow {app}", lambda: chosen(True)),
                            (f"Always allow {app}", lambda: chosen(True, True))]
             self.ui.action_card.card(f"Allow Flippy to use {app} for this task?" if per_app else "Allow Flippy to act?",
-                "Subsequent inputs in this app run until the task finishes or you stop it." if per_app else approval_text(name, args), buttons,
+                "Subsequent inputs in this app run until the task finishes or you stop it." if per_app else
+                (shot.describe(name, args) if hasattr(shot, "describe") else approval_text(name, args)), buttons,
                 on_timeout=lambda: chosen(False), timeout_s=60, width=480)
         try:
             await self._action_main(show, req)

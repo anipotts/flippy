@@ -2,6 +2,7 @@
 claude-agent-sdk
 pillow
 pycairo
+pyobjc-framework-ApplicationServices
 pyobjc-framework-Cocoa
 pyobjc-framework-CoreText
 pyobjc-framework-Quartz

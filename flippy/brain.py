@@ -125,9 +125,11 @@ class Brain:
         The local handlers enforce approval even though MCP tools are allowed here.
         """
         from .actions import PROMPT, TOOL_CATALOG
-        opts = replace(self.options, system_prompt=PROMPT, max_turns=getattr(desktop, "max_turns", 16),
+        names = list(desktop.catalog()) if hasattr(desktop, "catalog") else list(TOOL_CATALOG)
+        opts = replace(self.options, system_prompt=getattr(desktop, "prompt", PROMPT),
+                       max_turns=getattr(desktop, "max_turns", 16),
                        include_partial_messages=False, mcp_servers={"desktop": desktop.server()},
-                       allowed_tools=[f"mcp__desktop__{name}" for name in TOOL_CATALOG])
+                       allowed_tools=[f"mcp__desktop__{name}" for name in names])
         async with ClaudeSDKClient(options=opts) as client:
             await client.query(question)
             text = ""

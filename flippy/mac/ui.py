@@ -1043,6 +1043,51 @@ class Platform:
         threading.Thread(target=run, daemon=True).start()
         return "ok"
 
+    # --- background tasks (flippy/mac/ax.py): one app's window and controls; your pointer and keyboard stay yours
+    def app_preflight(self):
+        from . import ax
+        from ..actions import ActionError
+        if not ax.trusted() or not Quartz.CGPreflightPostEventAccess():
+            raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+
+    def app_front(self):
+        from . import ax
+        return ax.front_app()
+
+    def app_open(self, name, cancel):
+        from . import ax
+        return ax.open_app(name, cancel)
+
+    def app_look(self, bundle, name, pid):
+        from . import ax
+        return ax.look(bundle, name, pid)
+
+    def app_act(self, name, args, frame, cancel):
+        """press / set_text / focus / type / key / menu in the frame's app. Runs on the task's worker thread."""
+        from . import ax
+        from ..actions import ActionError
+        pid = frame.target[1]
+        if ax.running_app(pid) is None:
+            raise ActionError("The app quit. Start a new /act request.")
+        if cancel.is_set():
+            raise ActionError("Task canceled.")
+        el = frame.elements[args["element"]] if "element" in args else None
+        if name == "press":
+            ax.press(el[0], el[3])
+        elif name == "set_text":
+            ax.set_text(el[0], args["text"])
+        elif name == "focus":
+            ax.focus(el[0], pid)
+        elif name == "type":
+            ax.type_text(pid, args["text"], cancel)
+        elif name == "key":
+            ax.key(pid, args["combo"], self.FLAGS)
+        elif name == "menu":
+            ax.menu(pid, args["path"])
+        else:
+            raise ActionError("Unsupported desktop action.")
+        time.sleep(0.25)  # let the app redraw before the next look
+
     def action_preflight(self):
         """Check task eligibility before inference without inspecting foreground focus."""
         from ..actions import ActionError
