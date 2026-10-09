@@ -187,6 +187,7 @@ Every question sends a screenshot, which uses your subscription limits faster th
 
 ## Troubleshooting
 
+- **An error with a code** (like `Claude couldn't answer. · CLAUDE-FAILED`): look the code up in [docs/errors.md](docs/errors.md) for what happened and what to do.
 - **Logs:** `~/Library/Logs/flippy.log` on macOS, `~/.local/state/flippy.log` on Linux.
 - **Nothing happens on the hotkey:** run `~/.local/bin/flippy-ask` in a terminal to see the error. On Linux, "daemon didn't start" usually means gtk4-layer-shell isn't where `bin/flippy-daemon` looks (see `FLIPPY_LAYER_SHELL_LIB`). On macOS, another app may already own the shortcut; the log says so, and Settings → Hotkeys can change it.
 - **macOS: answers say Flippy needs Screen Recording:** allow Flippy in System Settings → Privacy & Security → Screen & System Audio Recording, then restart it (menu bar icon → Setup… → Restart Flippy).
@@ -224,7 +225,8 @@ scripts/    the macOS and Linux installers, release.sh, package.sh (the per-plat
 tests/      python -m unittest discover tests
 docs/       linux-port.md: how the macOS features work on COSMIC, and what's still blocked;
             linux-0.2.6.md: instructions for bringing COSMIC up to macOS (/act, pointer input, glass);
-            video-review.md: video review, and how to build it on macOS
+            video-review.md: video review, and how to build it on macOS;
+            errors.md: every error code Flippy shows, what it means and what to do
 ```
 
 ## Credits
