@@ -5,10 +5,11 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import Mock
 
-from flippy.actions import ActionError
+from flippy.actions import ActionError, ApprovalPolicy
 from flippy.frames import ScreenFrame
 from flippy.requests import Request
 
@@ -39,10 +40,10 @@ class MainQueue:
 def controller(queue):
     tree = ast.parse((Path(__file__).parents[1] / 'flippy/daemon.py').read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'Flippy')
-    names = ('_owns', '_run_request', '_action_main', '_capture_frame', '_unlink',
-             '_action_perform', '_on_answer', '_begin_request', '_schedule_fade', '_action_approve')
+    names = ('_owns', '_run_request', '_action_main', '_capture_frame', '_capture_frame_once', '_unlink',
+             '_action_perform', '_on_answer', '_begin_request', '_schedule_fade', '_action_approve', '_start_playback', '_play_coords')
     ns = {'asyncio': asyncio, 'loop': queue, 'Request': Request, 'ActionError': ActionError, 'approval_text': lambda *args: 'proposal',
-          'os': __import__('os'), 'prepare_frame': Mock(), 'settings': SimpleNamespace(get=lambda *args: 1920),
+          'time': time, 'event': Mock(), 'os': __import__('os'), 'prepare_frame': Mock(), 'settings': SimpleNamespace(get=lambda *args: 1920),
           '_friendly_error': Mock(return_value='sanitized')}
     for n in cls.body:
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in names:
@@ -53,6 +54,8 @@ def controller(queue):
     adapter.busy = True
     adapter.quitting = False
     adapter.input_disabled = False
+    adapter.action_policy = ApprovalPolicy('every_input')
+    adapter._acting = Mock()
     adapter.loop = asyncio.get_running_loop()
     adapter._stop_playback = Mock()
     adapter._cancel_fade = Mock()
@@ -70,6 +73,17 @@ class TestLifecycle(unittest.IsolatedAsyncioTestCase):
         for _ in range(count):
             queue.flush()
             await asyncio.sleep(0)
+
+    async def test_tutor_playback_accepts_shared_frame_and_clamps_points(self):
+        queue = MainQueue()
+        f, _ = controller(queue)
+        f.gen = 7
+        f._play_tick = Mock()
+        frame = ScreenFrame("image", (1920, 1080), (1440, 810))
+        f._start_playback(7, frame.size, frame.original_size, frame=frame)
+        self.assertIs(f.play["frame"], frame)
+        self.assertEqual(f._play_coords(SimpleNamespace(x=960, y=540)), (720, 405))
+        self.assertEqual(f._play_coords(SimpleNamespace(x=-10, y=2000)), (0, 1079 * 810 / 1080))
 
     async def test_new_request_stops_owned_video_recording(self):
         q=MainQueue(); f,_=controller(q)
@@ -111,7 +125,7 @@ class TestLifecycle(unittest.IsolatedAsyncioTestCase):
             finally:
                 await cleanup.wait()
         fut=f._run_request(req,work(),done)
-        await started.wait()
+        await asyncio.wait_for(started.wait(),1)
         req.cancel(q.source_remove)
         await self.spin(q)
         self.assertTrue(f.busy)
@@ -180,7 +194,9 @@ class TestLifecycle(unittest.IsolatedAsyncioTestCase):
         f.ui.action_input.assert_not_called()
 
     async def test_native_worker_cancel_waits_for_release_ack(self):
+        from unittest.mock import AsyncMock
         q=MainQueue(); f,_=controller(q)
+        f._action_main = AsyncMock(side_effect=lambda fn, req=None: fn())
         shot=ScreenFrame('jpeg',(100,100),(100,100),('target',),'same',(100,100))
         async def capture(*args,**kwargs): return shot
         f._capture_frame=capture

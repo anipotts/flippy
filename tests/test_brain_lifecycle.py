@@ -156,6 +156,11 @@ class TestBrainLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(first.disconnected)
         self.assertEqual(await self.brain.ask("next", "image", (80, 40)), "finished")
         self.assertIsNot(first, self.brain.client)
+        context = self.brain.client.queries[0][0]["message"]["content"][0]["text"]
+        self.assertIn("User: old", context)
+        self.assertIn("partial", context)
+        self.assertIn("interrupted", context)
+        self.assertNotIn("data:image", context)
 
     async def test_completed_turn_reuses_transport_for_followup(self):
         self.assertEqual(await self.brain.ask("first", "image", (80, 40)), "finished")
