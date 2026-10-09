@@ -118,6 +118,10 @@ Before input, Flippy hides its preview, recaptures and checks target geometry. I
 
 With the normal source dependencies installed in `.venv`, run `scripts/dev.sh build`, `run`, `ask <command>`, `stop` or `doctor`. `script/build_and_run.sh --verify` builds, launches and checks the demo socket. Builds never install login items or initiate authentication.
 
+To use the contribution as your normal app, run `scripts/dev.sh --app run`. This builds `~/Applications/Flippy.app` with the normal `dev.flippy.app` identity, configuration and hotkeys. `--app doctor` checks that profile; `--app stop` stops it only if this checkout owns the process. An existing app belonging to another checkout is never replaced. This is a local build of the contribution branch, not an upstream release.
+
+Setup shows the exact running app and a draggable icon for adding it to macOS permission lists. Use the direct Screen Recording and Accessibility links; if a pane does not accept a drop, reveal the app in Finder and select it using the pane’s `+` button. macOS owns permission approval. Restart Flippy afterward and let its live checks confirm access.
+
 The separate `~/Applications/Flippy Demo.app` uses `dev.flippy.demo`, `~/.config/flippy-demo`, its own socket, logs and caches. Updates and autostart are disabled. Its defaults are `⌘⌥⇧Space` to ask, `⌃⌥⇧Space` to draw, `⌃⌥⇧V` for video and double-Option to pause. Native permission prompts may appear after ad hoc signing. The normal app is not stopped or replaced.
 
 For acceptance, `scripts/action_fixture.py` provides a disposable native window, and `tests/fixtures/desktop.html` provides a deterministic browser page. Test approval/refusal, focus and pixel changes, typing/drag cancellation and released input. Automated tests do not prove live macOS permissions or input. Release decisions are tracked in [issue #2](https://github.com/kap-il/flippy/issues/2).
