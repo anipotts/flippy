@@ -25,7 +25,7 @@ class FakeDesktop:
 
     async def capture(self):
         self.captures += 1
-        return Screenshot(base64.b64encode(b"fixture").decode(), (1920, 1080), (1280, 720), ("app", 1))
+        return Screenshot(base64.b64encode(b"fixture").decode(), (1920, 1080), (1280, 720), ("dev.flippy.fixture", 1, 7, (0, 0, 1280, 720), (1, (1280, 720))))
 
     async def approve(self, name, args, shot):
         self.approvals.append((name, args))
@@ -292,7 +292,7 @@ class TestNativeAdapter(unittest.TestCase):
             mock.start()
             self.addCleanup(mock.stop)
         self.ui = self.module.Platform.__new__(self.module.Platform)
-        self.shot = Screenshot("image", (1920, 1080), (1280, 720), ("app", 1))
+        self.shot = Screenshot("image", (1920, 1080), (1280, 720), ("dev.flippy.fixture", 1, 7, (0, 0, 1280, 720), (1, (1280, 720))))
         self.ui.action_state = lambda: self.shot.target
         self.cancel = threading.Event()
 
