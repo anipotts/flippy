@@ -207,8 +207,10 @@ class SetupWindow:
         self.login_switch.setState_(int(login_item_on()))
         self.login_switch.setEnabled_(installed and not current().demo)
         self.login_switch.setAccessibilityLabel_("Launch Flippy at login")
-        style.place(root, self.login_switch, 24, body_height + 9)
-        style.text(root, "Launch at login", 70, body_height + 13, 240, 11)
+        self.login_switch.sizeToFit()
+        switch_w = self.login_switch.frame().size.width
+        style.place(root, self.login_switch, WIDTH - 24 - switch_w + 5, body_height + 9)  # its pill ends at the buttons' edge
+        style.text(root, "Launch at login", 24, body_height + 13, 240, 11)
         style.rule(root, body_height + 40, WIDTH, x=0)
         style.text(root, "You stay in control.", 24, body_height + 58, 360, 11, muted=True)
         self.done_button = style.button("Done", lambda: self.win.close(), self.keep, primary=True)
