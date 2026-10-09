@@ -493,6 +493,11 @@ class Flippy:
                 label = "proposed " + name
                 if name == "drag":
                     end = shot.to_logical(args["to_x"], args["to_y"])
+                    bounds = shot.target[3] if shot.target and len(shot.target) >= 5 else None
+                    if not bounds or any(not (bounds[0] <= px < bounds[0] + bounds[2]
+                                              and bounds[1] <= py < bounds[1] + bounds[3])
+                                         for px, py in ((x, y), end)):
+                        raise ActionError("Both drag endpoints must be inside the foreground window.")
                     label += f" to ({end[0]:.0f}, {end[1]:.0f})"
                     self.overlay.strokes = [[(x, y), end]]
                     self.overlay.queue_draw()
