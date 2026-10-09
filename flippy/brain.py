@@ -1,14 +1,12 @@
 """Claude via the Agent SDK on the Pro/Max subscription. Tutor answers and opt-in desktop tasks."""
-import base64
-import io
+import asyncio
 import os
 from dataclasses import replace
 
-from PIL import Image
 from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, StreamEvent,
                               TextBlock, query)
 
-from .point import pick_target_size
+from .frames import prepare_image
 
 # The pointing instructions are adapted from Clicky (MIT: see THIRD_PARTY_NOTICES.md).
 SYSTEM_PROMPT = """\
@@ -48,17 +46,6 @@ class BrainError(Exception):
     pass
 
 
-def prepare_image(path: str, long_edge: int = 1920) -> tuple[str, tuple[int, int], tuple[int, int]]:
-    """Downscale a screenshot (long_edge 0 = full size). Returns (base64 jpeg, image size, original size)."""
-    with Image.open(path) as im:
-        orig = im.size
-        target = pick_target_size(*orig, long_edge or max(orig))
-        small = im.convert("RGB").resize(target, Image.LANCZOS)
-    buf = io.BytesIO()
-    small.save(buf, format="JPEG", quality=85)
-    return base64.b64encode(buf.getvalue()).decode(), target, orig
-
-
 class Brain:
     def __init__(self):
         # Never bill the API: the SDK picks up ANTHROPIC_API_KEY if it's set.
@@ -79,6 +66,7 @@ class Brain:
         self.client: ClaudeSDKClient | None = None
         self.dirty = False  # options changed; next question starts a fresh session
         self.last_model = None
+        self._lock = asyncio.Lock()
 
     def configure(self, model: str | None, effort: str):
         """None model = the account's default. Applies on the next (fresh) session."""
@@ -88,18 +76,32 @@ class Brain:
             self.dirty = self.client is not None
 
     async def start(self):
-        self.client = ClaudeSDKClient(options=self.options)
-        await self.client.connect()
-        self.dirty = False
+        async with self._lock:
+            if self.client is None:
+                await self._start()
+
+    async def _start(self):
+        client = ClaudeSDKClient(options=self.options)
+        try:
+            await client.connect()
+        except BaseException:
+            await client.disconnect()
+            raise
+        self.client, self.dirty = client, False
 
     async def stop(self):
+        async with self._lock:
+            await self._stop()
+
+    async def _stop(self):
         if self.client:
-            await self.client.disconnect()
-            self.client = None
+            client, self.client = self.client, None
+            await client.disconnect()
 
     async def reset(self):
-        await self.stop()
-        await self.start()
+        async with self._lock:
+            await self._stop()
+            await self._start()
 
     async def act(self, question, desktop):
         """An isolated tool session using the tutor's existing model/auth settings.
@@ -107,10 +109,10 @@ class Brain:
         No API client or key is introduced. Tutor and tip sessions remain tool-free.
         The local handlers enforce approval even though MCP tools are allowed here.
         """
-        from .actions import PROMPT
+        from .actions import PROMPT, TOOL_CATALOG
         opts = replace(self.options, system_prompt=PROMPT, max_turns=16,
                        include_partial_messages=False, mcp_servers={"desktop": desktop.server()},
-                       allowed_tools=[f"mcp__desktop__{name}" for name in ("screenshot", "click", "type", "key")])
+                       allowed_tools=[f"mcp__desktop__{name}" for name in TOOL_CATALOG])
         async with ClaudeSDKClient(options=opts) as client:
             await client.query(question)
             text = ""
@@ -150,21 +152,40 @@ class Brain:
                 raise BrainError(msg.result or msg.subtype or "unknown error")
         return parse_tips("".join(parts))
 
-    async def ask(self, question: str, b64_jpeg: str, img_size: tuple[int, int], on_text=None) -> str:
-        """Returns the full reply. on_text(delta) is called with text chunks as they stream in."""
-        if self.client is None:
-            await self.start()
+    async def ask(self, question: str, b64_jpeg: str, img_size: tuple[int, int],
+                  on_text=None, extra_images=()) -> str:
+        """One serialized tutor/video turn; cancellation discards its transport."""
         w, h = img_size
-        content = [
+        content = []
+        for label, jpeg in extra_images:
+            content.extend([{"type": "text", "text": label},
+                            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": jpeg}}])
+        content.extend([
             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64_jpeg}},
-            {"type": "text", "text": f"(screenshot is {w}x{h} pixels)\n\n{question}"},
-        ]
+            {"type": "text", "text": f"(current screenshot is {w}x{h} pixels)\n\n{question}"},
+        ])
+        async with self._lock:
+            if self.dirty:
+                await self._stop()
+            if self.client is None:
+                await self._start()
+            try:
+                return await self._reply(content, on_text)
+            except BaseException:
+                # Reset cannot race this turn. Do not leave partial context alive.
+                cleanup = asyncio.create_task(self._stop())
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    await cleanup
+                raise
 
+    async def _reply(self, content, on_text):
         async def messages():
             yield {"type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None}
 
         await self.client.query(messages())
-        parts: list[str] = []
+        parts = []
         async for msg in self.client.receive_response():
             if isinstance(msg, StreamEvent):
                 ev = msg.event
