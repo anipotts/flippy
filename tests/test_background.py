@@ -72,6 +72,29 @@ class Background(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.tools.cancel.is_set())  # not a tool here at all: invalid, so it stops
 
 
+class NoWindow(unittest.IsolatedAsyncioTestCase):
+    async def test_a_look_without_a_window_is_text_only_and_media_works(self):
+        done = []
+
+        async def capture():
+            return AppFrame(None, (0, 0), TARGET, {}, "App: Spotify — no window open.\nMenus: Playback: Next")
+
+        async def approve(name, args, shot):
+            return True
+
+        async def perform(name, args, shot, cancel):
+            done.append((name, args))
+        tools = DesktopTools(capture, approve, perform, approval_mode="per_app", max_actions=40, max_text=2000,
+                             catalog=BACKGROUND_CATALOG, prompt=BACKGROUND_PROMPT)
+        r = await tools.invoke("look", {})
+        self.assertEqual([c["type"] for c in r["content"]], ["text"])  # no image, still a look
+        await tools.invoke("media", {"action": "next", "reason": "skip"})
+        await tools.invoke("menu", {"path": ["Playback", "Next"], "reason": "skip"})
+        self.assertEqual([n for n, _ in done], ["media", "menu"])
+        r = await tools.invoke("media", {"action": "eject", "reason": "x"})
+        self.assertTrue(r["is_error"])
+
+
 class Describe(unittest.TestCase):
     def test_cards_say_what_will_happen_in_words(self):
         f = frame()

@@ -1084,6 +1084,8 @@ class Platform:
             ax.key(pid, args["combo"], self.FLAGS)
         elif name == "menu":
             ax.menu(pid, args["path"])
+        elif name == "media":
+            ax.media(args["action"])
         else:
             raise ActionError("Unsupported desktop action.")
         time.sleep(0.25)  # let the app redraw before the next look

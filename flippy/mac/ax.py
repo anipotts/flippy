@@ -173,23 +173,26 @@ def _capture(window_id):
 
 
 def look(bundle, name, pid):
-    """What Claude sees: (jpeg b64, image size, target, elements, description).
-    elements: {id: (AX element, role, label, actions)}; ids are only good until the next look."""
+    """What Claude sees: (jpeg b64 or None, image size, target, elements, description).
+    elements: {id: (AX element, role, label, actions)}; ids are only good until the next look.
+    No window, or one that's minimized or can't be captured, isn't a dead end: its controls (if any) and the
+    app's menus are still listed, and menus and media keys work without a window."""
     if running_app(pid) is None:
         raise ActionError(f"{name} quit. Start a new /act request.")
     win = _window(pid)
-    if win is None:
-        raise RetryableActionError(f"{name} has no open window. Open one (menu File > New, or a key), then look again.")
-    frame = _frame(win)
-    title = _short(_attr(win, "AXTitle"))
-    wid = _window_id(pid, frame, title)
+    minimized = bool(win is not None and _attr(win, "AXMinimized"))
+    frame = _frame(win) if win is not None else None
+    title = _short(_attr(win, "AXTitle")) if win is not None else ""
+    wid = _window_id(pid, frame, title) if frame and not minimized else None
     image = _capture(wid) if wid else None
-    if image is None or frame is None:
-        raise RetryableActionError(f"Couldn't see {name}'s window (minimized or on another space?). Look again.")
-    k = min(1.0, SEND_LONG_EDGE / max(image.size))
-    if k < 1:
-        image = image.resize((round(image.width * k), round(image.height * k)))
-    sx, sy = image.width / frame[2], image.height / frame[3]   # screen points -> image pixels
+    if image is not None:
+        k = min(1.0, SEND_LONG_EDGE / max(image.size))
+        if k < 1:
+            image = image.resize((round(image.width * k), round(image.height * k)))
+        sx, sy = image.width / frame[2], image.height / frame[3]   # screen points -> image pixels
+    else:
+        sx = sy = 1.0
+        frame = frame or (0, 0, 0, 0)
 
     elements, lines, visited = {}, [], 0
 
@@ -219,18 +222,65 @@ def look(bundle, name, pid):
                 elements[n] = (el, role, label or kind, acts, can_set)
         for child in _attr(el, "AXChildren") or []:
             visit(child, depth + 1)
-    visit(win, 0)
+    if win is not None:
+        visit(win, 0)
 
-    menus = [_short(_attr(item, "AXTitle")) for item in
-             (_attr(_attr(AX.AXUIElementCreateApplication(pid), "AXMenuBar"), "AXChildren") or [])][1:]  # skip Apple
-    buf = io.BytesIO()
-    image.convert("RGB").save(buf, format="JPEG", quality=80)
-    text = (f"App: {name} — window {title!r}, screenshot {image.width}x{image.height} px "
-            f"(element positions are in these pixels).\n"
-            f"Menus: {', '.join(m for m in menus if m)}\n"
-            f"Controls ({len(elements)}{'+' if len(elements) >= MAX_ELEMENTS else ''}):\n" + "\n".join(lines))
+    if image is not None:
+        state = (f"window {title!r}, screenshot {image.width}x{image.height} px "
+                 f"(control positions are in these pixels)")
+    elif win is None:
+        state = "no window open. Use its menus (or media for playback); a menu like File > New or Window may open one"
+    elif minimized:
+        state = f"window {title!r} is minimized: no screenshot, but its controls below can still be used"
+    else:
+        state = f"window {title!r} can't be captured (another desktop?): no screenshot, controls listed below"
+    jpeg = None
+    if image is not None:
+        buf = io.BytesIO()
+        image.convert("RGB").save(buf, format="JPEG", quality=80)
+        jpeg = base64.b64encode(buf.getvalue()).decode()
+    text = (f"App: {name} — {state}.\n"
+            f"Menus (items marked (off) are greyed out right now):\n{_menus(pid)}\n"
+            f"Controls ({len(elements)}{'+' if len(elements) >= MAX_ELEMENTS else ''}):\n"
+            + ("\n".join(lines) if lines else "(none)"))
     target = (bundle, pid, wid, frame, 0)
-    return base64.b64encode(buf.getvalue()).decode(), image.size, target, elements, text
+    return jpeg, image.size if image is not None else (0, 0), target, elements, text
+
+
+MENU_ITEMS = 25     # items listed per menu
+
+
+def _menus(pid):
+    """The app's menus and their items, one line per menu: "Playback: Play, Next, Previous (off), ..."."""
+    out = []
+    bar = _attr(AX.AXUIElementCreateApplication(pid), "AXMenuBar")
+    for top in (_attr(bar, "AXChildren") or [])[1:]:  # skip the Apple menu
+        title = _short(_attr(top, "AXTitle"))
+        items = []
+        for menu_el in _attr(top, "AXChildren") or []:
+            for it in _attr(menu_el, "AXChildren") or []:
+                t = str(_attr(it, "AXTitle") or "").strip()
+                if t:
+                    items.append(t + (" (off)" if _attr(it, "AXEnabled") is False else "")
+                                 + (" >" if _attr(it, "AXChildren") else ""))
+        if title:
+            out.append(f"  {title}: " + ", ".join(items[:MENU_ITEMS]) + (", ..." if len(items) > MENU_ITEMS else ""))
+    return "\n".join(out) or "  (none)"
+
+
+NX_KEYS = {"play_pause": 16, "next": 17, "previous": 18}   # NX_KEYTYPE_PLAY / NEXT / PREVIOUS
+
+
+def media(action):
+    """The keyboard's media keys: they go to whatever is playing (Spotify, Music, a video in a browser), with no
+    window, pointer or focus involved."""
+    if not Quartz.CGPreflightPostEventAccess():
+        raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+    key = NX_KEYS[action]
+    for flags in (0xA00, 0xB00):  # key down, key up
+        ev = AppKit.NSEvent.otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2_(
+            AppKit.NSEventTypeSystemDefined, (0, 0), flags, 0, 0, None, 8, (key << 16) | flags, -1)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev.CGEvent())
 
 
 # ---- acting

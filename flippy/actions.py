@@ -216,6 +216,9 @@ class DesktopTools:
             if (not isinstance(path, list) or not 1 <= len(path) <= 5
                     or any(not isinstance(t, str) or not 1 <= len(t) <= 80 for t in path)):
                 raise ActionError("Invalid menu path.")
+        elif name == "media":
+            if args["action"] not in ("play_pause", "next", "previous"):
+                raise ActionError("Unsupported media key.")
         elif name == "use_app":
             if not isinstance(args["name"], str) or not 1 <= len(args["name"]) <= 80 or "\0" in args["name"]:
                 raise ActionError("Invalid app name.")
@@ -329,6 +332,9 @@ BACKGROUND_CATALOG = {
              "schema": _schema({"text": {"type": "string", "minLength": 1, "maxLength": MAX_TEXT}})},
     "key": {"description": "Press a shortcut in the target app.",
             "schema": _schema({"combo": {"type": "string", "enum": list(APP_KEYS)}})},
+    "media": {"description": "The keyboard's media keys (play_pause, next, previous). They control whatever is "
+                             "playing, Spotify, Music or a video, without a window.",
+              "schema": _schema({"action": {"type": "string", "enum": ["play_pause", "next", "previous"]}})},
     "menu": {"description": 'Pick a menu item by its titles, e.g. ["File", "New Note"] or ["Format", "Font", "Bold"].',
              "schema": _schema({"path": {"type": "array", "minItems": 1, "maxItems": 5,
                                          "items": {"type": "string", "minLength": 1, "maxLength": 80}}})},
@@ -338,7 +344,8 @@ BACKGROUND_PROMPT = """\
 You are Flippy, doing a task for the user in one of their Mac apps. You work in the background: the user keeps
 using their computer while you work, so you never move their pointer or type into the app they're in.
 Start with look. It shows the target app's window and a numbered list of its controls (buttons, fields, rows...)
-with what you can do to each, plus its menus. Act on controls by their number: press, set_text, focus, then type
+with what you can do to each, plus its menus and their items. An app with no window, or a minimized one, is not a
+dead end: use its menus (Spotify's Playback > Next), media for playback, or a menu that opens a window. Act on controls by their number: press, set_text, focus, then type
 or key. Prefer menu for commands (File > New, Format > ...). use_app switches to (or opens) another app.
 Numbers are only valid for the latest look; every action returns a fresh look, so check it before going on.
 If something is "Not done", read why and choose differently. If the task is stopped, stop.
@@ -355,8 +362,8 @@ class AppFrame:
         self.jpeg, self.size, self.target, self.elements, self.text = jpeg, size, target, elements, text
 
     def content(self):
-        return [{"type": "text", "text": self.text},
-                {"type": "image", "data": self.jpeg, "mimeType": "image/jpeg"}]
+        text = [{"type": "text", "text": self.text}]
+        return text + ([{"type": "image", "data": self.jpeg, "mimeType": "image/jpeg"}] if self.jpeg else [])
 
     def describe(self, name, args):
         """What an approval card says it's about to do, in words ("press "Save""), plus the exact input."""
@@ -364,5 +371,6 @@ class AppFrame:
         line = {"press": f"press {what!r}", "focus": f"put the cursor in {what!r}",
                 "set_text": f"set the text of {what!r}", "type": "type text", "key": f"press {args.get('combo')}",
                 "menu": "choose " + " > ".join(args.get("path") or []),
-                "use_app": f"switch to {args.get('name')}"}.get(name, name)
+                "use_app": f"switch to {args.get('name')}",
+                "media": f"press the {str(args.get('action')).replace('_', '/')} media key"}.get(name, name)
         return f"{line}\n{approval_text(name, args)}"
