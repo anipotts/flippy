@@ -10,14 +10,14 @@ import subprocess
 import cairo
 from AppKit import (NSAlert, NSAlertFirstButtonReturn, NSApp, NSBackingStoreBuffered, NSEvent,
                     NSEventMaskKeyDown, NSScrollView, NSTabView, NSTabViewItem, NSWindow,
-                    NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskTitled)
+                    NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskTitled, NSTextField)
 from Foundation import NSMakeRect, NSObject
 
 from .. import pointers, settings, themes, updates
 from . import hotkeys, pointer_editor
 from .cairoview import cairo_view
 from .system import appearance
-from .widgets import Form, button, checkbox, label, popup, set_popup, slider
+from .widgets import Form, button, checkbox, label, popup, set_popup, slider, target
 
 MODELS = settings.options('claude', 'model')
 EFFORTS = settings.options('claude', 'effort')
@@ -118,7 +118,8 @@ class SettingsWindow:
         self.win.setReleasedWhenClosed_(False)
         self.win.center()
         tabs = NSTabView.alloc().initWithFrame_(NSMakeRect(0, 0, WIDTH, HEIGHT))
-        for title, form in (("Appearance", self._appearance(on_preview)), ("Claude", self._claude(on_reset)),
+        for title, form in (("Appearance", self._appearance(on_preview)), ("Models", self._claude(on_reset)),
+                            ("Actions", self._actions()),
                             ("Timing", self._timing(on_preview)), ("Hotkeys", self._hotkeys())):
             item = NSTabViewItem.alloc().initWithIdentifier_(title)
             item.setLabel_(title)
@@ -150,6 +151,8 @@ class SettingsWindow:
         if section == "look":
             for t in self.thumbs:
                 t.setNeedsDisplay_(True)
+        if section == "act" and key == "allowed_apps":
+            self._refresh_allowed_apps()
         if section == "keys":
             for r in self.recorders:
                 r.stop()
@@ -244,11 +247,22 @@ class SettingsWindow:
     def _claude(self, on_reset):
         f = Form(WIDTH - 40)
         self.keep.append(f)
-        f.group("Model", "Changes apply from your next question (it starts a fresh session).")
+        f.group("Connection", "Uses your signed-in subscription. Changing the connection starts a fresh session.")
+        f.row("Provider", None, self._setting_popup(f, "provider", "mode", settings.options("provider", "mode")))
+        f.group("Claude", "Model and effort apply when Claude is selected.")
         f.row("Model", None, self._setting_popup(f, "claude", "model", MODELS))
         f.row("Effort", "Higher thinks more carefully but answers slower", self._setting_popup(f, "claude", "effort", EFFORTS))
         f.row("Screenshot detail", "Sharper helps with tiny icons but uses more of your plan",
               self._setting_popup(f, "claude", "image", IMAGES))
+        f.group("Codex / ChatGPT", "Uses the Codex sign-in. Model and effort apply when Codex is selected.")
+        model = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 220, 26))
+        model.setStringValue_(settings.get("codex", "model"))
+        callback = target(self._codex_model_changed)
+        f.keep.append(callback)
+        model.setTarget_(callback)
+        model.setAction_("fire:")
+        f.row("Model", "default uses the account model; press Return to apply", model)
+        f.row("Effort", None, self._setting_popup(f, "codex", "effort", settings.options("codex", "effort")))
         f.group("Session")
         f.row("Start fresh session", "Forget the conversation so far", button("Reset", on_reset, f.keep))
         f.group("Updates", f"You have Flippy {updates.current_version()}.")
@@ -256,6 +270,42 @@ class SettingsWindow:
               checkbox("", settings.get("updates", "check"), lambda on: settings.set("updates", "check", on), f.keep))
         f.row("Check now", None, button("Check", lambda: self.command("update"), f.keep))
         return f
+
+    def _codex_model_changed(self, field):
+        try:
+            settings.set("codex", "model", field.stringValue().strip())
+        except ValueError:
+            field.setStringValue_(settings.get("codex", "model"))
+
+    def _actions(self):
+        f = Form(WIDTH - 40)
+        self.keep.append(f)
+        f.group("Desktop tasks", "Applies only to /act. Questions and walkthroughs remain tool-free.")
+        f.row("Approval", None, self._setting_popup(f, "act", "mode", settings.options("act", "mode")))
+        f.row("Ask once per app", "Approve an app when a task first needs it; remembered apps can be removed below.")
+        f.row("Act automatically", "Allows desktop input without an approval card. Stop the task to halt further input.")
+        f.row("Ask before every input", "Shows each proposed click, text entry, key, scroll or drag for approval.")
+        strict, automatic = settings.ACT_LIMITS["every_input"], settings.ACT_LIMITS["auto"]
+        f.row("Task bounds", f"Every input: {strict.max_actions} inputs, {strict.timeout_seconds // 60} minutes. "
+                            f"Other modes: {automatic.max_actions} inputs, {automatic.timeout_seconds // 60} minutes.")
+        f.group("Remembered apps", "Removing an app makes the next task ask again in Ask once per app mode.")
+        self.allowed_popup = popup([(None, "None yet")], None, lambda _v: None, f.keep, width=300)
+        f.row("App", None, self.allowed_popup)
+        self.remove_allowed_button = button("Remove selected app", self._remove_allowed_app, f.keep)
+        f.buttons(self.remove_allowed_button)
+        self._refresh_allowed_apps()
+        return f
+
+    def _refresh_allowed_apps(self):
+        apps = settings.get("act", "allowed_apps")
+        set_popup(self.allowed_popup, [(app, app) for app in apps] or [(None, "None yet")], apps[0] if apps else None)
+        self.remove_allowed_button.setEnabled_(bool(apps))
+
+    def _remove_allowed_app(self):
+        apps = self.allowed_popup.target().values
+        index = self.allowed_popup.indexOfSelectedItem()
+        if 0 <= index < len(apps) and apps[index] is not None:
+            settings.remove_allowed_app(apps[index])
 
     def _timing(self, on_preview):
         f = Form(WIDTH - 40)
@@ -289,7 +339,7 @@ class SettingsWindow:
               self._setting_popup(f, "keys", "pause", PAUSE_KEYS, width=170))
         f.group("Automation", "Lets scripts click and type with flippy-ask click / type / key (used for recording demos). "
                               "Off by default: when on, any program running as you can make Flippy click. "
-                              "Claude's answers never click. Also needs the Accessibility permission.")
+                              "This is separate from /act approvals. Also needs the Accessibility permission.")
         f.row("Let scripts click and type", None, checkbox("", settings.get("automation", "clicks"),
                                                   lambda on: settings.set("automation", "clicks", on), f.keep))
         f.group("In the question box")

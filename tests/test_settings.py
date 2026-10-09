@@ -4,6 +4,8 @@ import copy
 import contextlib
 import io
 import os
+import sys
+from types import SimpleNamespace
 import tempfile
 import tomllib
 from unittest.mock import patch
@@ -48,6 +50,80 @@ class TestSettings(unittest.TestCase):
         settings.set("onboarding", "done", True)
         settings.load()
         self.assertTrue(settings.get("onboarding", "done"))
+
+    def test_action_and_provider_defaults_are_explicit(self):
+        self.assertEqual(settings.get("provider", "mode"), "auto")
+        self.assertEqual(settings.get("act", "mode"), "per_app")
+        self.assertEqual(settings.get("act", "allowed_apps"), [])
+        self.assertEqual(settings.get("codex", "model"), "default")
+        self.assertEqual(settings.get("codex", "effort"), "medium")
+        for mode in ("per_app", "auto", "every_input"):
+            settings.set("act", "mode", mode)
+            self.assertEqual(settings.action_limits(), settings.ACT_LIMITS[mode])
+        strict = settings.ACT_LIMITS["every_input"]
+        for mode in ("per_app", "auto"):
+            limits = settings.ACT_LIMITS[mode]
+            self.assertGreater(limits.max_actions, strict.max_actions)
+            self.assertGreater(limits.max_text, strict.max_text)
+            self.assertGreater(limits.timeout_seconds, strict.timeout_seconds)
+            self.assertGreater(limits.max_turns, strict.max_turns)
+        with self.assertRaises(ValueError):
+            settings.set("act", "mode", "unknown")
+        with self.assertRaises(ValueError):
+            settings.set("provider", "mode", "api")
+
+    def test_allowed_apps_array_round_trip_and_revocation(self):
+        apps = ["com.apple.TextEdit", "org.mozilla.firefox"]
+        settings.set("act", "allowed_apps", apps)
+        apps.append("com.example.external-mutation")
+        exposed = settings.get("act", "allowed_apps")
+        exposed.append("com.example.get-mutation")
+        self.assertEqual(settings.get("act", "allowed_apps"), ["com.apple.TextEdit", "org.mozilla.firefox"])
+        settings.load()
+        self.assertEqual(settings.get_list("act", "allowed_apps"), {"com.apple.TextEdit", "org.mozilla.firefox"})
+        settings.remove_allowed_app("com.apple.TextEdit")
+        settings.load()
+        self.assertEqual(settings.get("act", "allowed_apps"), ["org.mozilla.firefox"])
+        settings.remove_allowed_app("not.in.list")
+        self.assertEqual(settings.get("act", "allowed_apps"), ["org.mozilla.firefox"])
+        settings.set_list("act", "allowed_apps", {"com.apple.TextEdit", "org.mozilla.firefox"})
+        self.assertEqual(settings.get("act", "allowed_apps"), ["com.apple.TextEdit", "org.mozilla.firefox"])
+
+    def test_allowed_apps_invalid_values_are_refused(self):
+        for value in ("com.apple.TextEdit", ["com.apple.TextEdit", "com.apple.TextEdit"],
+                      [""], ["*"], ["com.*"], ["single"], ["com.apple. TextEdit"],
+                      ["com.apple.\nTextEdit"], ["com.apple/evil"], ["com.apple.☃"],
+                      [True], [None], [["com.apple.TextEdit"]],
+                      ["com.example." + "a" * 256],
+                      [f"com.example.app{i}" for i in range(129)]):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    settings.set("act", "allowed_apps", value)
+        self.assertEqual(settings.get("act", "allowed_apps"), [])
+        self.assertEqual(settings.parse_value("act.allowed_apps", '["com.apple.TextEdit"]'), ["com.apple.TextEdit"])
+        for raw in ('[true]', '["com.*"]', 'not-an-array', '["com.a", "com.a"]'):
+            with self.assertRaises(ValueError):
+                settings.parse_value("act.allowed_apps", raw)
+
+    def test_permission_lists_cannot_be_mutated_through_listener(self):
+        settings.on_change(lambda _s, _k, value: value.append("com.example.unapproved") if isinstance(value, list) else None)
+        settings.set("act", "allowed_apps", ["com.apple.TextEdit"])
+        self.assertEqual(settings.get("act", "allowed_apps"), ["com.apple.TextEdit"])
+
+    def test_codex_model_and_effort_are_independent(self):
+        settings.set("codex", "model", "gpt-5.4")
+        settings.set("codex", "effort", "xhigh")
+        settings.set("provider", "mode", "codex")
+        settings.load()
+        self.assertEqual(settings.get("claude", "model"), "default")
+        self.assertEqual(settings.get("claude", "effort"), "low")
+        self.assertEqual(settings.get("codex", "model"), "gpt-5.4")
+        self.assertEqual(settings.get("codex", "effort"), "xhigh")
+        for value in ("", " model", "model\n", "model/key", "☃", "a" * 129):
+            with self.assertRaises(ValueError):
+                settings.set("codex", "model", value)
+        with self.assertRaises(ValueError):
+            settings.set("codex", "effort", "max")
 
     def test_all_defaults_valid_and_numeric_boundaries(self):
         for (section, key), spec in settings.SETTINGS.items():
@@ -152,6 +228,37 @@ class TestSettings(unittest.TestCase):
         for key, spec in settings.SETTINGS.items():
             if spec.choices:
                 self.assertEqual([v for v, _ in settings.options(*key)], settings.CHOICES[key])
+
+
+@unittest.skipUnless(sys.platform == "darwin", "macOS settings adapter")
+class TestNativePermissionRemoval(unittest.TestCase):
+    def test_selected_app_is_revoked_not_another_app(self):
+        from flippy.mac.settings_window import SettingsWindow
+        controller = SettingsWindow.__new__(SettingsWindow)
+        values = ["com.apple.TextEdit", "org.mozilla.firefox"]
+        controller.allowed_popup = SimpleNamespace(target=lambda: SimpleNamespace(values=values), indexOfSelectedItem=lambda: 1)
+        with patch("flippy.mac.settings_window.settings.remove_allowed_app") as remove:
+            controller._remove_allowed_app()
+        remove.assert_called_once_with("org.mozilla.firefox")
+
+    def test_empty_selection_does_not_revoke(self):
+        from flippy.mac.settings_window import SettingsWindow
+        controller = SettingsWindow.__new__(SettingsWindow)
+        controller.allowed_popup = SimpleNamespace(target=lambda: SimpleNamespace(values=[None]), indexOfSelectedItem=lambda: 0)
+        with patch("flippy.mac.settings_window.settings.remove_allowed_app") as remove:
+            controller._remove_allowed_app()
+        remove.assert_not_called()
+
+    def test_empty_permissions_disable_remove_and_show_placeholder(self):
+        from flippy.mac.settings_window import SettingsWindow
+        from unittest.mock import Mock
+        controller = SettingsWindow.__new__(SettingsWindow)
+        controller.allowed_popup = object()
+        controller.remove_allowed_button = Mock()
+        with patch("flippy.mac.settings_window.settings.get", return_value=[]), patch("flippy.mac.settings_window.set_popup") as fill:
+            controller._refresh_allowed_apps()
+        fill.assert_called_once_with(controller.allowed_popup, [(None, "None yet")], None)
+        controller.remove_allowed_button.setEnabled_.assert_called_once_with(False)
 
 
 if __name__ == "__main__":
