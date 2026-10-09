@@ -130,10 +130,9 @@ class SetupWindow:
         style.rule(b, 88, WIDTH - 48)
 
         style.section(b, 1, "Connect", "Use the subscription you've already got.", 100, WIDTH)
-        self._provider_card("claude", "Claude", "Via Claude Code", "claude.png", 24, 142,
-                            "Connect", open_login_terminal)
-        self._provider_card("codex", "ChatGPT", "Via Codex · not ready yet", "openai.png", 286, 142,
-                            "Sign in…", open_codex_login)
+        self.cards = {}
+        self._provider_card("claude", "Claude", "claude.png", 24, 148, open_login_terminal)  # centered in its row
+        self._provider_card("codex", "ChatGPT", "openai.png", 286, 148, open_codex_login)
         style.text(b, "Use", 24, 222, 130, 12, bold=True)
         style.text(b, "Auto picks the only connected subscription.", 24, 240, 265, 10, muted=True)
         self.provider_choice = popup(settings.options("provider", "mode"), settings.get("provider", "mode"),
@@ -244,22 +243,44 @@ class SetupWindow:
         self._refresh()
         self.poll_id = loop.timeout_add(1000, lambda: self._refresh() or True)
 
-    def _provider_card(self, key, title, subtitle, asset, x, y, caption, callback):
-        card = style.card(250, 66)
+    CARD_W, CARD_PAD = 250, 14
+    CARD_H = 26 + 2 * CARD_PAD  # the button plus the same padding as the sides
+
+    def _provider_card(self, key, title, asset, x, y, callback):
+        card = style.card(self.CARD_W, self.CARD_H)
         style.place(self.body, card, x, y)
         image = NSImage.alloc().initWithContentsOfFile_(os.path.join(os.path.dirname(__file__), "assets", asset))
-        logo = NSImageView.alloc().initWithFrame_(NSMakeRect(14, 20, 30, 30))
+        logo = NSImageView.alloc().initWithFrame_(NSMakeRect(0, 0, 30, 30))
         logo.setImage_(image)
         logo.setAccessibilityLabel_(title + " logo")
-        style.place(card, logo, 14, 18)
-        style.text(card, title, 54, 13, 106, 12, bold=True)
-        self.marks[key] = style.text(card, subtitle, 54, 32, 114, 10, muted=True)
-        action = style.button(caption, callback, self.keep, primary=key == "claude")
-        if key == "claude":
-            action.setKeyEquivalent_("")
+        style.place(card, logo, self.CARD_PAD, (self.CARD_H - 30) / 2)
+        name = style.text(card, title, 0, 0, 100, 12, bold=True)
+        self.marks[key] = style.text(card, "", 0, 0, 100, 10, muted=True)
+        action = style.button("Log in…", callback, self.keep)
         action.setAccessibilityLabel_("Connect " + title)
-        style.place(card, action, 172, 20, 68, 26)
+        card.addSubview_(action)
         self.provider_buttons[key] = action
+        self.cards[key] = (name, self.marks[key], action)
+
+    def _layout_card(self, key, status, caption):
+        """Same padding on every side; the logo, the name and status, and the button centered top to bottom."""
+        name, mark, action = self.cards[key]
+        W, H, P = self.CARD_W, self.CARD_H, self.CARD_PAD
+        if str(action.title()) != caption:
+            action.setTitle_(caption)
+        action.sizeToFit()
+        bw, bh = action.frame().size.width + 16, 26
+        action.setFrame_(NSMakeRect(W - P - bw, (H - bh) / 2, bw, bh))
+        mark.setStringValue_(status)
+        tx = P + 30 + 12
+        tw = W - P - bw - 10 - tx
+        for label in (name, mark):
+            label.setPreferredMaxLayoutWidth_(tw)
+            label.setFrameSize_((tw, label.fittingSize().height))
+        nh, mh = name.frame().size.height, mark.frame().size.height
+        top = (H - (nh + 2 + mh)) / 2
+        name.setFrameOrigin_((tx, top))
+        mark.setFrameOrigin_((tx, top + nh + 2))
 
     def _permission_row(self, key, icon_name, title, subtitle, y, callback):
         mark = style.symbol("circle", title + " permission not enabled", 15)
@@ -297,9 +318,8 @@ class SetupWindow:
         from ..providers import CONNECTION_STATUS
         claude = claude_logged_in()
         codex = CONNECTION_STATUS["codex"] is True
-        self.marks['claude'].setStringValue_("Connected" if claude else "Via Claude Code")
-        self.marks['codex'].setStringValue_("Login found · not ready" if codex else "Via Codex · not ready yet")
-        self.provider_buttons['claude'].setTitle_("Log in…" if claude else "Connect")
+        self._layout_card("claude", "Connected" if claude else "Not connected", "Reconnect…" if claude else "Log in…")
+        self._layout_card("codex", "Connected" if codex else "Not connected", "Reconnect…" if codex else "Sign in…")
         for key, ok in (("screen", screen_ok()), ("accessibility", hotkeys.accessibility_trusted())):
             mark = self.marks[key]
             mark.setImage_(NSImage.imageWithSystemSymbolName_accessibilityDescription_(

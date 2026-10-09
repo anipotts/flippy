@@ -59,18 +59,18 @@ class TestSetupRedesign(unittest.TestCase):
             yield child
             yield from self.descendants(child)
 
-    def test_provider_choice_is_one_validated_write_and_login_is_not_inference(self):
+    def test_provider_choice_is_one_validated_write_and_cards_show_the_connection(self):
         window = self.build()
         popup = window.provider_choice
         popup.selectItemAtIndex_(popup.target().values.index('codex'))
         self.click(popup)
         self.write.assert_called_once_with('provider', 'mode', 'codex')
-        self.assertIn('not ready', window.marks['codex'].stringValue())
-        self.assertIn('Login found', window.marks['codex'].stringValue())
+        self.assertEqual(window.marks['codex'].stringValue(), 'Connected')
+        self.assertEqual(window.provider_buttons['codex'].title(), 'Reconnect…')
         self.state['codex'] = False
         window._refresh()
-        self.assertIn('not ready', window.marks['codex'].stringValue())
-        self.assertNotIn('Login found', window.marks['codex'].stringValue())
+        self.assertEqual(window.marks['codex'].stringValue(), 'Not connected')
+        self.assertEqual(window.provider_buttons['codex'].title(), 'Sign in…')
 
     def test_live_permission_marks_update_accessible_status(self):
         window = self.build()
