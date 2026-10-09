@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import Mock
 
@@ -42,7 +43,7 @@ def controller(queue):
     names = ('_owns', '_run_request', '_action_main', '_capture_frame', '_unlink',
              '_action_perform', '_on_answer', '_begin_request', '_schedule_fade', '_action_approve')
     ns = {'asyncio': asyncio, 'loop': queue, 'Request': Request, 'ActionError': ActionError, 'approval_text': lambda *args: 'proposal',
-          'os': __import__('os'), 'prepare_frame': Mock(), 'settings': SimpleNamespace(get=lambda *args: 1920),
+          'time': time, 'event': Mock(), 'os': __import__('os'), 'prepare_frame': Mock(), 'settings': SimpleNamespace(get=lambda *args: 1920),
           '_friendly_error': Mock(return_value='sanitized')}
     for n in cls.body:
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in names:
@@ -111,7 +112,7 @@ class TestLifecycle(unittest.IsolatedAsyncioTestCase):
             finally:
                 await cleanup.wait()
         fut=f._run_request(req,work(),done)
-        await started.wait()
+        await asyncio.wait_for(started.wait(),1)
         req.cancel(q.source_remove)
         await self.spin(q)
         self.assertTrue(f.busy)
