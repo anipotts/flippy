@@ -6,7 +6,10 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-VERSION="$(cat VERSION)"
+[ -z "$(git status --porcelain)" ] || { echo "package requires a clean committed tree (including untracked files)" >&2; exit 1; }
+REVISION="$(git rev-parse HEAD)"
+VERSION="$(git show "$REVISION:VERSION")"
+[[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}([a-zA-Z0-9.-]*)?$ ]] || { echo "invalid VERSION" >&2; exit 1; }
 OUT="$ROOT/dist"
 mkdir -p "$OUT"
 COMMON=(':!tests' ':!scripts/release.sh' ':!scripts/package.sh' ':!.gitignore')
@@ -19,10 +22,24 @@ build() {  # build <platform> <paths of the other platform...>
     local excludes=("${COMMON[@]}")
     for p in "$@"; do excludes+=(":!$p"); done
     tmp="$(mktemp -d)"
-    git archive --format=tar --prefix="$name/" HEAD -- . "${excludes[@]}" | tar -x -C "$tmp"
+    trap 'rm -rf "$tmp"' RETURN
+    git archive --format=tar --prefix="$name/" "$REVISION" -- . "${excludes[@]}" | tar -x -C "$tmp"
     echo "$plat" > "$tmp/$name/PACKAGE"
+    echo "$REVISION" > "$tmp/$name/REVISION"
+    test -f "$tmp/$name/flippy/daemon.py"
+    test -f "$tmp/$name/bin/flippy-daemon"
+    test -f "$tmp/$name/install.sh"
+    if [ "$plat" = macos ]; then
+        test -f "$tmp/$name/packaging/macos/Launcher.swift"
+        test -f "$tmp/$name/requirements-mac.txt"
+        test ! -d "$tmp/$name/flippy/linux"
+    else
+        test -f "$tmp/$name/requirements-linux.txt"
+        test ! -d "$tmp/$name/flippy/mac"
+    fi
     tar -czf "$OUT/$name.tar.gz" -C "$tmp" "$name"
     rm -rf "$tmp"
+    trap - RETURN
     echo "$OUT/$name.tar.gz"
 }
 build macos "${LINUX_ONLY[@]}"
