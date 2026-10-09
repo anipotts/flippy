@@ -46,6 +46,9 @@ class BrainError(Exception):
     pass
 
 
+NO_TRANSCRIPTS = {"no-session-persistence": None}
+
+
 class Brain:
     def __init__(self):
         # Never bill the API: the SDK picks up ANTHROPIC_API_KEY if it's set.
@@ -62,11 +65,15 @@ class Brain:
             model=ENV_MODEL,
             effort=ENV_EFFORT or "low",
             cwd=os.path.expanduser("~"),
+            extra_args=dict(NO_TRANSCRIPTS),
         )
         self.client: ClaudeSDKClient | None = None
         self.dirty = False  # options changed; next question starts a fresh session
         self.last_model = None
         self._lock = asyncio.Lock()
+        self.history = []
+        self.replay_context = False
+        self.partial = ""
 
     def configure(self, model: str | None, effort: str):
         """None model = the account's default. Applies on the next (fresh) session."""
@@ -101,6 +108,8 @@ class Brain:
     async def reset(self):
         async with self._lock:
             await self._stop()
+            self.history.clear()
+            self.replay_context = False
             await self._start()
 
     async def act(self, question, desktop):
@@ -110,7 +119,7 @@ class Brain:
         The local handlers enforce approval even though MCP tools are allowed here.
         """
         from .actions import PROMPT, TOOL_CATALOG
-        opts = replace(self.options, system_prompt=PROMPT, max_turns=16,
+        opts = replace(self.options, system_prompt=PROMPT, max_turns=getattr(desktop, "max_turns", 16),
                        include_partial_messages=False, mcp_servers={"desktop": desktop.server()},
                        allowed_tools=[f"mcp__desktop__{name}" for name in TOOL_CATALOG])
         async with ClaudeSDKClient(options=opts) as client:
@@ -139,7 +148,8 @@ class Brain:
         """One text-only call, outside the conversation: n tips for app_name. skip: tips they already have."""
         opts = ClaudeAgentOptions(system_prompt=TIPS_PROMPT, tools=[], allowed_tools=[], mcp_servers={},
                                   strict_mcp_config=True, setting_sources=[], max_turns=1,
-                                  model=self.options.model, effort="low", cwd=os.path.expanduser("~"))
+                                  model=self.options.model, effort="low", cwd=os.path.expanduser("~"),
+                                  extra_args=dict(NO_TRANSCRIPTS))
         ask = f"App: {app_name}\n"
         if goal:
             ask += f"What they want to do: {goal}\n"
@@ -177,9 +187,19 @@ class Brain:
                 await self._stop()
             if self.client is None:
                 await self._start()
+            if self.replay_context and self.history:
+                context = "\n".join(f"User: {q}\nFlippy: {a}" for q, a in self.history)
+                content.insert(0, {"type": "text", "text": "Earlier conversation, retained in memory after interruption:\n" + context})
+                self.replay_context = False
+            self.partial = ""
             try:
-                return await self._reply(content, on_text)
-            except BaseException:
+                reply = await self._reply(content, on_text)
+                self._remember(question, reply)
+                return reply
+            except BaseException as error:
+                if isinstance(error, asyncio.CancelledError):
+                    self._remember(question, self.partial + " [Reply interrupted by user.]")
+                    self.replay_context = True
                 # Reset cannot race this turn. Do not leave partial context alive.
                 cleanup = asyncio.create_task(self._stop())
                 try:
@@ -187,6 +207,11 @@ class Brain:
                 except asyncio.CancelledError:
                     await cleanup
                 raise
+
+    def _remember(self, question, reply):
+        self.history.append((question[:6000], reply[:12000]))
+        while len(self.history) > 12 or sum(len(q) + len(a) for q, a in self.history) > 24000:
+            self.history.pop(0)
 
     async def _reply(self, content, on_text):
         async def messages():
@@ -198,8 +223,11 @@ class Brain:
         async for msg in self.client.receive_response():
             if isinstance(msg, StreamEvent):
                 ev = msg.event
-                if on_text and ev.get("type") == "content_block_delta" and ev.get("delta", {}).get("type") == "text_delta":
-                    on_text(ev["delta"]["text"])
+                if ev.get("type") == "content_block_delta" and ev.get("delta", {}).get("type") == "text_delta":
+                    delta = ev["delta"]["text"]
+                    self.partial = (self.partial + delta)[-12000:]
+                    if on_text:
+                        on_text(delta)
             elif isinstance(msg, AssistantMessage):
                 self.last_model = msg.model
                 if getattr(msg, "error", None):
