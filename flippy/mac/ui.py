@@ -1054,14 +1054,21 @@ class Platform:
     def action_state(self):
         """Identity and geometry of the foreground target. One display, like the tutor."""
         from ..actions import ActionError
-        if len(NSScreen.screens()) != 1:
+        screens = NSScreen.screens()
+        if len(screens) != 1:
             raise ActionError("Desktop tasks currently require a single display.")
         app, _, pid = sensors.frontmost()
         if pid is None or pid == os.getpid():
             raise ActionError("Put the app you want to use in front, then start /act again.")
         window = sensors.front_window(pid)
         bounds = next((bounds for wid, bounds in sensors.windows(pid) if wid == window), None)
-        return app, pid, window, bounds, self.screen_size()
+        if window is None or bounds is None:
+            raise ActionError("Could not identify the foreground window. Start a new /act request.")
+        try:
+            display = int(screens[0].deviceDescription()["NSScreenNumber"])
+        except (KeyError, TypeError, ValueError):
+            raise ActionError("Could not identify the display. Start a new /act request.") from None
+        return app, pid, window, bounds, (display, self.screen_size())
 
     def action_input(self, name, args, shot, cancel):
         """An approved action. Recheck focus after approval and throughout typing."""
