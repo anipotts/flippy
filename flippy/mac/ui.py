@@ -1136,13 +1136,19 @@ class Platform:
             win = ax._window(pid)
             if win is not None:
                 ax.AX.AXUIElementPerformAction(win, "AXRaise")
-            for _ in range(30):  # up to 1.5 s for it to come in front
-                if AppKit.NSWorkspace.sharedWorkspace().frontmostApplication().processIdentifier() == pid:
+            # Up to 1.5 s for the app to come in front and its window to be the one at that spot: window order
+            # lags activation, and checking once refused clicks that would have landed.
+            for i in range(30):
+                front = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication().processIdentifier() == pid
+                if front and self._window_owner_at(x, y) == pid:
                     break
+                if i % 10 == 9 and win is not None:
+                    ax.AX.AXUIElementPerformAction(win, "AXRaise")
                 time.sleep(0.05)
-            if self._window_owner_at(x, y) != pid:
-                raise RetryableActionError("Something else is on top of that spot, so Flippy didn't click it. "
-                                           "Look again.")
+            else:
+                raise RetryableActionError("Another window still covered that spot after Flippy brought the app "
+                                           "forward, so it didn't click. Look again and retry, or use a control, "
+                                           "menu or key instead.")
             if idle() < 0.3:  # they picked the mouse back up while the app was coming forward
                 raise RetryableActionError("The user started working again, so Flippy gave the pointer back. "
                                            "Try again later in the task.")
