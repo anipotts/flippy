@@ -71,6 +71,14 @@ class TestLifecycle(unittest.IsolatedAsyncioTestCase):
             queue.flush()
             await asyncio.sleep(0)
 
+    async def test_new_request_stops_owned_video_recording(self):
+        q=MainQueue(); f,_=controller(q)
+        f.video=SimpleNamespace(recording=True,cancel=Mock())
+        owner=f._begin_request('tutor')
+        f.video.cancel.assert_called_once()
+        self.assertIs(f.request,owner)
+        self.assertTrue(f.busy)
+
     async def test_stale_answer_cannot_clear_or_fail_new_request(self):
         q=MainQueue(); f,_=controller(q)
         old=f.request; f.request=Request(2,'tutor')
