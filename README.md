@@ -45,6 +45,8 @@ Needs [Homebrew](https://brew.sh) (for cairo) and the Xcode Command Line Tools (
 3. **Hotkeys:** `⇧⌘Space` asks, `⌃⇧Space` circles, `⌃⌥V` records a video edit to check, and double-tapping `⌘` pauses or resumes a walkthrough. Change them in Settings → Hotkeys.
 4. Optionally, **open at login**.
 
+Then a one-minute tour shows you each thing (ask, pause, skip and speed, follow along, circle, video review) and waits for you to try it, ending in Settings. Replay it from the menu (**Take the tour**) or with `flippy-ask tour`.
+
 Reopen the setup any time from the menu bar icon → Setup…
 
 Flippy.app is signed ad hoc (not notarized), so rebuilding it can make macOS ask for Screen Recording again.
