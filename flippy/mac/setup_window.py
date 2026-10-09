@@ -61,7 +61,8 @@ def open_codex_login():
     # The owner completes Codex's native browser flow; Flippy never handles tokens.
     import shutil
     import shlex
-    cli = shutil.which("codex")
+    from ..codex_provider import codex_executable
+    cli = codex_executable()  # not only PATH: apps get a minimal one
     if not cli:
         subprocess.Popen(["open", "https://developers.openai.com/codex/cli/"])
         return

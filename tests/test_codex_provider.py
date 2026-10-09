@@ -177,6 +177,18 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
             await self.provider.ask("q", "image", (100, 100))
         self.assertFalse(self.rpc.turns)
 
+    def test_codex_is_found_outside_the_minimal_app_path(self):
+        # apps opened from the Dock get PATH=/usr/bin:/bin:/usr/sbin:/sbin; Homebrew's codex isn't on it
+        from flippy import codex_provider
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = os.path.join(tmp, "codex")
+            with open(fake, "w") as f:
+                f.write("#!/bin/sh\n")
+            os.chmod(fake, 0o755)
+            with patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}), patch.object(codex_provider, "CODEX_DIRS", (tmp,)):
+                self.assertEqual(codex_provider.codex_executable(), fake)
+                self.assertTrue(codex_provider.child_environment()["PATH"].startswith(tmp))
+
     def test_newer_codex_versions_are_accepted(self):
         self.assertTrue(_new_enough("codex-cli 0.153.4"))
         self.assertTrue(_new_enough("codex-cli 0.159.2"))
@@ -415,7 +427,10 @@ class TestEnvironment(unittest.TestCase):
              "OPENAI_API_KEY": "fixture", "CODEX_API_KEY": "fixture", "CODEX_HOME": "/other/login",
              "OPENAI_BASE_URL": "https://example.invalid", "HTTPS_PROXY": "fixture",
              "ANTHROPIC_API_KEY": "fixture", "NODE_OPTIONS": "fixture"}, clear=True):
-            self.assertEqual(child_environment(), {"HOME": "/fixture/home", "PATH": "/fixture/bin"})
+            env = child_environment()
+            self.assertEqual(set(env), {"HOME", "PATH"})   # no keys, proxies, CODEX_HOME or base URLs
+            self.assertEqual(env["HOME"], "/fixture/home")
+            self.assertIn("/fixture/bin", env["PATH"].split(os.pathsep))  # the user's PATH, plus Codex's install dirs
         self.assertEqual(SAFE_CONFIG["history.persistence"], "none")
         self.assertEqual(SAFE_CONFIG["model_provider"], "openai")
         self.assertFalse(SAFE_CONFIG["features.shell_tool"])

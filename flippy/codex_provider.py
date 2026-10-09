@@ -64,10 +64,30 @@ class CodexSignInRequired(CodexError):
     pass
 
 
+# Apps opened from the Dock or Finder get PATH=/usr/bin:/bin:/usr/sbin:/sbin, not the terminal's, so a Codex
+# installed with Homebrew or npm isn't on it: Flippy said "Connect Codex" while it was signed in.
+CODEX_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/.local/bin"),
+              os.path.expanduser("~/.npm-global/bin"), os.path.expanduser("~/.volta/bin"), os.path.expanduser("~/.bun/bin"))
+
+
+def codex_executable():
+    """The codex command: on PATH, or in the usual install places."""
+    return shutil.which("codex") or shutil.which("codex", path=os.pathsep.join(CODEX_DIRS))
+
+
+def _search_path():
+    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep) if d]
+    found = codex_executable()
+    extra = ([os.path.dirname(found)] if found else []) + list(CODEX_DIRS[:2])  # an npm-installed Codex needs node
+    return os.pathsep.join(dict.fromkeys(extra + dirs))
+
+
 def child_environment():
     """Reuse Codex's own login without inheriting API keys, proxies or providers."""
-    keys = ("HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL")
-    return {key: os.environ[key] for key in keys if key in os.environ}
+    keys = ("HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL")
+    env = {key: os.environ[key] for key in keys if key in os.environ}
+    env["PATH"] = _search_path()
+    return env
 
 
 def _config_args(config):
@@ -78,7 +98,7 @@ def _config_args(config):
 
 async def _cli_logged_in():
     """A status-only fallback, distinct from a working app-server connection."""
-    executable = shutil.which("codex")
+    executable = codex_executable()
     if not executable:
         return False
     process = None
@@ -113,7 +133,7 @@ class _RPC:
 
     @classmethod
     async def launch(cls, config):
-        executable = shutil.which("codex")
+        executable = codex_executable()
         if not executable:
             raise CodexError("Install Codex and sign in with ChatGPT to use it in Flippy.")
         directory = tempfile.TemporaryDirectory(prefix="flippy-codex-")

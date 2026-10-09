@@ -55,7 +55,8 @@ def open_login_terminal():
 
 
 def open_codex_login():
-    cli = shutil.which("codex")
+    from ..codex_provider import codex_executable
+    cli = codex_executable()  # not only PATH: apps get a minimal one
     if not cli:
         subprocess.Popen(["xdg-open", "https://developers.openai.com/codex/cli/"])
         return False
