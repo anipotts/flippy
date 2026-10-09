@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Flippy disposable browser fixture</title>
+<style>
+body { font: 18px system-ui; margin: 24px; background: white; }
+input, button { font: inherit; margin: 6px; }
+#pane { overflow: scroll; width: 650px; height: 350px; border: 3px solid navy; }
+#world { position: relative; width: 1300px; height: 1000px; background: #eee; }
+#tile { position: absolute; left: 80px; top: 80px; width: 90px; height: 90px;
+background: royalblue; color: white; touch-action: none; user-select: none; }
+#target { position: absolute; left: 350px; top: 160px; width: 140px; height: 140px;
+border: 3px dashed green; }
+</style>
+<h1>Disposable action fixture</h1>
+<input placeholder="Type fixture text" aria-label="Fixture text">
+<button id="click">Click counter: 0</button>
+<button id="change">Change pixels for stale approval</button>
+<pre id="status"></pre>
+<div id="pane"><div id="world"><div id="tile">Drag me</div><div id="target">Drop area</div></div></div>
+<p>Outside pane sentinel: the page should stay still when scrolling inside the pane.</p>
+<script>
+'use strict';
+const pane = document.querySelector('#pane'), tile = document.querySelector('#tile');
+const status = document.querySelector('#status'), world = document.querySelector('#world');
+const counts = {click: 0, wheel: 0, down: 0, move: 0, up: 0, drop: 0};
+let offset = null, mods = '', changed = false;
+function show() {
+ status.textContent = JSON.stringify({...counts, scrollX: pane.scrollLeft,
+ scrollY: pane.scrollTop, modifiers: mods, tileX: tile.offsetLeft, tileY: tile.offsetTop}, null, 2);
+}
+document.querySelector('#click').onclick = e => { e.target.textContent = `Click counter: ${++counts.click}`; show(); };
+document.querySelector('#change').onclick = () => { changed = !changed; world.style.background = changed ? '#ffc' : '#eee'; };
+pane.addEventListener('wheel', () => { counts.wheel++; show(); });
+pane.addEventListener('scroll', show);
+tile.addEventListener('pointerdown', e => {
+ counts.down++; offset = [e.offsetX, e.offsetY]; tile.setPointerCapture(e.pointerId); show();
+});
+tile.addEventListener('pointermove', e => {
+ if (!offset) return;
+ counts.move++; const r = world.getBoundingClientRect();
+ tile.style.left = `${e.clientX - r.left - offset[0]}px`;
+ tile.style.top = `${e.clientY - r.top - offset[1]}px`;
+ mods = ['ctrl','shift','alt','meta'].filter(k => e[k+'Key']).join('+'); show();
+});
+tile.addEventListener('pointerup', e => {
+ counts.up++; offset = null; tile.releasePointerCapture(e.pointerId);
+ const a = tile.getBoundingClientRect(), b = document.querySelector('#target').getBoundingClientRect();
+ if (a.left >= b.left && a.top >= b.top && a.right <= b.right && a.bottom <= b.bottom) counts.drop++;
+ show();
+});
+tile.addEventListener('pointercancel', () => { offset = null; show(); });
+show();
+</script>
