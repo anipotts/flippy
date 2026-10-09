@@ -82,3 +82,25 @@ class TestProviders(unittest.IsolatedAsyncioTestCase):
             await task
         self.assertEqual(self.brain.selected, 'codex')
         self.brain.providers['claude'].start.assert_not_called()
+
+
+class ClaudeAvailable(unittest.IsolatedAsyncioTestCase):
+    """A missing or broken Claude install reads as "not connected" instead of failing the check."""
+
+    async def test_no_sdk(self):
+        import builtins
+        from flippy import providers
+        real = builtins.__import__
+
+        def no_sdk(name, *args, **kwargs):
+            if name == "claude_agent_sdk":
+                raise ImportError(name)
+            return real(name, *args, **kwargs)
+        with patch("builtins.__import__", no_sdk):
+            self.assertFalse(await providers.claude_available())
+
+    async def test_cli_that_cant_run(self):
+        from flippy import providers
+        with patch("flippy.providers.os.path.isfile", return_value=True), \
+                patch("flippy.providers.asyncio.create_subprocess_exec", AsyncMock(side_effect=PermissionError())):
+            self.assertFalse(await providers.claude_available())

@@ -23,14 +23,22 @@ def setup_ready():
 
 
 async def claude_available():
-    from claude_agent_sdk import __file__ as sdk_file
+    """Signed in to Claude Code with a claude.ai subscription? A missing or broken install is "not connected"."""
+    try:
+        from claude_agent_sdk import __file__ as sdk_file
+    except ImportError:
+        return False
     bundled = os.path.join(os.path.dirname(sdk_file), "_bundled", "claude")
     cli = bundled if os.path.isfile(bundled) else shutil.which("claude")
     if not cli:
         return False
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-    process = await asyncio.create_subprocess_exec(cli, "auth", "status", env=env,
-                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    try:
+        process = await asyncio.create_subprocess_exec(cli, "auth", "status", env=env,
+                                                     stdout=asyncio.subprocess.PIPE,
+                                                     stderr=asyncio.subprocess.DEVNULL)
+    except OSError:  # not executable, wrong architecture, vanished...
+        return False
     try:
         output, _ = await asyncio.wait_for(process.communicate(), 10)
         status = json.loads(output)
