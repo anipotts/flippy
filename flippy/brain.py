@@ -126,7 +126,9 @@ class Brain:
         """
         from .actions import PROMPT, TOOL_CATALOG
         names = list(desktop.catalog()) if hasattr(desktop, "catalog") else list(TOOL_CATALOG)
-        opts = replace(self.options, system_prompt=getattr(desktop, "prompt", PROMPT),
+        # Tasks need planning: at least medium effort, even when quick answers run at low.
+        effort = self.options.effort if self.options.effort in ("high", "max") else "medium"
+        opts = replace(self.options, system_prompt=getattr(desktop, "prompt", PROMPT), effort=effort,
                        max_turns=getattr(desktop, "max_turns", 16),
                        include_partial_messages=False, mcp_servers={"desktop": desktop.server()},
                        allowed_tools=[f"mcp__desktop__{name}" for name in names])

@@ -488,8 +488,14 @@ class Flippy:
 
     def _acting(self, req, operation=None):
         if self._owns(req):
-            stop = self.ui.key_label("ask") if hasattr(self.ui, "key_label") else "ask hotkey"
-            self.overlay.show_text(f"Flippy is acting{': ' + operation if operation else ''} · {stop} to stop")
+            self.overlay.show_text(f"Flippy is acting{': ' + operation if operation else ''} · {self._stop_hint()} to stop")
+
+    def _stop_hint(self):
+        """How to stop a desktop task, in words: the answer card's fonts have no ⌘ ⇧ ⌥ ⌃ glyphs."""
+        label = self.ui.key_label("pause") if hasattr(self.ui, "key_label") else None
+        if not label:  # pause shortcut off: the ask hotkey stops it too
+            label = self.ui.key_label("ask") if hasattr(self.ui, "key_label") else None
+        return plain_keys(label or "the pause shortcut")
 
     async def _capture_frame(self, req, keep_marks=False, targeted=False):
         # Opening an app can change its window during capture. Retry capture only,
@@ -999,7 +1005,13 @@ class Flippy:
             self._goto(min(int(frac * len(known)), len(known) - 1))
 
     def pause_toggle(self):
-        """Pause or resume the answer playing on screen; nothing if there isn't one (or it already finished)."""
+        """Pause or resume the answer playing on screen; nothing if there isn't one (or it already finished).
+        During a desktop task (/act) the same gesture (double-tap ⌘, or the pause shortcut) stops the task."""
+        if getattr(self, "action_tools", None):
+            log("act: stopped with the pause gesture")
+            event("control", control="stop")
+            self.dismiss()
+            return
         pl = self.play
         if pl is None or pl["finished"]:
             return
@@ -1607,6 +1619,16 @@ TUTORIAL_RE = re.compile(r"\b(how (do|can|would|should|to) (i|you|we)|how to|wal
 DO_RE = re.compile(r"^(?:(?:ok|okay|now|then|next|and|also|cool|nice)[,!]?\s+)*(?:let'?s\s+|can you\s+)?"
                    r"(?:add|make|create|put|record|build|insert|set up|turn (?:on|up|down|off)|open|change|switch|"
                    r"start|bring in|layer)\b")
+
+
+KEY_WORDS = (("⌘", "Cmd "), ("⇧", "Shift "), ("⌥", "Option "), ("⌃", "Ctrl "))
+
+
+def plain_keys(label):
+    """"double-tap ⌘" -> "double-tap Cmd", "⇧⌘Space" -> "Shift Cmd Space": for text drawn in fonts without the symbols."""
+    for sym, word in KEY_WORDS:
+        label = label.replace(sym, word)
+    return " ".join(label.split())
 
 
 def wants_tutorial(question):

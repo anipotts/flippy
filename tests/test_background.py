@@ -142,3 +142,45 @@ class Describe(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StopAndWording(unittest.TestCase):
+    def test_the_pause_gesture_stops_a_desktop_task(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        from flippy import daemon
+        f = SimpleNamespace(action_tools=object(), dismiss=Mock(), play=None)
+        with patch.object(daemon, "event"), patch.object(daemon, "log"):
+            daemon.Flippy.pause_toggle(f)
+        f.dismiss.assert_called_once()
+
+    def test_the_stop_hint_is_in_words(self):
+        from types import SimpleNamespace
+        from flippy import daemon
+        f = SimpleNamespace(ui=SimpleNamespace(key_label=lambda name: {"pause": "double-tap ⌘"}[name]))
+        self.assertEqual(daemon.Flippy._stop_hint(f), "double-tap Cmd")
+        f = SimpleNamespace(ui=SimpleNamespace(key_label=lambda name: None if name == "pause" else "⇧⌘Space"))
+        self.assertEqual(daemon.Flippy._stop_hint(f), "Shift Cmd Space")  # pause off: the ask hotkey
+
+    def test_tasks_run_at_medium_effort_or_more(self):
+        import asyncio
+        from unittest.mock import patch
+        from flippy import brain
+        seen = {}
+
+        class Client:
+            def __init__(self, options):
+                seen["effort"] = options.effort
+
+            async def __aenter__(self):
+                raise RuntimeError("stop")
+
+            async def __aexit__(self, *a):
+                return False
+        b = brain.Brain()
+        tools = DesktopTools(None, None, None, catalog=BACKGROUND_CATALOG, prompt=BACKGROUND_PROMPT)
+        for setting, expected in (("low", "medium"), ("medium", "medium"), ("high", "high"), ("max", "max")):
+            b.options.effort = setting
+            with patch.object(brain, "ClaudeSDKClient", Client), self.assertRaises(RuntimeError):
+                asyncio.run(b.act("x", tools))
+            self.assertEqual(seen["effort"], expected, setting)
