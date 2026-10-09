@@ -42,6 +42,7 @@ class DesktopTools:
         self.snapshot = None
         self.actions = 0
         self.failure = None
+        self.cleanup_failed = False
 
     def stop(self):
         self.cancel.set()  # also checked by the native typing worker between characters
@@ -77,6 +78,7 @@ class DesktopTools:
                 self.stop()
                 raise
             except Exception as err:
+                self.cleanup_failed = self.cleanup_failed or isinstance(err, InputCleanupError)
                 self.stop()  # no later tool, including a queued parallel call, may act after a failure
                 self.failure = self.failure or (str(err) if isinstance(err, ActionError) else "Desktop operation failed.")
                 return {"content": [{"type": "text", "text": f"Task stopped: {self.failure}"}],

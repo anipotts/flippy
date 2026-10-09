@@ -1089,9 +1089,13 @@ class Platform:
             if check:
                 check()
         finally:
-            ev = Quartz.CGEventCreateKeyboardEvent(None, code, False)
-            Quartz.CGEventSetFlags(ev, flags)
-            Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+            try:
+                ev = Quartz.CGEventCreateKeyboardEvent(None, code, False)
+                Quartz.CGEventSetFlags(ev, flags)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+            except Exception:
+                from ..actions import InputCleanupError
+                raise InputCleanupError("Input release could not be confirmed. Restart Flippy before acting again.") from None
         return "ok"
 
     def tap(self, mod, times):
