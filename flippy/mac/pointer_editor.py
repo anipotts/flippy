@@ -14,7 +14,7 @@ from Foundation import NSMakeRect
 from PIL import Image
 
 from .. import pointers
-from ..pixelart import CELL, GRID_H, GRID_W, PALETTE, PixelArt, checker
+from ..pixelart import BRUSHES, CELL, GRID_H, GRID_W, PALETTE, PixelArt, checker
 from . import setup_style as style
 from .cairoview import cairo_view
 from .setup_style import button
@@ -101,7 +101,8 @@ class PixelEditor(_Editor):
 
         self.canvas = _place(root, cairo_view(NSMakeRect(0, 0, cw, ch),
                                               lambda cr, w, h: self.art.draw_canvas(cr, w, h, self.mirror),
-                                              on_press=self._press, on_drag=self._drag), 16, 16)
+                                              on_press=self._press, on_drag=self._drag,
+                                              on_release=self._release), 16, 16)
         x, y, side_w = cw + 32, 16, 292
         _place(root, label("Tools", 13, bold=True), x, y)
         y += 22
@@ -122,6 +123,28 @@ class PixelEditor(_Editor):
         y += 36
         _place(root, checkbox("Mirror ↔", False, self._set_mirror, self.keep), x, y)
         y += 34
+        # pixel art, or a normal drawing; the tip snaps to the grid either way
+        _place(root, label("Style", 13, bold=True), x, y)
+        y += 22
+        self.modes = []
+        bx = x
+        for title, pixel in (("Pixels", True), ("Smooth", False)):
+            b = button(title, lambda pixel=pixel: self._set_pixel(pixel), self.keep)
+            b.setAccessibilityRole_("AXRadioButton")
+            _place(root, b, bx, y)
+            bx += b.frame().size.width - 1
+            self.modes.append((pixel, b))
+        self.brushes = []
+        bx = x + side_w
+        for width, title in reversed(list(zip(BRUSHES, ("Thin", "Medium", "Thick")))):
+            b = button(title, lambda width=width: self._set_brush(width), self.keep)
+            b.setToolTip_("Brush width for smooth drawing")
+            bx -= b.frame().size.width
+            _place(root, b, bx, y)
+            bx += 1
+            self.brushes.append((width, b))
+        self._show_style()
+        y += 40
 
         _place(root, label("Color", 13, bold=True), x, y)
         y += 22
@@ -195,6 +218,22 @@ class PixelEditor(_Editor):
     def _set_mirror(self, on):
         self.mirror = on
         self._redraw()
+
+    def _set_pixel(self, pixel):
+        self.art.set_pixel(pixel)
+        self._show_style()
+        self._redraw()
+
+    def _set_brush(self, width):
+        self.art.brush = width
+        self._show_style()
+
+    def _show_style(self):
+        for pixel, b in self.modes:
+            b.set_selected(pixel == self.art.pixel)
+        for width, b in self.brushes:
+            b.setEnabled_(not self.art.pixel)
+            b.set_selected(width == self.art.brush if not self.art.pixel else False)
 
     def _set_tool(self, key):
         self.tool = key
@@ -302,6 +341,7 @@ class PixelEditor(_Editor):
 
     def _undo(self):
         self._do(self.art.undo)
+        self._show_style()  # undo can switch the style back
 
     def _press(self, x, y, right):
         cell = self.art.cell_at(x, y)
@@ -311,20 +351,30 @@ class PixelEditor(_Editor):
         self.erasing = right
         color = None if right else self.color
         if self.tool == "hotspot":
-            self.art.hotspot = cell
+            self.art.hotspot = cell  # the tip is a grid cell in both styles
         elif self.tool == "fill":
-            self.art.fill(cell, color)
-        else:
+            self.art.fill(cell, color) if self.art.pixel else self.art.fill_smooth(x, y, color)
+        elif self.art.pixel:
             self.art.paint(cell, color, self.mirror)
+        else:
+            self.art.stroke_to(x, y, color, self.mirror)
         self._redraw()
 
     def _drag(self, x, y):
         if self.tool != "pencil":
             return
+        color = None if self.erasing else self.color
+        if not self.art.pixel:
+            self.art.stroke_to(x, y, color, self.mirror)
+            self._redraw()
+            return
         cell = self.art.cell_at(x, y)
         if cell:
-            self.art.paint(cell, None if self.erasing else self.color, self.mirror)
+            self.art.paint(cell, color, self.mirror)
             self._redraw()
+
+    def _release(self):
+        self.art.end_stroke()
 
     def _redraw(self):
         self.canvas.setNeedsDisplay_(True)
@@ -469,8 +519,8 @@ def edit(on_saved, name):
     surf = pointers.surface(name)
     if surf is None:
         return
-    if m["pixel"] and surf.get_width() <= GRID_W and surf.get_height() <= GRID_H:
-        PixelEditor(on_saved, name).present()
+    if (m["pixel"] and surf.get_width() <= GRID_W and surf.get_height() <= GRID_H) or m["grid_h"]:
+        PixelEditor(on_saved, name).present()  # pixel art, or a smooth drawing made in it
     else:
         HotspotPicker(on_saved, name, surf, editing=True).present()
 

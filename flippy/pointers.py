@@ -56,7 +56,9 @@ def exists(name):
 
 def meta(name):
     m = _index().get(name, {})
-    return {"hotspot": m.get("hotspot", [0, 0]), "pixel": bool(m.get("pixel", True)), "flip": bool(m.get("flip", True))}
+    grid_h = m.get("grid_h")
+    return {"hotspot": m.get("hotspot", [0, 0]), "pixel": bool(m.get("pixel", True)), "flip": bool(m.get("flip", True)),
+            "grid_h": grid_h if type(grid_h) is int and 0 < grid_h <= 256 else None}
 
 
 def unique_name(base):
@@ -67,12 +69,15 @@ def unique_name(base):
     return name
 
 
-def save(name, surface, hotspot, pixel, flip=True):
-    """Save a cairo ImageSurface as pointer `name` (overwrites)."""
+def save(name, surface, hotspot, pixel, flip=True, grid_h=None):
+    """Save a cairo ImageSurface as pointer `name` (overwrites). grid_h: a smooth drawing from the editor,
+    shown as tall as a pixel pointer of that many rows."""
     os.makedirs(DIR, exist_ok=True)
     surface.write_to_png(path(name))
     idx = _index()
     idx[name] = {"hotspot": [int(hotspot[0]), int(hotspot[1])], "pixel": bool(pixel), "flip": bool(flip)}
+    if grid_h and not pixel:
+        idx[name]["grid_h"] = int(grid_h)
     _write_index(idx)
     _cache.pop(name, None)
 
@@ -108,6 +113,8 @@ def surface(name):
 def _scale(surf, m, size, sprite_px):
     if m["pixel"]:
         return sprite_px
+    if m["grid_h"]:  # drawn smooth in the editor: as tall as the pixel grid would be
+        return sprite_px * m["grid_h"] / surf.get_height()
     return IMAGE_PX * size / max(surf.get_width(), surf.get_height())
 
 
