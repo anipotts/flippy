@@ -1,5 +1,5 @@
 # macOS (installed by scripts/install_mac.sh). pycairo builds against Homebrew's cairo.
-claude-agent-sdk
+claude-agent-sdk==0.2.165
 pillow
 pycairo
 pyobjc-framework-ApplicationServices
