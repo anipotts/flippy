@@ -12,7 +12,7 @@ class TestGestures(unittest.TestCase):
         platform = next(n for n in source.body if isinstance(n, ast.ClassDef) and n.name == 'Platform')
         methods = [n for n in platform.body if isinstance(n, ast.FunctionDef)
                    and n.name in ('_gesture', 'drag', 'scroll', 'key')]
-        namespace = {'Quartz': Mock(), 'time': SimpleNamespace(sleep=Mock()),
+        namespace = {'__name__': 'flippy.mac.ui', '__package__': 'flippy.mac', 'Quartz': Mock(), 'time': SimpleNamespace(sleep=Mock()),
                      'hotkeys': SimpleNamespace(KEYS={'return': 36})}
         for n in methods:
             exec(compile(ast.Module(body=[n], type_ignores=[]), '<native gesture>', 'exec'), namespace)
@@ -72,6 +72,17 @@ class TestGestures(unittest.TestCase):
             self.ui.drag(0,0,24,24,['cmd'])
         self.assertEqual(self.ui._gesture_mouse.call_args.args[0],4)
         self.assertEqual(self.ui._modifier.call_args.args,('cmd',0))
+
+    def test_release_failure_attempts_all_cleanup_and_is_explicit(self):
+        from flippy.actions import InputCleanupError
+        def post(kind, *args):
+            if kind == 4:
+                raise RuntimeError('release failure')
+        self.ui._gesture_mouse.side_effect = post
+        with self.assertRaises(InputCleanupError):
+            self.ui.drag(0,0,24,24,['cmd','shift'])
+        self.assertEqual(self.ui._modifier.call_args_list[-2].args,('shift',1))
+        self.assertEqual(self.ui._modifier.call_args_list[-1].args,('cmd',0))
 
     def test_physical_input_is_not_released(self):
         self.q.CGEventSourceButtonState.return_value=True
