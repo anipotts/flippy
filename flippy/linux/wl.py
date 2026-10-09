@@ -11,6 +11,8 @@ pywayland, no generated bindings):
                                                             without the panel or Flippy's own overlay on it
   ext_image_copy_capture cursor session (output source)     where the mouse is, and how much it moves
   zwp_virtual_keyboard_v1                                   scripted typing (flippy-ask type/key/tap)
+  zcosmic_toplevel_manager_v1                               bringing a window forward (/act borrows focus for
+                                                            keys, then gives it back)
 
 None of it needs a permission prompt on COSMIC. Anything the compositor doesn't
 offer stays None, and the rules that need it switch off (see flippy/watch.py).
@@ -35,6 +37,7 @@ WL_SHM_CREATE_POOL = 0
 WL_SHM_POOL_CREATE_BUFFER, WL_SHM_POOL_DESTROY = 0, 1
 WL_BUFFER_DESTROY = 0
 TOPLEVEL_INFO_GET_COSMIC_TOPLEVEL = 1
+TOPLEVEL_MANAGER_ACTIVATE = 2
 IDLE_GET_NOTIFICATION, IDLE_GET_INPUT_NOTIFICATION = 1, 2
 CAPTURE_CREATE_SESSION, CAPTURE_CREATE_POINTER_CURSOR_SESSION = 0, 1
 OUTPUT_SOURCE_CREATE, TOPLEVEL_SOURCE_CREATE = 0, 0
@@ -45,7 +48,7 @@ CURSOR_SESSION_DESTROY = 0
 VK_CREATE = 0
 VK_KEYMAP, VK_KEY, VK_MODIFIERS = 0, 1, 2
 KEYMAP_XKB_V1 = 1
-COSMIC_STATE_ACTIVATED = 2
+COSMIC_STATE_MINIMIZED, COSMIC_STATE_ACTIVATED = 1, 2
 # wl_shm formats we can read, best first, with the byte order PIL calls them (little-endian memory)
 SHM_FORMATS = ((0x34324258, "RGBX"), (0x34324241, "RGBA"), (1, "BGRX"), (0, "BGRA"))  # XB24, AB24, XR24, AR24
 
@@ -54,6 +57,7 @@ WANT = {  # interface: highest version we speak
     "ext_foreign_toplevel_list_v1": 1, "zcosmic_toplevel_info_v1": 3, "ext_idle_notifier_v1": 2,
     "ext_image_copy_capture_manager_v1": 1, "ext_foreign_toplevel_image_capture_source_manager_v1": 1,
     "ext_output_image_capture_source_manager_v1": 1, "zwp_virtual_keyboard_manager_v1": 1,
+    "zcosmic_toplevel_manager_v1": 1,
 }
 
 
@@ -100,7 +104,10 @@ class Toplevel:
         self.app_id = self.title = None
         self.geometry = None        # (x, y, w, h), output-relative logical px
         self.activated = False
+        self.minimized = False
         self.serial = 0             # bumps when it appears, so "new window" can be told apart
+        self.seen_at = time.monotonic()  # when it appeared...
+        self.active_at = 0.0        # ...and when it last had the focus: the app's window is the latest of these
 
 
 class Wayland:
@@ -219,6 +226,7 @@ class Wayland:
         self.toplevel_sources = self._bind("ext_foreign_toplevel_image_capture_source_manager_v1")
         self.output_sources = self._bind("ext_output_image_capture_source_manager_v1")
         self.vk_manager = self._bind("zwp_virtual_keyboard_manager_v1")
+        self.toplevel_manager = self._bind("zcosmic_toplevel_manager_v1")
         self.vk = None
         notifier = self._bind("ext_idle_notifier_v1")
         if notifier and self.seat:
@@ -273,6 +281,9 @@ class Wayland:
         if op == 8:  # state
             states = struct.unpack(f"<{len(raw) // 4}I", raw) if (raw := r.a()) else ()
             tl.activated = COSMIC_STATE_ACTIVATED in states
+            if tl.activated:
+                tl.active_at = time.monotonic()
+            tl.minimized = COSMIC_STATE_MINIMIZED in states
         elif op == 9:  # geometry
             r.u()
             tl.geometry = (r.i(), r.i(), r.i(), r.i())
@@ -280,6 +291,16 @@ class Wayland:
     def active(self):
         """The active (focused) toplevel, or None."""
         return next((t for t in self.toplevels.values() if t.activated), None)
+
+    def can_activate(self):
+        return bool(self.toplevel_manager and self.seat and self.alive)
+
+    def activate(self, toplevel):
+        """Bring a toplevel forward and give it the keyboard (unminimizing it if needed). Asynchronous: watch
+        toplevel.activated for when it took effect."""
+        if self.can_activate() and toplevel.cosmic_id:
+            self._call(lambda: self._send(self.toplevel_manager, TOPLEVEL_MANAGER_ACTIVATE,
+                                          struct.pack("<II", toplevel.cosmic_id, self.seat)))
 
     # ---- the mouse: a cursor capture session reports its position without capturing anything
     def _watch_cursor(self):

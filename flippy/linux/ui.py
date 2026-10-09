@@ -16,6 +16,7 @@ is) comes from a second, private Wayland connection: flippy/linux/wl.py.
 Run via bin/flippy-daemon (sets LD_PRELOAD for gtk4-layer-shell).
 """
 import sys
+import time
 
 import cairo
 import gi
@@ -28,7 +29,7 @@ from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
 
 from .. import loop, pointers, settings, themes  # noqa: E402
 from ..overlay import OverlayBase  # noqa: E402
-from . import pointer_editor, sensors, wl  # noqa: E402
+from . import act, pointer_editor, sensors, wl  # noqa: E402
 from .notice import Notice, NoticeLayer  # noqa: E402
 from .screenshot import Screenshotter  # noqa: E402
 from .settings_window import SettingsWindow  # noqa: E402
@@ -166,21 +167,23 @@ class KeyCatcher:
 
 class Nudge:
     """Help mode's and tips' cards, drawn in the overlay's top-right corner (flippy/linux/notice.py).
-    Same API as flippy/mac/nudge.py."""
+    Same API as flippy/mac/nudge.py. Each Nudge shows and hides only its own card, so the desktop task's
+    approval card (a second Nudge) and a tip can't take each other down."""
 
     def __init__(self, overlay):
         self.overlay = overlay
         self.timer = 0
+        self.notice = None
 
     @property
     def visible(self):
-        return self.overlay.notice_card is not None
+        return self.notice is not None and self.notice in self.overlay.notices
 
     def show(self, offer, on_help, on_later, on_mute):
         self.card(offer.headline(), offer.detail(), [("Not now", on_later), ("Help", on_help)],
                   (f"Don't ask in {offer.app_name}", on_mute), on_timeout=on_later)
 
-    def card(self, head, detail, buttons, link=None, on_timeout=None, timeout_s=NUDGE_TIMEOUT_S):
+    def card(self, head, detail, buttons, link=None, on_timeout=None, timeout_s=NUDGE_TIMEOUT_S, width=None):
         """Any choice (or the timeout) closes it, then runs that choice."""
         self.hide()
 
@@ -189,13 +192,16 @@ class Nudge:
                 self.hide()
                 fn()
             return go
-        self.overlay.show_notice(Notice(head, detail, [(t, act(fn)) for t, fn in buttons],
-                                        (link[0], act(link[1])) if link else None))
+        self.notice = Notice(head, detail, [(t, act(fn)) for t, fn in buttons],
+                             (link[0], act(link[1])) if link else None, width)
+        self.overlay.show_notice(self.notice)
         if on_timeout:
             self.timer = loop.timeout_add(int(timeout_s * 1000), lambda: act(on_timeout)() and False)
 
     def press(self, title):
         """Click a button on screen (scripted demos): its title, case-insensitive, or "link"."""
+        if not self.visible or self.overlay.notice_card is not self.notice:
+            return False
         name = self.overlay.notice_buttons().get(title.lower())
         if name is None:
             return False
@@ -206,7 +212,9 @@ class Nudge:
         if self.timer:
             loop.source_remove(self.timer)
             self.timer = 0
-        self.overlay.hide_notice()
+        if self.notice is not None:
+            self.overlay.hide_notice(self.notice)
+            self.notice = None
 
 
 class InputBox:
@@ -281,6 +289,7 @@ class InputBox:
 
 class Platform:
     hide_settle_ms = HIDE_SETTLE_MS
+    act_catalog, act_prompt = act.CATALOG, act.PROMPT  # /act's tools on COSMIC (flippy/linux/act.py)
 
     def __init__(self, app):
         self.app = app
@@ -295,6 +304,7 @@ class Platform:
         self.overlay = Overlay(app)
         self.screenshotter = Screenshotter()
         self.nudge = Nudge(self.overlay)
+        self.action_card = Nudge(self.overlay)  # desktop tasks' approval cards, separate from tips and updates
         self.clicks = None
         self.tray = None
         self.command = lambda cmd: "not ready"
@@ -422,6 +432,98 @@ class Platform:
     def key_idle_s(self):
         """Seconds since the last input (Wayland has no key-only count; mouse moves count too)."""
         return sensors.input_idle_s()
+
+    # --- desktop tasks (/act): one app's window and controls through AT-SPI (flippy/linux/atspi.py). Keys AT-SPI
+    # can't do borrow the window while you pause (flippy/linux/borrow.py); the rest leaves your window alone.
+    NO_POINTER = ("Clicking, scrolling or dragging by position needs COSMIC's remote desktop support, which this "
+                  "computer doesn't have yet. Use the app's controls, menus or keys instead.")
+
+    def app_preflight(self):
+        from . import atspi
+        atspi.preflight()
+
+    def app_front(self):
+        from . import atspi
+        return atspi.front_app()
+
+    def app_open(self, name, cancel):
+        from . import atspi
+        return atspi.open_app(name, cancel)
+
+    def app_look(self, app_id, name, handle):
+        from . import atspi
+        return atspi.look(app_id, name, handle)
+
+    def app_name(self, app_id, handle):
+        """The app's display name for approval cards ("Text Editor"), or None."""
+        return sensors.app_name(app_id) if isinstance(app_id, str) and app_id else None
+
+    def act_borrow_note(self, name, args):
+        """What the "Flippy is acting" line says while a step waits to borrow the window."""
+        from . import atspi
+        if name == "key" and args.get("combo") not in atspi.BACKGROUND_KEYS:
+            return "needs the window for a moment, waiting for you to pause"
+        return None
+
+    def app_act(self, name, args, frame, cancel):
+        """press / set_text / focus / type / key / menu / media / app_action / click... in the frame's app. Runs on
+        the task's worker thread."""
+        from ..actions import ActionError, RetryableActionError
+        from . import atspi, keyboard
+        target = frame.target
+        if cancel.is_set():
+            raise ActionError("Task canceled.")
+        app, win = atspi.app_and_frame(target)
+        handle = target[1]
+        if app is None and handle < atspi.NO_PID:
+            raise ActionError("The app quit. Start a new /act request.")
+        el = frame.elements[args["element"]] if "element" in args else None
+        result = None
+        if name == "press":
+            atspi.press(el[0], el[3])
+        elif name == "set_text":
+            atspi.set_text(el[0], args["text"])
+        elif name == "focus":
+            atspi.focus(el[0], handle)
+        elif name == "type":
+            if not atspi.insert_text(win, handle, args["text"]):
+                self._borrow_window(target, lambda: keyboard.type_now(args["text"], cancel), cancel)
+        elif name == "key":
+            if not atspi.background_key(win, handle, args["combo"]):
+                self._borrow_window(target, lambda: keyboard.key(args["combo"]), cancel)
+        elif name == "menu":
+            if win is None:
+                raise RetryableActionError("This app shows Flippy no menus. Use keys or click by position instead.")
+            atspi.menu(win, args["path"])
+        elif name == "media":
+            from . import mpris
+            mpris.media(args["action"])
+        elif name == "app_action":
+            from . import scripts
+            want = scripts.app_for(args["action"])
+            if want and self.app_name(*target[:2]) != want:
+                raise RetryableActionError(f"{args['action']} works on {want}; use_app {want} first.")
+            result = scripts.run(args["action"], args["args"])
+        elif name == "click":
+            x, y = frame.to_logical(args["x"], args["y"])
+            if not (args["count"] == 1 and atspi.press_at(win, *atspi.to_window(target, x, y))):
+                raise RetryableActionError(self.NO_POINTER)
+        elif name in ("scroll", "drag"):
+            frame.to_logical(args["x"], args["y"])  # no screenshot: says so
+            raise RetryableActionError(self.NO_POINTER)
+        else:
+            raise ActionError("Unsupported desktop action.")
+        time.sleep(0.25)  # let the app redraw before the next look
+        return result
+
+    def _borrow_window(self, target, act, cancel, point=None):
+        from ..actions import RetryableActionError
+        from .borrow import Borrow
+        conn = wl.connection()
+        if conn is None or not conn.can_activate() or not conn.can_type():
+            raise RetryableActionError("COSMIC doesn't let Flippy bring the window forward or type here. Use the "
+                                       "app's controls or menus instead.")
+        Borrow(conn)(conn.toplevels.get(target[2]), act, cancel, point)
 
     # --- scripted input (flippy-ask type/key/tap, behind automation.clicks); the mouse can't be driven on COSMIC
     NO_MOUSE = ("moving or clicking the mouse isn't possible on COSMIC yet: no RemoteDesktop portal or virtual "

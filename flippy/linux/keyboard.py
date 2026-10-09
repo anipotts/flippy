@@ -1,4 +1,5 @@
-"""Scripted keystrokes on COSMIC (flippy-ask type/key/tap, behind automation.clicks), through a virtual keyboard.
+"""Scripted keystrokes on COSMIC (flippy-ask type/key/tap, behind automation.clicks, and /act's borrowed keys),
+through a virtual keyboard.
 
 Like wtype: every call uploads a small keymap with just the keysyms it needs, so
 any character can be typed whatever the layout. Moving or clicking the mouse
@@ -40,19 +41,33 @@ def type_text(text, on_key=None):
     conn = _conn()
     if conn is None:
         return NO_KEYBOARD
-    syms = sorted({keysym(ch) for ch in text})
-
-    def run():
-        with _lock:
-            conn.set_keymap(syms)
-            time.sleep(0.05)
-            for ch in text:
-                _press(conn, syms.index(keysym(ch)))
-                if on_key:
-                    on_key(ch)
-                time.sleep(random.uniform(0.045, 0.11) + (0.12 if ch in " ,." else 0))
-    threading.Thread(target=run, daemon=True).start()
+    threading.Thread(target=lambda: _type(conn, text, on_key), daemon=True).start()
     return "ok"
+
+
+def type_now(text, cancel=None):
+    """Type it before returning, quickly (a desktop task holds the user's window meanwhile); stops between
+    characters when cancel is set."""
+    conn = _conn()
+    if conn is None:
+        return NO_KEYBOARD
+    _type(conn, text, None, cancel, pace=(0.008, 0.016), hold=0.008, pause=0)
+    return "ok"
+
+
+def _type(conn, text, on_key, cancel=None, pace=(0.045, 0.11), hold=0.02, pause=0.12):
+    """pace: the gap between keys (random in that range, like a person); pause: extra after a space or comma."""
+    syms = sorted({keysym(ch) for ch in text})
+    with _lock:
+        conn.set_keymap(syms)
+        time.sleep(0.05)
+        for ch in text:
+            if cancel is not None and cancel.is_set():
+                return
+            _press(conn, syms.index(keysym(ch)), hold)
+            if on_key:
+                on_key(ch)
+            time.sleep(random.uniform(*pace) + (pause if ch in " ,." else 0))
 
 
 def key(combo):

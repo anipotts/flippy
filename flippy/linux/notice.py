@@ -20,19 +20,21 @@ class Notice:
     """Bold head, detail, a right-aligned row of buttons [(title, fn)] (the last is the primary one) and an
     optional small link (title, fn) under them."""
 
-    def __init__(self, head, detail, buttons, link=None):
+    def __init__(self, head, detail, buttons, link=None, width=None):
         self.head, self.detail, self.buttons, self.link = head, detail, buttons, link
+        self.width = width or NOTICE_W
 
     def layout(self, cr, x, y):
         """(card rect, ((head layout, x, y), (detail layout, x, y)), {hit name: (rect, title)})."""
-        inner = NOTICE_W - 2 * NOTICE_PAD
+        width = self.width
+        inner = width - 2 * NOTICE_PAD
         head = themes.layout(cr, self.head, FONT, 14, width=inner, bold=True)
         detail = themes.layout(cr, self.detail, FONT, 13, width=inner)
         hh, dh = themes.lsize(head)[1], themes.lsize(detail)[1]
         by = y + NOTICE_PAD + hh + 4 + dh + 12
         bh = 28
         rects = {}
-        bx = x + NOTICE_W - NOTICE_PAD
+        bx = x + width - NOTICE_PAD
         for i in reversed(range(len(self.buttons))):
             bw = themes.lsize(themes.layout(cr, self.buttons[i][0], FONT, 13))[0] + 24
             bx -= bw
@@ -43,8 +45,8 @@ class Notice:
             lw, lh = themes.lsize(themes.layout(cr, self.link[0], FONT, 12))
             rects["notice:link"] = ((x + NOTICE_PAD, by + bh + 6, lw, lh + 4), self.link[0])
             h += lh + 10
-        return (x, y, NOTICE_W, h), ((head, x + NOTICE_PAD, y + NOTICE_PAD),
-                                     (detail, x + NOTICE_PAD, y + NOTICE_PAD + hh + 4)), rects
+        return (x, y, width, h), ((head, x + NOTICE_PAD, y + NOTICE_PAD),
+                                  (detail, x + NOTICE_PAD, y + NOTICE_PAD + hh + 4)), rects
 
     def callback(self, name):
         key = name.split(":", 1)[1]
@@ -52,21 +54,30 @@ class Notice:
 
 
 class NoticeLayer:
-    """Mix in before OverlayBase. The platform's hits_changed() should do nothing while self.in_base_paint."""
+    """Mix in before OverlayBase. The platform's hits_changed() should do nothing while self.in_base_paint.
 
-    notice_card = None        # Notice, or None
+    Cards stack: the newest shows, and hiding it brings back the one it covered. A desktop task's approval card
+    can come up over a tip, and the tip's own timer or buttons must not take the approval card down with it."""
+
+    notices = ()              # Notice cards, newest last; the newest is the one on screen
     ink = ()                  # [(x, y, w, h)] painted this frame: pointer, card, notice
     in_base_paint = False
 
+    @property
+    def notice_card(self):
+        return self.notices[-1] if self.notices else None
+
     def show_notice(self, notice):
-        self.notice_card = notice
+        self.notices = [n for n in self.notices if n is not notice] + [notice]
         if (self.pressed[0] or "").startswith("notice:"):
             self.pressed = (None, 0.0)  # the last card's button, not this one's
         self.queue_draw()
 
-    def hide_notice(self):
-        if self.notice_card is not None:
-            self.notice_card = None
+    def hide_notice(self, notice=None):
+        """Take that card down (all of them when None)."""
+        left = [n for n in self.notices if notice is not None and n is not notice]
+        if len(left) != len(self.notices):
+            self.notices = left
             self.queue_draw()
 
     def notice_buttons(self):
@@ -118,7 +129,7 @@ class NoticeLayer:
 
     def _draw_notice(self, cr, w):
         n = self.notice_card
-        (x, y, nw, nh), texts, rects = n.layout(cr, w - NOTICE_W - 12, NOTICE_TOP)
+        (x, y, nw, nh), texts, rects = n.layout(cr, w - n.width - 12, NOTICE_TOP)
         themes.round_rect(cr, x + 0.5, y + 0.5, nw - 1, nh - 1, 16)
         cr.set_source_rgba(0.08, 0.08, 0.1, 0.94)
         cr.fill_preserve()
