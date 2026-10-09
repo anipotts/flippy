@@ -119,6 +119,7 @@ class SettingsWindow:
         self.win.center()
         tabs = NSTabView.alloc().initWithFrame_(NSMakeRect(0, 0, WIDTH, HEIGHT))
         for title, form in (("Appearance", self._appearance(on_preview)), ("Claude", self._claude(on_reset)),
+                            ("Automation", self._actions()),
                             ("Timing", self._timing(on_preview)), ("Hotkeys", self._hotkeys())):
             item = NSTabViewItem.alloc().initWithIdentifier_(title)
             item.setLabel_(title)
@@ -150,6 +151,8 @@ class SettingsWindow:
         if section == "look":
             for t in self.thumbs:
                 t.setNeedsDisplay_(True)
+        if section == "act" and key == "allowed_apps":
+            self._refresh_allowed_apps()
         if section == "keys":
             for r in self.recorders:
                 r.stop()
@@ -257,6 +260,38 @@ class SettingsWindow:
         f.row("Check now", None, button("Check", lambda: self.command("update"), f.keep))
         return f
 
+
+
+    def _actions(self):
+        f = Form(WIDTH - 40)
+        self.keep.append(f)
+        f.group("Desktop tasks", "Applies only to /act. Questions and walkthroughs remain tool-free.")
+        f.row("Approval", None, self._setting_popup(f, "act", "mode", settings.options("act", "mode")))
+        f.row("Ask once per app", "Approve an app when a task first needs it; remembered apps can be removed below.")
+        f.row("Act automatically", "Allows desktop input without an approval card. Stop the task to halt further input.")
+        f.row("Ask before every input", "Shows each proposed click, text entry, key, scroll or drag for approval.")
+        strict, automatic = settings.ACT_LIMITS["every_input"], settings.ACT_LIMITS["auto"]
+        f.row("Task bounds", f"Every input: {strict.max_actions} inputs, {strict.timeout_seconds // 60} minutes. "
+                            f"Other modes: {automatic.max_actions} inputs, {automatic.timeout_seconds // 60} minutes.")
+        f.group("Remembered apps", "Removing an app makes the next task ask again in Ask once per app mode.")
+        self.allowed_popup = popup([(None, "None yet")], None, lambda _v: None, f.keep, width=300)
+        f.row("App", None, self.allowed_popup)
+        self.remove_allowed_button = button("Remove selected app", self._remove_allowed_app, f.keep)
+        f.buttons(self.remove_allowed_button)
+        self._refresh_allowed_apps()
+        return f
+
+    def _refresh_allowed_apps(self):
+        apps = settings.get("act", "allowed_apps")
+        set_popup(self.allowed_popup, [(app, app) for app in apps] or [(None, "None yet")], apps[0] if apps else None)
+        self.remove_allowed_button.setEnabled_(bool(apps))
+
+    def _remove_allowed_app(self):
+        apps = self.allowed_popup.target().values
+        index = self.allowed_popup.indexOfSelectedItem()
+        if 0 <= index < len(apps) and apps[index] is not None:
+            settings.remove_allowed_app(apps[index])
+
     def _timing(self, on_preview):
         f = Form(WIDTH - 40)
         self.keep.append(f)
@@ -289,7 +324,7 @@ class SettingsWindow:
               self._setting_popup(f, "keys", "pause", PAUSE_KEYS, width=170))
         f.group("Automation", "Lets scripts click and type with flippy-ask click / type / key (used for recording demos). "
                               "Off by default: when on, any program running as you can make Flippy click. "
-                              "Claude's answers never click. Also needs the Accessibility permission.")
+                              "This is separate from /act approvals. Also needs the Accessibility permission.")
         f.row("Let scripts click and type", None, checkbox("", settings.get("automation", "clicks"),
                                                   lambda on: settings.set("automation", "clicks", on), f.keep))
         f.group("In the question box")

@@ -1095,6 +1095,12 @@ class Platform:
             y = args["y"] * shot.logical_size[1] / shot.size[1]
             result = self.scroll(x, y, args["direction"], args["lines"], check=check)
         elif name == "drag":
+            start = shot.to_logical(args["x"], args["y"])
+            end = shot.to_logical(args["to_x"], args["to_y"])
+            bounds = shot.target[3] if len(shot.target) >= 5 else None
+            if not bounds or any(not (bounds[0] <= px < bounds[0] + bounds[2]
+                                      and bounds[1] <= py < bounds[1] + bounds[3]) for px, py in (start, end)):
+                raise ActionError("Both drag endpoints must be inside the foreground window.")
             def identity_check():
                 if cancel.is_set():
                     raise ActionError("Task canceled.")

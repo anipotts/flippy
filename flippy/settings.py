@@ -7,6 +7,7 @@ daemon reacts through on_change listeners; hand-editing the file works too
 import copy
 import os
 import math
+import re
 import tempfile
 from dataclasses import dataclass
 import tomllib
@@ -15,6 +16,12 @@ from .profile import current
 PATH = os.path.join(current().config_dir, "config.toml")
 
 DEFAULTS = {
+    "provider": {"mode": "auto"},  # prefer an available subscription connection
+    "codex": {"model": "default", "effort": "medium"},
+    "act": {
+        "mode": "per_app",       # per_app | auto | every_input
+        "allowed_apps": [],       # remembered macOS bundle IDs, approved from an action task
+    },
     "claude": {
         "model": "default",     # default | opus | sonnet | haiku
         "effort": "low",        # low | medium | high | max
@@ -78,6 +85,9 @@ class Setting:
 
 
 _OPTIONS = {
+    ('provider', 'mode'): [('auto', 'Automatic'), ('claude', 'Claude'), ('codex', 'Codex / ChatGPT')],
+    ('codex', 'effort'): [('low', 'Low'), ('medium', 'Medium'), ('high', 'High'), ('xhigh', 'Extra high')],
+    ('act', 'mode'): [('per_app', 'Ask once per app'), ('auto', 'Act automatically'), ('every_input', 'Ask before every input')],
     ('claude', 'model'): [('default', 'Account default'), ('opus', 'Opus'), ('sonnet', 'Sonnet'), ('haiku', 'Haiku')],
     ('claude', 'effort'): [('low', 'Low (fastest)'), ('medium', 'Medium'), ('high', 'High'), ('max', 'Max (slowest)')],
     ('claude', 'image'): [(1366, '1366 px (lightest on usage)'), (1920, '1920 px (balanced)'), (0, 'Full resolution (sharpest)')],
@@ -113,6 +123,35 @@ CHOICES = {key: [value for value, _ in spec.choices]
 
 def options(section, key):
     return list(SETTINGS[section, key].choices)
+
+
+@dataclass(frozen=True)
+class ActionLimits:
+    max_actions: int
+    max_text: int
+    timeout_seconds: int
+    max_turns: int
+
+
+ACT_LIMITS = {
+    "every_input": ActionLimits(12, 160, 300, 16),
+    "per_app": ActionLimits(40, 2000, 600, 64),
+    "auto": ActionLimits(40, 2000, 600, 64),
+}
+
+
+def action_limits(mode=None):
+    return ACT_LIMITS[mode if mode is not None else get("act", "mode")]
+
+
+def valid_bundle_id(value):
+    return (type(value) is str and len(value) <= 255
+            and re.fullmatch(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", value) is not None)
+
+
+def remove_allowed_app(bundle_id):
+    """Settings UI revocation. Approval, never this helper, grants access."""
+    set("act", "allowed_apps", [app for app in get("act", "allowed_apps") if app != bundle_id])
 
 
 VERSION = 2  # the config file's format; older files are migrated on load (see _migrate)
@@ -160,6 +199,12 @@ def _valid(section, key, value):
     if spec is None:
         return False
     default = spec.default
+    if (section, key) == ("act", "allowed_apps"):
+        return (type(value) is list and len(value) <= 128
+                and all(valid_bundle_id(app) for app in value)
+                and len(dict.fromkeys(value)) == len(value))
+    if (section, key) == ("codex", "model"):
+        return type(value) is str and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value) is not None
     if isinstance(default, bool):
         if type(value) is not bool:
             return False
@@ -191,7 +236,9 @@ def parse_value(key, raw):
     if spec is None:
         raise ValueError("unknown setting")
     try:
-        if isinstance(spec.default, bool):
+        if type(spec.default) is list:
+            value = tomllib.loads("value = " + raw)["value"]
+        elif isinstance(spec.default, bool):
             if raw.lower() not in ("true", "false"):
                 raise ValueError("expected true or false")
             value = raw.lower() == "true"
@@ -209,16 +256,21 @@ def parse_value(key, raw):
 
 
 def get(section, key):
-    return _data[section][key]
+    value = _data[section][key]
+    return value.copy() if isinstance(value, list) else value
 
 
 def get_list(section, key):
     """A comma-separated string setting as a set."""
-    return {v.strip() for v in _data[section][key].split(",") if v.strip()}
+    value = get(section, key)
+    if isinstance(value, list):
+        return {v for v in value}
+    return {v.strip() for v in value.split(",") if v.strip()}
 
 
 def set_list(section, key, values):
-    set(section, key, ",".join(sorted(values)))
+    value = sorted(dict.fromkeys(values))
+    set(section, key, value if isinstance(DEFAULTS[section][key], list) else ",".join(value))
 
 
 def set(section, key, value):  # noqa: A001
@@ -228,11 +280,11 @@ def set(section, key, value):  # noqa: A001
     if _data[section][key] == value:
         return
     candidate = copy.deepcopy(_data)
-    candidate[section][key] = value
+    candidate[section][key] = copy.deepcopy(value)
     _save(candidate)
     _data = candidate
     for fn in list(_listeners):
-        fn(section, key, value)
+        fn(section, key, copy.deepcopy(value))
 
 
 def on_change(fn):
@@ -268,6 +320,8 @@ def _save(data):
 
 
 def _toml(v):
+    if isinstance(v, list):
+        return "[" + ", ".join(_toml(item) for item in v) + "]"
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, (int, float)):

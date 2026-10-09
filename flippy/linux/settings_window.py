@@ -121,10 +121,13 @@ class SettingsWindow(Adw.PreferencesWindow):
         self.command = command
         self.add(self._appearance(on_preview))
         self.add(self._claude(on_reset))
+        self.add(self._actions())
         self.add(self._timing(on_preview))
         self.add(self._help())
         self.add(self._hotkeys())
-        self._listener = lambda s, k, v: (s == "look" and self.picker_redraw()) or (s == "help" and self._fill_apps())
+        self._listener = lambda s, k, v: ((s == "look" and self.picker_redraw())
+                                        or (s == "help" and self._fill_apps())
+                                        or (s == "act" and k == "allowed_apps" and self._fill_allowed_apps()))
         settings.on_change(self._listener)
         self.connect("close-request", lambda *_: settings.off_change(self._listener) or False)
 
@@ -254,6 +257,41 @@ class SettingsWindow(Adw.PreferencesWindow):
         page.add(g)
         return page
 
+
+
+    def _actions(self):
+        page = Adw.PreferencesPage(title="Automation", icon_name="input-mouse-symbolic")
+        group = Adw.PreferencesGroup(title="Desktop tasks", description="Applies to /act desktop input on macOS. Questions and walkthroughs stay tool-free.")
+        group.add(combo_row("Approval", None, "act", "mode", settings.options("act", "mode")))
+        group.add(Adw.ActionRow(title="Ask once per app", subtitle="Approve an app when a task first needs it; approvals are remembered."))
+        group.add(Adw.ActionRow(title="Act automatically", subtitle="Allows input without an approval card. Stop halts further input."))
+        group.add(Adw.ActionRow(title="Ask before every input", subtitle="Shows each proposed input for approval."))
+        strict, automatic = settings.ACT_LIMITS["every_input"], settings.ACT_LIMITS["auto"]
+        group.add(Adw.ActionRow(title="Task bounds", subtitle=f"Every input: {strict.max_actions} inputs, {strict.timeout_seconds // 60} minutes. Other modes: {automatic.max_actions} inputs, {automatic.timeout_seconds // 60} minutes."))
+        page.add(group)
+        self.allowed_group = Adw.PreferencesGroup(title="Remembered apps", description="Removing an app makes the next task ask again in Ask once per app mode.")
+        self.allowed_rows = []
+        page.add(self.allowed_group)
+        self._fill_allowed_apps()
+        return page
+
+    def _fill_allowed_apps(self):
+        for row in self.allowed_rows:
+            self.allowed_group.remove(row)
+        self.allowed_rows = []
+        apps = settings.get("act", "allowed_apps")
+        for app in apps:
+            row = Adw.ActionRow(title=GLib.markup_escape_text(app))
+            remove = Gtk.Button(icon_name="list-remove-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Remove")
+            remove.connect("clicked", lambda *_, app=app: settings.remove_allowed_app(app))
+            row.add_suffix(remove)
+            self.allowed_group.add(row)
+            self.allowed_rows.append(row)
+        if not apps:
+            row = Adw.ActionRow(title="None yet")
+            self.allowed_group.add(row)
+            self.allowed_rows.append(row)
+
     def _timing(self, on_preview):
         page = Adw.PreferencesPage(title="Timing", icon_name="preferences-system-time-symbolic")
         g = Adw.PreferencesGroup(title="Answers")
@@ -325,7 +363,7 @@ class SettingsWindow(Adw.PreferencesWindow):
         page.add(g)
         g = Adw.PreferencesGroup(title="Scripts")
         g.add(switch_row("Let scripts type", "flippy-ask type/key/tap send real keystrokes (for demos). Any program "
-                         "running as you could use it; Claude's answers never do.", "automation", "clicks"))
+                         "running as you could use it. This is separate from /act approvals.", "automation", "clicks"))
         page.add(g)
         g = Adw.PreferencesGroup(title="In the question box")
         for cmd, what in (("/new", "Start a fresh session"), ("/settings", "Open this window"), ("Esc", "Close")):
