@@ -113,8 +113,8 @@ class SetupWindow:
         f.buttons(button("Restart Flippy", restart, self.keep))
 
         f.group("Hotkeys")
-        ask, draw = (hotkeys.pretty(settings.get("keys", k)) for k in ("ask", "draw"))
-        f.row(f"{ask}   Ask about the screen", f"{draw}   Circle something, then ask",
+        ask, draw, video = (hotkeys.pretty(settings.get("keys", k)) for k in ("ask", "draw", "video"))
+        f.row(f"{ask}   Ask about the screen", f"{draw}   Circle something, then ask\n{video}   Check a video edit",
               button("Change…", open_settings, self.keep))
 
         f.group("Options")
