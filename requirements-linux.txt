@@ -1,2 +1,2 @@
 # Linux: everything else (PyGObject, GTK, cairo, Pillow) comes from apt; see scripts/install_linux.sh.
-claude-agent-sdk
+claude-agent-sdk==0.2.165
