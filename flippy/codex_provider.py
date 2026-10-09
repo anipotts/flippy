@@ -13,13 +13,10 @@ import tempfile
 from pathlib import Path
 
 from .brain import BrainError, SYSTEM_PROMPT, TIPS_PROMPT, parse_tips
+from .usage_guard import GUARDS, PlanLimitReached
 
-FUNDING_BLOCKED = (
-    "Codex is signed in, but included-plan-only usage cannot yet be verified. "
-    "Flippy will not start a Codex request that could spend credits."
-)
 ISOLATION_BLOCKED = "Codex could not isolate Flippy from other tools and settings."
-SUPPORTED_VERSION = "0.153.4"
+SUPPORTED_VERSION = "0.153.4"   # the oldest Codex whose app-server protocol Flippy speaks; newer ones are fine
 RUNTIME_UNAVAILABLE = "Codex is signed in, but its isolated runtime could not start on this Mac."
 
 # These are real capability switches in the 0.153.4 configuration schema.
@@ -124,8 +121,8 @@ class _RPC:
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
             output, _ = await asyncio.wait_for(version.communicate(), 5)
-            if version.returncode or output.decode().strip() != f"codex-cli {SUPPORTED_VERSION}":
-                raise CodexError("This Codex version has not been verified for Flippy's isolated subscription connection.")
+            if version.returncode or not _new_enough(output.decode().strip()):
+                raise CodexError(f"Update Codex to {SUPPORTED_VERSION} or newer to use it in Flippy.")
             process = await asyncio.create_subprocess_exec(
                 executable, "app-server", "--listen", "stdio://", "--strict-config",
                 *_config_args(config), cwd=directory.name, env=child_environment(),
@@ -213,7 +210,7 @@ class CodexProvider:
     def __init__(self):
         self.model, self.effort, self.last_model = None, "low", None
         self.dirty = False
-        self.blocked_reason = FUNDING_BLOCKED
+        self.blocked_reason = None
         self.auth_source = None
         self._rpc, self._thread = None, None
         self._active_task, self._active_turn, self._desktop = None, None, None
@@ -257,7 +254,7 @@ class CodexProvider:
         rpc = None
         try:
             rpc = await self._connect(SAFE_CONFIG)
-            self.blocked_reason = FUNDING_BLOCKED
+            self.blocked_reason = None
             self.auth_source = "app-server"
             return True
         except CodexSignInRequired:
@@ -266,8 +263,10 @@ class CodexProvider:
             return False
         except Exception:
             if await _cli_logged_in():
+                # Signed in, but Flippy can't run it here: not "connected", or a Claude user who also has the Codex
+                # CLI would be asked to choose a provider that can't answer.
                 self.blocked_reason, self.auth_source = RUNTIME_UNAVAILABLE, "cli"
-                return True
+                return False
             self.blocked_reason = "Codex sign-in could not be checked because its isolated runtime is unavailable."
             self.auth_source = None
             return False
@@ -304,11 +303,13 @@ class CodexProvider:
         await self.stop()
         await self.start()
 
-    def _require_included_usage(self):
-        # There is no supported included-only request field in the installed
-        # protocol. Do not replace this with hasCredits/usedPercent preflights:
-        # another app or this same turn can cross the limit after that check.
-        raise CodexError(FUNDING_BLOCKED)
+    async def _check_usage(self):
+        """Before transmitting anything: refuse unless the plan's included usage is available (flippy/usage_guard.py).
+        A check can't stop another app (or this request) from crossing the limit afterwards; the mid-request
+        account/rateLimits/updated watch in _run stops it then, and STOP_AT keeps requests away from the edge."""
+        report = await self._rpc.request("account/rateLimits/read", None)
+        GUARDS["codex"].codex_read(report if isinstance(report, dict) else {})
+        GUARDS["codex"].check()
 
     async def _isolate(self):
         if self._isolated:
@@ -417,7 +418,7 @@ class CodexProvider:
             self.history.pop(0)
 
     async def _run(self, instructions, content, on_text=None, desktop=None, conversation=False, question=""):
-        self._require_included_usage()  # before starting a thread or transmitting user content
+        GUARDS["codex"].check()  # already known to be at the limit: don't even connect
         async with self._lock:
             if self.dirty:
                 await self.reset()
@@ -425,6 +426,7 @@ class CodexProvider:
             self._active_task, self._desktop = asyncio.current_task(), desktop
             try:
                 await self._check_account(self._rpc)
+                await self._check_usage()  # before starting a thread or transmitting user content
                 await self._isolate()
                 thread_id = self._thread if conversation and self._thread else await self._new_thread(instructions, desktop)
                 if conversation:
@@ -458,6 +460,10 @@ class CodexProvider:
                         continue
                     if method == "flippy/disconnected":
                         raise CodexError("Codex disconnected. Try starting a new chat.")
+                    if method == "account/rateLimits/updated":  # mid-request: stop before credits are touched
+                        if GUARDS["codex"].codex(params.get("rateLimits") or {}):
+                            raise PlanLimitReached(GUARDS["codex"].message())
+                        continue
                     if params.get("threadId") != thread_id or params.get("turnId", turn_id) != turn_id:
                         continue
                     if method == "item/agentMessage/delta":
@@ -491,7 +497,7 @@ class CodexProvider:
                     await self._interrupt()
                 await self._rpc.close()
                 self._rpc, self._thread, self._isolated = None, None, False
-                if isinstance(error, (CodexError, asyncio.CancelledError)):
+                if isinstance(error, (CodexError, PlanLimitReached, asyncio.CancelledError)):
                     raise
                 raise CodexError("Codex could not complete this request. Try starting a new chat.") from None
             finally:
@@ -518,3 +524,13 @@ class CodexProvider:
         question += f"Write {n} tips."
         text = await self._run(TIPS_PROMPT, [{"type": "text", "text": question}])
         return parse_tips(text)
+
+
+def _new_enough(version_line):
+    """"codex-cli 0.159.2" -> True when it's SUPPORTED_VERSION or newer."""
+    def parts(v):
+        return tuple(int(x) for x in v.split("-")[0].split("."))
+    try:
+        return parts(version_line.removeprefix("codex-cli ").strip()) >= parts(SUPPORTED_VERSION)
+    except ValueError:
+        return False

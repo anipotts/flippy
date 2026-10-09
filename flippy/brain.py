@@ -3,10 +3,11 @@ import asyncio
 import os
 from dataclasses import replace
 
-from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, StreamEvent,
+from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, RateLimitEvent, ResultMessage, StreamEvent,
                               TextBlock, query)
 
 from .frames import prepare_image
+from .usage_guard import GUARDS, PlanLimitReached
 
 # The pointing instructions are adapted from Clicky (MIT: see THIRD_PARTY_NOTICES.md).
 SYSTEM_PROMPT = """\
@@ -118,6 +119,12 @@ class Brain:
             self.replay_context = False
             await self._start()
 
+    @staticmethod
+    def _usage(msg):
+        """A rate-limit report from Claude: stop this request if it would run on extra usage (flippy/usage_guard.py)."""
+        if GUARDS["claude"].claude(msg.rate_limit_info):
+            raise PlanLimitReached(GUARDS["claude"].message())
+
     async def act(self, question, desktop):
         """An isolated tool session using the tutor's existing model/auth settings.
 
@@ -132,12 +139,15 @@ class Brain:
                        max_turns=getattr(desktop, "max_turns", 16),
                        include_partial_messages=False, mcp_servers={"desktop": desktop.server()},
                        allowed_tools=[f"mcp__desktop__{name}" for name in names])
+        GUARDS["claude"].check()
         async with ClaudeSDKClient(options=opts) as client:
             await client.query(question)
             text = ""
             completed = False
             async for msg in client.receive_response():
-                if isinstance(msg, AssistantMessage):
+                if isinstance(msg, RateLimitEvent):
+                    self._usage(msg)
+                elif isinstance(msg, AssistantMessage):
                     self.last_model = msg.model
                     if getattr(msg, "error", None):
                         raise BrainError(str(msg.error))
@@ -166,9 +176,12 @@ class Brain:
         if skip:
             ask += "They already have these (don't repeat them):\n" + "\n".join(f"- {t}" for t in skip[-60:]) + "\n"
         ask += f"Write {n} tips."
+        GUARDS["claude"].check()
         parts, completed = [], False
         async for msg in query(prompt=ask, options=opts):
-            if isinstance(msg, AssistantMessage):
+            if isinstance(msg, RateLimitEvent):
+                self._usage(msg)
+            elif isinstance(msg, AssistantMessage):
                 if getattr(msg, "error", None):
                     raise BrainError(str(msg.error))
                 parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
@@ -224,6 +237,8 @@ class Brain:
             self.history.pop(0)
 
     async def _reply(self, content, on_text):
+        GUARDS["claude"].check()
+
         async def messages():
             yield {"type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None}
 
@@ -231,7 +246,9 @@ class Brain:
         parts = []
         completed = False
         async for msg in self.client.receive_response():
-            if isinstance(msg, StreamEvent):
+            if isinstance(msg, RateLimitEvent):
+                self._usage(msg)
+            elif isinstance(msg, StreamEvent):
                 ev = msg.event
                 if ev.get("type") == "content_block_delta" and ev.get("delta", {}).get("type") == "text_delta":
                     delta = ev["delta"]["text"]

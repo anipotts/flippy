@@ -22,6 +22,7 @@ from .providers import Brain, ProviderChoiceRequired
 from .codex_provider import CodexError
 from .frames import prepare_frame
 from .requests import Request
+from .usage_guard import PlanLimitReached
 from .profile import current, Instance
 from .actions import (BACKGROUND_CATALOG, BACKGROUND_PROMPT, ActionError, AppFrame, ApprovalPolicy, DesktopTools,
                       Screenshot, approval_text)
@@ -681,7 +682,8 @@ class Flippy:
                 "permission": "Check macOS Screen Recording and Accessibility permissions.",
                 "operation_failed": "The operation failed or timed out.",
             }
-            message = error.safe_message if isinstance(error, CodexError) else messages[reason]
+            message = (str(error) if isinstance(error, PlanLimitReached) else
+                       error.safe_message if isinstance(error, CodexError) else messages[reason])
             self._fail("Desktop task stopped: " + message + " Check the screen before continuing.")
         else:
             self.overlay.show_text(result)
@@ -1386,6 +1388,8 @@ def wants_tutorial(question):
 
 
 def _friendly_error(err):
+    if isinstance(err, PlanLimitReached):  # says which plan, why, and when it resets
+        return str(err)
     if isinstance(err, ProviderChoiceRequired):
         return str(err)
     if isinstance(err, CodexError) and getattr(err, "safe_message", None):

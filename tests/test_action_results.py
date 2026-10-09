@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
-from flippy.codex_provider import CodexError, FUNDING_BLOCKED
+from flippy.codex_provider import CodexError
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -16,7 +16,8 @@ def controller(tools):
     tree=ast.parse(path.read_text())
     cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='Flippy')
     event=Mock()
-    ns={'event':event,'os':os,'json':json,'__file__':str(path),'CodexError':CodexError,
+    from flippy.usage_guard import PlanLimitReached
+    ns={'event':event,'os':os,'json':json,'__file__':str(path),'CodexError':CodexError,'PlanLimitReached':PlanLimitReached,
         'PROFILE':SimpleNamespace(demo=True,name='demo'),
         'updates':SimpleNamespace(current_version=lambda:'fixture'),
         'settings':SimpleNamespace(get=lambda *args:10)}
@@ -38,8 +39,9 @@ class TestActionResults(unittest.TestCase):
     def test_subscription_gate_is_visible_without_backend_details(self):
         tools=SimpleNamespace(failure=None,actions=0,cleanup_failed=False)
         f,_=controller(tools)
-        f._action_done(tools,SimpleNamespace(identity=20),None,CodexError(FUNDING_BLOCKED))
-        self.assertIn(FUNDING_BLOCKED, f._fail.call_args.args[0])
+        safe = "Codex could not complete this request. Try starting a new chat."
+        f._action_done(tools,SimpleNamespace(identity=20),None,CodexError(safe))
+        self.assertIn(safe, f._fail.call_args.args[0])
         self.assertEqual(f.last_action['completed_inputs'],0)
     def test_refusals_are_categorical_and_never_show_model_success(self):
         cases=(('The screen changed while approval was pending.','pixels_changed'),

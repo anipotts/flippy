@@ -8,8 +8,10 @@ from unittest.mock import patch
 
 from flippy.actions import DesktopTools
 from flippy.frames import ScreenFrame
-from flippy.codex_provider import (CodexError, CodexProvider, FUNDING_BLOCKED,
-                                   RUNTIME_UNAVAILABLE, SAFE_CONFIG, _RPC, child_environment)
+from flippy import usage_guard
+from flippy.codex_provider import (CodexError, CodexProvider, RUNTIME_UNAVAILABLE, SAFE_CONFIG, _RPC,
+                                   _new_enough, child_environment)
+from flippy.usage_guard import PlanLimitReached
 
 
 class FakeRPC:
@@ -21,6 +23,9 @@ class FakeRPC:
         self.mcp_servers, self.inventory = {}, []
         self.ephemeral = True
         self.turn_events = None
+        # account/rateLimits/read: included usage available, a quiet window
+        self.usage = {"ordinaryUsageAllowed": True, "rateLimitsByLimitId": None,
+                      "rateLimits": {"primary": {"usedPercent": 12, "resetsAt": 1900000000}, "secondary": None}}
 
     async def request(self, method, params, timeout=10):
         self.requests.append((method, params))
@@ -28,6 +33,8 @@ class FakeRPC:
             return {"userAgent": "fixture/0.153.4"}
         if method == "account/read":
             return {"account": {"type": self.account, "planType": "plus", "email": None}}
+        if method == "account/rateLimits/read":
+            return self.usage
         if method == "config/read":
             return {"config": {"model_provider": "openai", "mcp_servers": self.mcp_servers}}
         if method == "thread/start":
@@ -85,13 +92,12 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
         self.launch = patch("flippy.codex_provider._RPC.launch", return_value=self.rpc).start()
         self.cli_probe = patch("flippy.codex_provider._cli_logged_in", return_value=False).start()
         self.addCleanup(patch.stopall)
+        usage_guard.GUARDS["codex"] = usage_guard.Guard("codex")  # each test starts with no limit known
         self.provider = CodexProvider()
         self.addAsyncCleanup(self.provider.stop)
 
     def allow_fixture_turns(self):
-        # This patch affects synthetic transports only. There is deliberately
-        # no configuration/env/constructor option to bypass the production gate.
-        patch.object(self.provider, "_require_included_usage", return_value=None).start()
+        """Turns run when the fixture's usage report says included usage is available (the default)."""
 
     def desktop(self, *, capture=None, approve=None):
         self.performed, self.approved = [], []
@@ -109,25 +115,56 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
 
         return DesktopTools(capture or default_capture, approve or default_approve, perform, max_text=2000)
 
-    async def test_included_only_gate_sends_no_user_content_or_model_request(self):
+    async def test_no_included_usage_left_sends_no_user_content_or_model_request(self):
+        self.rpc.usage = {"ordinaryUsageAllowed": False,
+                          "rateLimits": {"primary": {"usedPercent": 100, "resetsAt": 1900000000}}}
         await self.provider.start()
         for operation in (
             lambda: self.provider.ask("private question", "private image", (100, 100)),
             lambda: self.provider.act("private task", self.desktop()),
             lambda: self.provider.write_tips("app", "goal", 1, []),
         ):
-            with self.assertRaises(CodexError) as raised:
+            with self.assertRaises(PlanLimitReached) as raised:
                 await operation()
-            self.assertEqual(raised.exception.safe_message, FUNDING_BLOCKED)
-        self.assertEqual([method for method, _ in self.rpc.requests], ["initialize", "account/read"])
+            self.assertIn("never uses ChatGPT credits", str(raised.exception))
+        self.assertIn("account/rateLimits/read", [method for method, _ in self.rpc.requests])
         self.assertFalse(self.rpc.threads)
         self.assertFalse(self.rpc.turns)
+
+    async def test_nearly_used_up_window_refuses_before_the_limit(self):
+        self.rpc.usage = {"ordinaryUsageAllowed": True,
+                          "rateLimits": {"primary": {"usedPercent": 96, "resetsAt": 1900000000}}}
+        with self.assertRaises(PlanLimitReached):
+            await self.provider.ask("q", "image", (100, 100))
+        self.assertFalse(self.rpc.turns)
+
+    async def test_limit_reached_mid_request_stops_it(self):
+        def events(thread, turn):
+            return [{"method": "item/agentMessage/delta", "params": {
+                        "threadId": thread, "turnId": turn, "itemId": "a", "delta": "Click"}},
+                    {"method": "account/rateLimits/updated", "params": {"rateLimits": {
+                        "rateLimitReachedType": "rate_limit_reached",
+                        "primary": {"usedPercent": 100, "resetsAt": 1900000000}}}}]
+        self.rpc.turn_events = events
+        with self.assertRaises(PlanLimitReached):
+            await self.provider.ask("q", "image", (100, 100))
+        self.assertIn("turn/interrupt", [method for method, _ in self.rpc.requests])
+        with self.assertRaises(PlanLimitReached):  # and nothing more until it resets
+            await self.provider.ask("again", "image", (100, 100))
+        self.assertEqual(len(self.rpc.turns), 1)
+
+    def test_newer_codex_versions_are_accepted(self):
+        self.assertTrue(_new_enough("codex-cli 0.153.4"))
+        self.assertTrue(_new_enough("codex-cli 0.159.2"))
+        self.assertTrue(_new_enough("codex-cli 1.0.0"))
+        self.assertFalse(_new_enough("codex-cli 0.152.9"))
+        self.assertFalse(_new_enough("something else"))
 
     async def test_available_is_account_only_and_releases_transport(self):
         self.assertTrue(await self.provider.available())
         self.assertTrue(self.rpc.closed)
         self.assertEqual([method for method, _ in self.rpc.requests], ["initialize", "account/read"])
-        self.assertEqual(self.provider.blocked_reason, FUNDING_BLOCKED)
+        self.assertIsNone(self.provider.blocked_reason)
         self.assertEqual(self.rpc.sent, [{"method": "initialized"}])
         self.assertEqual(self.launch.call_args.args[0]["forced_login_method"], "chatgpt")
 
@@ -148,7 +185,8 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
     async def test_cli_auth_is_distinct_from_an_unavailable_app_server(self):
         self.launch.side_effect = CodexError("Codex did not respond.")
         self.cli_probe.return_value = True
-        self.assertTrue(await self.provider.available())
+        # signed in but can't run here: not "connected", so a Claude user isn't asked to pick a Codex that can't answer
+        self.assertFalse(await self.provider.available())
         self.assertEqual(self.provider.auth_source, "cli")
         self.assertEqual(self.provider.blocked_reason, RUNTIME_UNAVAILABLE)
         with self.assertRaises(CodexError) as raised:
