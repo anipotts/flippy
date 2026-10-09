@@ -1,13 +1,24 @@
-# Flippy 0.2.6 on COSMIC: instructions for the Linux session
+# Flippy 0.3.0 on COSMIC: instructions for the Linux session
 
 Run this on the Pop!_OS COSMIC machine, in a Claude Code session in the Flippy checkout. It brings COSMIC up to
-what macOS got in 0.2.5 (`/act` desktop tasks) and unblocks the two things `docs/linux-port.md` lists as blocked
-(pointer input, Liquid Glass). Assume **COSMIC Epoch 1.7 or newer**: the RemoteDesktop portal (with libei
-pointer/keyboard input) and the background-blur protocol both shipped in Epoch 1.7.0 (Aug 24–25, 2026).
+what macOS has on `main` and unblocks the two things `docs/linux-port.md` lists as blocked (pointer input,
+Liquid Glass). Assume **COSMIC Epoch 1.7 or newer**: the RemoteDesktop portal (with libei pointer/keyboard input)
+and the background-blur protocol both shipped in Epoch 1.7.0 (Aug 24–25, 2026).
 
-Ship it as **0.2.6** (`scripts/release.sh 0.2.6 "<notes>"`, run from main once the work is merged; the notes'
-first line is what the update card shows, e.g. "Flippy on Linux catches up: /act desktop tasks, real clicks, real
-glass").
+macOS on `main` is ahead in two batches:
+
+- **0.2.5**: `/act` desktop tasks (Parts 2–3 below).
+- **PR #6, merged after 0.2.5**, which combined #3, #4 and #6:
+  - Codex / ChatGPT as a second subscription, and the usage guard.
+  - Setup opening only when needed, and error codes.
+  - /act memory and scripted app actions.
+  - The new black / gray-outline look, the Mono theme (now the default), and the Draw editor's smooth drawing and
+    color picker.
+
+  Part 1 checks what of that already runs here; Part 5 ports the rest.
+
+When this lands, Kapil releases **0.3.0** for both platforms from macOS (`scripts/release.sh 0.3.0 "<notes>"`, from
+main once your PR is merged). Don't release from Linux.
 
 ## Rules
 
@@ -23,8 +34,9 @@ glass").
 - **Keep tests importable on both platforms.** CI runs the suite on Ubuntu and macOS on every push
   (`.github/workflows/checks.yml`). A shared test must never import `flippy.mac.*` (AppKit doesn't exist on Linux)
   or `flippy.linux.*` (GTK isn't on the macOS runner); fake them, or `skipUnless` the platform.
-- Work on a branch (`linux/0.2.6`), commit as you go, push, open a PR into `main`. Don't release; Kapil merges and
-  releases.
+- Work on a branch (`linux/0.3.0`), commit as you go, push, open a PR into `main`. Don't release; Kapil merges and
+  releases 0.3.0.
+- **Commit only after the test run prints `OK`.** A grep that only matches the summary line isn't enough.
 - Write code like the surrounding code: short docstrings that say why, same naming and comment density.
 
 ## How /act works (read this code first)
@@ -33,7 +45,7 @@ glass").
 interface and the shared tool layer does the rest.
 
 - `flippy/actions.py`: the tool contract. `BACKGROUND_CATALOG` (look, use_app, press, set_text, focus, type,
-  key, menu, media, click, scroll, drag), `BACKGROUND_PROMPT`, `DesktopTools.invoke` (approval, limits, stop),
+  key, menu, media, click, scroll, drag, app_action, remember), `BACKGROUND_PROMPT` (plus `act_memory.brief()`), `DesktopTools.invoke` (approval, limits, stop),
   `AppFrame` (one look: jpeg, size, target tuple, numbered elements, text), `RetryableActionError` (nothing was
   done: Claude gets the reason and a fresh look; the task goes on), `ApprovalPolicy` (per_app / auto /
   every_input, sensitive apps).
@@ -59,19 +71,41 @@ The Linux `Platform` (in `flippy/linux/ui.py`) must provide what the controller 
 handle can be the AT-SPI application object's process id, or an index into a dict the platform keeps; it just has
 to be stable for the task.
 
-## Part 1: smoke-test 0.2.5 first (≈15 min)
+## Part 1: smoke-test current main first (≈30 min)
 
-Before building anything, check that 0.2.5 runs on COSMIC. PR #1 changed Linux settings code, the tour has never run
-on Linux, and nobody has started 0.2.5 here yet.
+Before building anything, check that `main` runs on COSMIC. A lot of shared code changed since anyone ran it here.
+Fix anything broken as its own commit before going on.
 
-1. `git pull` on main, `flippy-ask quit`, start Flippy. Check `~/.local/state/flippy.log` for tracebacks.
-2. Ask a question, circle and ask, pause/skip/speed on the player, video review (`Super+Shift+V`).
-3. `flippy-ask tour`: walk the whole tour. The cards must show the COSMIC shortcuts (from `key_label`), and it must
+1. `git pull` on main, `flippy-ask quit`, `scripts/install_linux.sh` (refreshes dependencies and the app-library
+   icon: it's now the black-and-white hand with white click lines, no tile), start Flippy. Check
+   `~/.local/state/flippy.log` for tracebacks.
+2. Ask a question, circle and ask, video review (`Super+Shift+V`).
+3. **Mono theme** (`flippy/themes.py` `Mono`, now the default):
+   - The answer card is black with a gray outline and sharp corners.
+   - The pointer is the grayscale hand. Picking "arrow" gives a grayscale arrow.
+   - On a multi-step walkthrough: drag the seek and speed bars (the knob shows only while held), click the square
+     prev / pause / next / close buttons, and click the outlined `1×` speed button (it steps through the speeds).
+   - The question box matches the card (`Mono.box_css`).
+4. **Setup opens by itself only on install, a new major version, or a lost login** (`flippy/setup_gate.py`, decided
+   after the first login check):
+   - Restart Flippy: setup must **not** open (you're an existing user; `~/.config/flippy/setup.json` should appear
+     with `{"major": 0}`).
+   - With `FLIPPY_PROFILE=demo` and an empty `~/.config/flippy-demo/`, it must open once.
+5. **Codex / ChatGPT** (`flippy/codex_provider.py`, `flippy/providers.py`, `flippy/usage_guard.py`):
+   - If `codex` (0.153.4 or newer) is installed and signed in with ChatGPT, setup and Settings → Models show it
+     connected.
+   - With Provider = Codex, an ask answers. The log shows no API-key use.
+   - `codex_executable()` looks in `~/.local/bin`, npm, volta and bun dirs, because apps get a minimal PATH. Check it
+     finds yours.
+   - The usage guard needs nothing visible. It reads `account/rateLimits/read` before each Codex request, and Claude's
+     rate-limit events.
+6. **Error codes** (`flippy/errors.py`, `docs/errors.md`): failures show a sentence plus a code. Check one: with
+   Provider = Codex and `codex` renamed away, an ask shows `… · CODEX-MISSING` and the log has a matching
+   `error CODEX-MISSING: …` line.
+7. `flippy-ask tour`: walk the whole tour. The cards must show the COSMIC shortcuts (from `key_label`), and it must
    end in Settings.
-4. Settings: every page opens. The "Desktop tasks" group (from PR #1) exists.
-5. `flippy-ask act hello` must answer "desktop tasks are available on macOS only for now" (that changes below).
-
-Fix anything broken before going on, as its own commit.
+8. Settings: every page opens. "Desktop tasks" and the Models page's Provider / Codex rows exist.
+9. `flippy-ask act hello` must answer "desktop tasks are available on macOS only for now" (Part 2 changes that).
 
 ## Part 2: /act through AT-SPI (≈1–1.5 h)
 
@@ -124,6 +158,28 @@ Create `flippy/linux/atspi.py` mirroring `flippy/mac/ax.py`:
   reader seems present. Setting `org.a11y.Status.IsEnabled = true` on the a11y bus is the standard switch (GTK/Qt
   honor it). Do **not** flip `ScreenReaderEnabled` globally without asking: it changes behavior in every app. If an
   app shows almost nothing, the look says so and Claude falls back to clicks (Part 3), as on macOS with Spotify.
+
+**Also on macOS since 0.2.5, port these too:**
+
+- **Scripted app actions** (the `app_action` tool; `flippy/mac/scripts.py` runs fixed AppleScript snippets). Make a
+  `flippy/linux/scripts.py` with the **same action names** where Linux can do them, and have the Linux catalog's
+  `app_action` description list only those:
+  - Spotify and other players through **MPRIS**:
+    - `spotify.play_pause` / `next` / `previous`
+    - `spotify.shuffle_on` / `shuffle_off`: the `Shuffle` property
+    - `spotify.play_uri`: `OpenUri` with a `spotify:` URI
+    - `spotify.now_playing`: `Metadata` `xesam:title` / `xesam:artist`, and `PlaybackStatus`
+  - `spotify.open_search`: `xdg-open spotify:search:<url-encoded query>`.
+  - `safari.open_url`: rename it in the Linux catalog to a browser-neutral `browser.open_url` with
+    `Gio.AppInfo.launch_default_for_uri`, http(s) only.
+  - Leave out `music.*`, `notes.*` and `mail.*`.
+  - Keep the same rule: values go in as arguments, never into a command string; validate URIs like
+    `scripts._check`.
+- **Per-app memory** (`flippy/act_memory.py`): no work. It runs inside `DesktopTools`, so it works as soon as /act
+  does. Just check that app ids you pass as `target[0]` are stable across runs: the memory is keyed by them.
+- **Stop reasons and error codes**: raise refusals with the same reason codes as macOS (`ActionError.code`, e.g.
+  `input_held`, `permission`), so `errors.ACT_REASONS` turns them into `ACT-HELD`, `ACT-PERMISSION`… Don't add
+  Linux-only codes without adding them to `errors.CODES` **and** `docs/errors.md` (a test checks).
 
 Wire the Platform methods in `flippy/linux/ui.py`, give the Linux `Nudge.card` a `width=None` keyword it accepts,
 add `self.action_card = Nudge(self.overlay)` (a second instance), and update the "Desktop tasks" description in
@@ -197,15 +253,91 @@ COSMIC has no GlobalShortcuts portal, so Flippy keeps writing its shortcuts into
 `~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom` (setup offers that today), and pause stays a
 normal shortcut (no double-tap on Wayland). No work here; update `docs/linux-port.md` to say it's by design.
 
+## Part 5: the new look and the Draw editor on GTK (≈1–1.5 h)
+
+On macOS, setup, Settings and the Draw editor now share one look. The GTK windows (`flippy/linux/setup_window.py`,
+`settings_window.py`, `pointer_editor.py`) still look like before #6. Bring them to the same design.
+Use GTK CSS on Flippy's own windows only (a style provider on each window or a `flippy` CSS class), never the
+user's theme.
+
+**The look.** References: `flippy/mac/setup_style.py`, `setup_window.py`, `settings_window.py`.
+
+- **Colors:**
+  - background `#000000`
+  - outlines `rgb(128,128,133)` (`OUTLINE = (0.50, 0.50, 0.52)`)
+  - dividers `rgb(56,56,59)`
+  - text `rgb(240,241,242)`, muted text `rgb(158,163,173)`
+  - pressed `rgb(41,41,43)`
+- **Shapes:** every button, popup / dropdown, entry, checkbox, card and keycap is black with a 1 px outline and
+  **0 radius**. Section numbers sit in an outlined **diamond** (rhombus).
+- **Selected state:** selected tabs and the selected tool get a brighter outline (the text color) and white text;
+  the others are muted.
+- **Settings tabs:** pages switch with a row of outlined buttons along the top that share edges. On GTK, a
+  `Gtk.StackSwitcher` styled flat works.
+- **The hand mark:** the header icon and the Permissions card's app icon are the gray pixel hand with gray click
+  lines and no tile. Draw it with the same code as `setup_style.flippy_mark`; move the drawing into a shared
+  cairo helper if that's simplest.
+
+**Setup content** (port the macOS behavior, not just the look):
+
+- **Provider cards:**
+  - Show "Connected" / "Not connected" with **Reconnect…** / **Log in…** (Claude) or **Sign in…** (ChatGPT).
+  - Even padding on all sides, with everything vertically centered.
+  - Delete the stale Linux subtitle "Included-only credit enforcement is still under verification": the usage guard
+    does it now.
+- **The line under Use:**
+  - With both connected and Use on Automatic, it says *"Both are connected. Pick Claude or ChatGPT under Use to
+    finish setup."* in bright text, and the Use dropdown gets a 2 px bright outline.
+  - If the chosen provider isn't connected, it says so.
+  - Otherwise it's a muted "You can switch any time in Settings → Models."
+- **Shortcut section:**
+  - Keycaps for the ask shortcut.
+  - Under them, *"There are more, like circling something or checking a video. Change any in Edit…"*.
+  - Edit… opens Settings → Hotkeys. On COSMIC the shortcuts live in COSMIC Settings, so word it to match.
+- **Launch at login:** the switch on the right, its edge lined up with the buttons.
+
+**Draw editor** (`flippy/linux/pointer_editor.py`). It still has its own grid code. Move it onto the shared model
+`flippy/pixelart.PixelArt` (the macOS editor already uses it), which now does both styles:
+
+- **Style: Pixels | Smooth**, plus **Thin / Medium / Thick** brushes (greyed in Pixels):
+  - `art.set_pixel(bool)` and `art.brush`.
+  - In Smooth: `stroke_to(x, y, color, mirror)` while dragging and `end_stroke()` on release.
+  - Fill is `fill_smooth`.
+  - The tip stays on the grid (`hotspot` is a cell).
+  - Saving writes `grid_h`, so a smooth pointer shows as big as a pixel one.
+  - Tests: `tests/test_smooth_drawing.py`.
+- **Color:**
+  - The palette swatches.
+  - A current-color swatch.
+  - A **hex** entry: `#RGB` / `#RRGGBB`, applied on Enter; reuse `to_hex` / `from_hex` from the macOS editor, or
+    move them to `pixelart`.
+  - **H/S/B** sliders with gradient tracks, and an **RGB** button that swaps them for R/G/B sliders in whole 0–255
+    steps, with the value shown beside each.
+  - An **Eyedropper** through the Screenshot portal's `PickColor` (`org.freedesktop.portal.Screenshot`). The user
+    clicks anywhere on screen and you get an RGB triple. Follow `recorder.py`'s request/response pattern.
+- **Same look** as above. The canvas keeps its checkerboard; the grid shows faintly in Smooth.
+
+Tests: whatever is pure (hex parsing, the slider ↔ color math, the PickColor response parsing). Check the windows
+live (screenshots are fine: they don't need Claude). Ask Kapil to compare with the macOS ones.
+
 ## Finish
 
-1. Update `docs/linux-port.md`: the table (pointer: yes via RemoteDesktop; Liquid Glass: yes if Part 4 landed;
-   `/act`: yes, through AT-SPI, every click borrows focus), and replace the "Blocked" sections.
-2. Full test suite green: `.venv/bin/python -m unittest discover tests`.
-3. One live end-to-end `/act` run, **after asking Kapil** (it sends his screen to Claude): e.g. "open Text Editor
-   and write a haiku in a new document".
-4. Push `linux/0.2.6`, open a PR into `main` with what works, what was tested live, and known limits (COSMIC's own
-   apps expose little to AT-SPI; the pointer isn't put back exactly; Glass only if Part 4 landed).
+1. Update `docs/linux-port.md`:
+   - The table: pointer is yes via RemoteDesktop; Liquid Glass is yes if Part 4 landed; `/act` is yes, through
+     AT-SPI, and every click borrows focus; Codex is yes.
+   - Replace the "Blocked" sections.
+2. Full test suite green: `.venv/bin/python -m unittest discover tests` prints `OK`.
+3. One live end-to-end `/act` run, **after asking Kapil** (it sends his screen to Claude). For example, "open Text
+   Editor and write a haiku in a new document". Then a second, similar task in the same app: the log should show it
+   starting from what worked (`act_memory.json` has the app).
+4. Push `linux/0.3.0` and open a PR into `main`. Say what works, what was tested live, and the known limits:
+   COSMIC's own apps expose little to AT-SPI; the pointer isn't put back exactly; Glass works only if Part 4
+   landed. Kapil merges it and releases 0.3.0.
 
-Estimate: CC ≈ 3–3.5 h over two sessions (Parts 1–2, then 3–4). Kapil's time: approving the portal dialog once,
-~20 min of testing apps.
+Estimate: CC ≈ 5–6 h over three sessions:
+- Part 1, then Part 2 with its app actions
+- Parts 3–4
+- Part 5
+
+Kapil's time: approving the portal dialog once, about 20 min testing apps, and about 10 min comparing the GTK
+windows with macOS.

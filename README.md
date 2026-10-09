@@ -71,7 +71,7 @@ Use the full path; custom shortcuts don't always see `~/.local/bin` on `PATH`. T
 
 If you installed gtk4-layer-shell somewhere other than `~/.local`, set `FLIPPY_LAYER_SHELL_LIB` to its library directory.
 
-Single monitor only for now, on both platforms. A few macOS features aren't on COSMIC yet (`/act` desktop tasks, real Liquid Glass, scripted clicks); 0.2.6 brings them ([docs/linux-0.2.6.md](docs/linux-0.2.6.md)). The double-tap pause key can't work on Wayland, so COSMIC uses a normal shortcut. [docs/linux-port.md](docs/linux-port.md) explains how the rest works there.
+Single monitor only for now, on both platforms. A few macOS features aren't on COSMIC yet (`/act` desktop tasks, real Liquid Glass, scripted clicks); 0.3.0 brings them ([docs/linux-0.3.0.md](docs/linux-0.3.0.md)). The double-tap pause key can't work on Wayland, so COSMIC uses a normal shortcut. [docs/linux-port.md](docs/linux-port.md) explains how the rest works there.
 
 ## Updates
 
@@ -224,7 +224,7 @@ packaging/macos/  Flippy.app launcher (Swift) and icon
 scripts/    the macOS and Linux installers, release.sh, package.sh (the per-platform release downloads)
 tests/      python -m unittest discover tests
 docs/       linux-port.md: how the macOS features work on COSMIC, and what's still blocked;
-            linux-0.2.6.md: instructions for bringing COSMIC up to macOS (/act, pointer input, glass);
+            linux-0.3.0.md: instructions for bringing COSMIC up to macOS (/act, pointer input, glass, the new look);
             video-review.md: video review, and how to build it on macOS;
             errors.md: every error code Flippy shows, what it means and what to do
 ```

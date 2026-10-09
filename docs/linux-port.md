@@ -10,7 +10,7 @@ Everything COSMIC needs lives in `flippy/linux/`. The port doesn't change the sh
 files or `flippy/mac/`, so macOS runs exactly what it ran before; where COSMIC needed
 something of a shared file, it has its own copy or extends it from `flippy/linux/`.
 
-**Next: Flippy 0.2.6 brings COSMIC up to macOS 0.2.5 (`/act`, real pointer input, real glass). The step-by-step instructions are in [linux-0.2.6.md](linux-0.2.6.md); the "Blocked" sections below predate COSMIC Epoch 1.7, which unblocked pointer input and blur.**
+**Next: Flippy 0.3.0 brings COSMIC up to macOS (`/act`, real pointer input, real glass, Codex, the new look). The step-by-step instructions are in [linux-0.3.0.md](linux-0.3.0.md); the "Blocked" sections below predate COSMIC Epoch 1.7, which unblocked pointer input and blur.**
 
 | Feature | On COSMIC | How |
 |---|---|---|
