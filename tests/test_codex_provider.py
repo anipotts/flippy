@@ -189,6 +189,22 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(codex_provider.codex_executable(), fake)
                 self.assertTrue(codex_provider.child_environment()["PATH"].startswith(tmp))
 
+    def test_codex_from_nvm_is_found_newest_node_first(self):
+        # Linux: npm i -g under nvm puts codex in ~/.nvm/versions/node/<v>/bin, never on a shortcut's PATH
+        from flippy import codex_provider
+        with tempfile.TemporaryDirectory() as home:
+            for v in ("v9.0.0", "v24.11.1", "v18.2.0"):
+                os.makedirs(os.path.join(home, ".nvm", "versions", "node", v, "bin"))
+            for v in ("v9.0.0", "v24.11.1"):
+                fake = os.path.join(home, ".nvm", "versions", "node", v, "bin", "codex")
+                with open(fake, "w") as f:
+                    f.write("#!/bin/sh\n")
+                os.chmod(fake, 0o755)
+            with patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "HOME": home}), \
+                    patch.object(codex_provider, "CODEX_DIRS", ()):
+                self.assertEqual(codex_provider.codex_executable(),
+                                 os.path.join(home, ".nvm", "versions", "node", "v24.11.1", "bin", "codex"))
+
     def test_newer_codex_versions_are_accepted(self):
         self.assertTrue(_new_enough("codex-cli 0.153.4"))
         self.assertTrue(_new_enough("codex-cli 0.159.2"))

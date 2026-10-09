@@ -6,6 +6,7 @@ not an atomic promise that the next request cannot spend existing credits.
 """
 import asyncio
 import contextlib
+import glob
 import json
 import re
 import os
@@ -72,9 +73,21 @@ CODEX_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/.loca
               os.path.expanduser("~/.npm-global/bin"), os.path.expanduser("~/.volta/bin"), os.path.expanduser("~/.bun/bin"))
 
 
+def _node_version_dirs():
+    """bin dirs of Node versions installed with nvm or fnm, newest first: npm puts a global codex there, and
+    neither is on the PATH an app or a desktop shortcut gets."""
+    def version(path):
+        return tuple(int(n) for n in re.findall(r"\d+", os.path.basename(path.rstrip("/")))[:3])
+    found = []
+    for pattern, tail in ((os.path.expanduser("~/.nvm/versions/node/*"), "bin"),
+                          (os.path.expanduser("~/.local/share/fnm/node-versions/*"), "installation/bin")):
+        found += [os.path.join(d, tail) for d in sorted(glob.glob(pattern), key=version, reverse=True)]
+    return found
+
+
 def codex_executable():
     """The codex command: on PATH, or in the usual install places."""
-    return shutil.which("codex") or shutil.which("codex", path=os.pathsep.join(CODEX_DIRS))
+    return shutil.which("codex") or shutil.which("codex", path=os.pathsep.join([*CODEX_DIRS, *_node_version_dirs()]))
 
 
 def _search_path():
