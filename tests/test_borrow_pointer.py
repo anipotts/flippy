@@ -38,6 +38,7 @@ class Borrow(unittest.TestCase):
                                  NSApplicationActivateIgnoringOtherApps=1)
         ax = SimpleNamespace(running_app=lambda pid: self.target, _window=lambda pid: None, AX=SimpleNamespace())
         import flippy.mac as mac_pkg
+        self._saved_ax = mac_pkg.__dict__.get("ax")  # the real flippy.mac.ax needs AppKit: never import it here
         self.ns = {"__name__": "flippy.mac.ui", "__package__": "flippy.mac", "Quartz": self.quartz, "AppKit": appkit,
                    "time": self.clock}
         mac_pkg.ax = ax  # the function imports `from . import ax`
@@ -47,8 +48,10 @@ class Borrow(unittest.TestCase):
 
     def tearDown(self):
         import flippy.mac as mac_pkg
-        import importlib
-        mac_pkg.ax = importlib.import_module("flippy.mac.ax") if hasattr(mac_pkg, "ax") else None
+        if self._saved_ax is None:
+            del mac_pkg.ax
+        else:
+            mac_pkg.ax = self._saved_ax
 
     def test_clicks_then_gives_the_pointer_and_their_app_back(self):
         act = Mock(return_value="ok")
