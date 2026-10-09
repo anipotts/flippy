@@ -82,7 +82,7 @@ def demo_point(host, x, y, label, text):
     sc = host._scale()
     shot = (int(W * sc), int(H * sc))
     host._start_playback(host.gen, shot, shot)
-    host.play['raw'], host.play['done'] = (f'{text} [POINT:{int(x * sc)},{int(y * sc)}:{label}]', True)
+    host.play.finish(f'{text} [POINT:{int(x * sc)},{int(y * sc)}:{label}]')
 
 def preview(host, tutorial=False):
     """Fake 3-step walkthrough so theme/pointer/timing changes can be seen in place.
@@ -106,16 +106,18 @@ def preview(host, tutorial=False):
         raw = ' '.join((f'{txt} [POINT:{int(x * sc)},{int(y * sc)}:{lbl}].' for (x, y, lbl), txt in zip(spots, texts)))
         shot = (int(W * sc), int(H * sc))
         host._start_playback(host.gen, shot, shot)
-        host.play['raw'], host.play['done'] = (raw, True)
+        host.play.finish(raw)
         return
     raw = ' '.join((f'{txt} [POINT:{int(x * sc)},{int(y * sc)}:{lbl}].' for (x, y, lbl), txt in zip(spots, (f'This is a preview of how answers look: the pointer starts at {first}', 'then glides to the clock while the panel follows it', 'and ends on the dock, one step per thing it explains'))))
     shot = (int(W * sc), int(H * sc))
     host._start_playback(host.gen, shot, shot)
-    host.play['raw'], host.play['done'] = (raw, True)
+    host.play.finish(raw)
 
 def demo_type(host, text, delay_ms=65, *, event):
     if not host.box.visible:
         host.open_box()
+    if not text:
+        return
     state = {'i': 0}
 
     def step():
