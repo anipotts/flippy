@@ -182,40 +182,8 @@ def question(rec, n_cuts, q, screen_size):
 
 
 async def ask(brain, frames, screen_b64, screen_size, text, on_text=None):
-    """Like Brain.ask, with the recording's frames ahead of the screenshot. Same session, so follow-ups work."""
-    from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock
-    from .brain import BrainError
-    if brain.client is None or brain.dirty:
-        await brain.reset()
-    content = []
-    for label, b64 in frames:
-        content.append({"type": "text", "text": label})
-        content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}})
-    content.append({"type": "text", "text": "my whole screen now:"})
-    content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": screen_b64}})
-    content.append({"type": "text", "text": text})
-
-    async def messages():
-        yield {"type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None}
-
-    await brain.client.query(messages())
-    parts = []
-    async for msg in brain.client.receive_response():
-        if isinstance(msg, StreamEvent):
-            ev = msg.event
-            if on_text and ev.get("type") == "content_block_delta" and ev.get("delta", {}).get("type") == "text_delta":
-                on_text(ev["delta"]["text"])
-        elif isinstance(msg, AssistantMessage):
-            brain.last_model = msg.model
-            if getattr(msg, "error", None):
-                raise BrainError(str(msg.error))
-            parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
-        elif isinstance(msg, ResultMessage) and msg.is_error:
-            raise BrainError(msg.result or msg.subtype or "unknown error")
-    reply = "".join(parts).strip()
-    if not reply:
-        raise BrainError("empty reply")
-    return reply
+    """Provider-neutral ordered stills followed by the current pointing frame."""
+    return await brain.ask(text, screen_b64, screen_size, on_text=on_text, extra_images=frames)
 
 
 # ---- the feature: commands, recording thread, asking
@@ -232,6 +200,7 @@ class Review:
         self.stop_ev = None
         self.box = None
         self.app_name = None
+        self.owner = None
 
     def command(self, cmd):
         verb, _, rest = cmd.partition(" ")[2].partition(" ")
@@ -261,6 +230,10 @@ class Review:
             return name
         f.box.hide()
         f.dismiss()
+        self.owner = f._begin_request("video-record")
+        self.owner.pending = False
+        self.owner.drained.set()
+        f.busy = False
         self.rec, self.recording, self.app_name = Recording(), True, name
         self.stop_ev = threading.Event()
         threading.Thread(target=self._grab, args=(handle, self.rec, self.stop_ev), daemon=True).start()
@@ -278,11 +251,13 @@ class Review:
                 _log(f"video: grab failed: {e}")
                 img = None
             if img is None:
-                loop.idle_add(lambda: self.recording and self.stop() and False)
+                loop.idle_add(lambda: self.recording and self.rec is rec and not stop_ev.is_set() and self.stop() and False)
+                return
+            if stop_ev.is_set():
                 return
             rec.add(img)
             if rec.seconds >= MAX_SECONDS:
-                loop.idle_add(lambda: self.recording and self.stop() and False)
+                loop.idle_add(lambda: self.recording and self.rec is rec and not stop_ev.is_set() and self.stop() and False)
                 return
             next_t += 1 / FPS
             stop_ev.wait(max(next_t - time.monotonic(), 0.0))
@@ -313,6 +288,8 @@ class Review:
         return "ok"
 
     def cancel(self):
+        if self.owner and self.flippy.request is self.owner:
+            self.owner.cancel(loop.source_remove)
         if self.recording:
             self._end()
         if self.box:
@@ -346,44 +323,26 @@ class Review:
         self.ui.nudge.hide()
         rec = self.rec
         f.tutorial = False
-        f.busy = True
-        f.gen += 1
-        gen = f.gen
-        f._stop_playback()
-        f._cancel_fade()
+        req = f._begin_request("video")
+        self.owner = req
         f.box.hide()
-        f.overlay.clear()
-        _event("video_ask", question=q)
-        loop.timeout_add(self.ui.hide_settle_ms, lambda: self._shoot(rec, q, gen) and False)
+        _event("video_ask")
+        f._run_request(req, self._go(rec, q, req), f._on_answer, 180)
         return "ok"
 
-    def _shoot(self, rec, q, gen):
+    async def _go(self, rec, q, req):
         f = self.flippy
-
-        def shot(path, err):
-            if err:
-                f._fail(f"couldn't take a screenshot: {err}")
-                return
-            f.overlay.show_text("looking at your edit…", phase="thinking")
-            f.last_ask = time.monotonic()
-            f._run(self._go(rec, q, path, gen), f._on_answer, timeout=180)
-        f.shooter.take(shot)
-
-    async def _go(self, rec, q, path, gen):
-        from .brain import prepare_image
-        f = self.flippy
-        try:
-            b64, img_size, shot_size = await asyncio.to_thread(prepare_image, path, settings.get("claude", "image"))
-        finally:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+        screen = await f._capture_frame(req)
         frames, n_cuts = await asyncio.to_thread(prepare, rec)
-        loop.idle_add(lambda: f._start_playback(gen, img_size, shot_size) and False)
-        raw = await ask(f.brain, frames, b64, img_size, question(rec, n_cuts, q, img_size),
-                        on_text=lambda d: loop.idle_add(lambda: f._stream_text(gen, d) and False))
-        return raw, gen
+        if not f._owns(req):
+            raise asyncio.CancelledError()
+        await f._action_main(lambda: f.overlay.show_text("looking at your edit…", phase="thinking"), req)
+        f.last_ask = time.monotonic()
+        await f._action_main(lambda: f._start_playback(req.identity, screen.size, screen.original_size, frame=screen), req)
+        raw = await ask(f.brain, frames, screen.jpeg, screen.size,
+                        question(rec, n_cuts, q, screen.size),
+                        on_text=lambda delta: loop.idle_add(lambda: f._owns(req) and f._stream_text(req.identity, delta) and False))
+        return raw, req.identity
 
     def _card(self, head, detail, buttons, timeout=None):
         self.ui.nudge.card(head, detail, buttons, on_timeout=(lambda: None) if timeout else None,
