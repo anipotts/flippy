@@ -287,6 +287,10 @@ class TestNativeAdapter(unittest.TestCase):
         cls.module = ui
 
     def setUp(self):
+        for name in ("CGEventSourceKeyState", "CGEventSourceButtonState"):
+            mock = patch.object(self.module.Quartz, name, return_value=False)
+            mock.start()
+            self.addCleanup(mock.stop)
         self.ui = self.module.Platform.__new__(self.module.Platform)
         self.shot = Screenshot("image", (1920, 1080), (1280, 720), ("app", 1))
         self.ui.action_state = lambda: self.shot.target

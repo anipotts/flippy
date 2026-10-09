@@ -20,11 +20,13 @@ from . import loop, onboarding, settings, themes, tips, updates, video, watch
 from .brain import Brain, BrainError
 from .frames import prepare_frame
 from .requests import Request
+from .profile import current, Instance
 from .actions import ActionError, DesktopTools, Screenshot, approval_text
 from .point import image_to_logical, segments
 
-RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()  # macOS: the per-user $TMPDIR
-SOCK_PATH = os.path.join(RUNTIME_DIR, "flippy.sock")
+PROFILE = current()
+RUNTIME_DIR = PROFILE.runtime_dir
+SOCK_PATH = PROFILE.socket
 ASK_TIMEOUT_S = 90
 IDLE_RESET_S = 15 * 60      # fresh Claude session after this much idle (keeps context/usage small)
 STEP_TYPE_CPS = 90          # walkthrough step text types in at this many chars/s, then holds:
@@ -45,7 +47,7 @@ def log(*a):
     print(time.strftime("%H:%M:%S"), *a, file=sys.stderr, flush=True)
 
 
-EVENTS_PATH = os.path.join(RUNTIME_DIR, "flippy-events.jsonl")
+EVENTS_PATH = PROFILE.events
 
 
 LISTENERS = []  # fn(name, data) for every UI event, on the main thread (the tour, flippy/onboarding.py)
@@ -67,6 +69,7 @@ def event(name, **data):
 
 class Flippy:
     def __init__(self, ui):
+        self.instance = Instance(PROFILE).acquire()
         self.ui = ui
         self.overlay = ui.overlay
         self.overlay.on_draw_done = self._draw_done
@@ -77,7 +80,9 @@ class Flippy:
         self.gen = 0
         self.request = None
         self.input_disabled = False
+        self.input_worker = None
         self.quitting = False
+        loop.timeout_add(250, lambda: not self.quitting)
         self.background_futures = set()
         self.fade_animation_id = 0
         self.play = None         # playback state of the reply being shown (see _play_tick)
@@ -111,18 +116,22 @@ class Flippy:
         self.video = video.Review(self)
         self.tour = onboarding.Tour(self)
         LISTENERS.append(self.tour.on_event)
-        loop.timeout_add(3000, self.tour.maybe_start)  # once setup's done, the first time
+        loop.timeout_add(3000, self._maybe_start_tour)
         self._run(self.brain.start(), lambda r, e: log("claude session ready" if not e else f"session start failed: {e}"))
 
-        try:
-            os.unlink(SOCK_PATH)
-        except FileNotFoundError:
-            pass
         ui.listen(SOCK_PATH, self.command)
         os.chmod(SOCK_PATH, 0o600)
+        self.instance.listening()
         log(f"listening on {SOCK_PATH}")
 
     # --- plumbing ---
+    def _maybe_start_tour(self):
+        if self.quitting:
+            return False
+        if self.busy or self.box.visible or self.overlay.drawing or self.overlay.showing:
+            return True
+        return self.tour.maybe_start()
+
     def _run(self, coro, cb, timeout=None):
         if timeout:
             coro = asyncio.wait_for(coro, timeout)
@@ -139,6 +148,19 @@ class Flippy:
         return fut
 
     def command(self, cmd):
+        if PROFILE.demo and (cmd == "update" or cmd.startswith("update ")):
+            return "Updates are disabled in Flippy Demo; rebuild the demo instead."
+        if cmd == "doctor":
+            return json.dumps({"profile": PROFILE.name, "version": updates.current_version(),
+                               "root": os.path.realpath(os.path.dirname(os.path.dirname(__file__))),
+                               "pid": os.getpid(), "app": os.environ.get("FLIPPY_APP"),
+                               "busy": self.busy, "input_disabled": self.input_disabled,
+                               "permissions": self.ui.permission_state() if hasattr(self.ui, "permission_state") else {}})
+        if cmd.startswith("quit-owned "):
+            if os.path.realpath(cmd[11:]) != os.path.realpath(os.path.dirname(os.path.dirname(__file__))):
+                return "refused: daemon belongs to another checkout"
+            self.quit()
+            return "ok"
         log("cmd:", "act <task>" if cmd == "act" or cmd.startswith("act ") else cmd)
         if cmd == "ask":
             self.open_box()
@@ -916,6 +938,12 @@ class Flippy:
         async def stop():
             if req and req.pending:
                 await asyncio.to_thread(req.drained.wait)
+            worker = self.input_worker
+            if worker is not None:
+                try:
+                    await asyncio.shield(worker)
+                except Exception:
+                    pass  # worker finished; its cleanup-failure lockout remains visible
             await self.brain.stop()
             loop.idle_add(lambda: self.ui.quit() and False)
         asyncio.run_coroutine_threadsafe(stop(), self.loop)
@@ -1431,7 +1459,12 @@ def main():
         from .mac import ui
     else:
         from .linux import ui
-    ui.run(Flippy)
+    def create(native_ui):
+        app = Flippy(native_ui)
+        from .runtime import install_shutdown_handlers
+        install_shutdown_handlers(app.quit, loop.idle_add)
+        return app
+    ui.run(create)
 
 
 if __name__ == "__main__":

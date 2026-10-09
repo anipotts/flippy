@@ -23,10 +23,11 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from .profile import current
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_REPO = "kap-il/flippy"
-STATE = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "flippy", "update.json")
+STATE = os.path.join(current().config_dir, "update.json")
 CHECK_EVERY_S = 24 * 3600
 
 
@@ -103,6 +104,8 @@ def _save_state(st):
 
 
 def due():
+    if current().demo:
+        return False
     return time.time() - _state().get("checked_at", 0) >= CHECK_EVERY_S
 
 
@@ -114,6 +117,8 @@ def mark_checked():
 
 def check(force=False):
     """The release to offer, or None: newer than this install and not put off with "Later" today."""
+    if current().demo:
+        raise UpdateError("Updates are disabled in Flippy Demo; rebuild the demo instead.")
     rel = latest_release()
     mark_checked()
     if not rel or not is_newer(rel["version"], current_version()):
@@ -234,6 +239,8 @@ def install(root=ROOT, log=print):
     """Update to the latest: fast-forward a checkout to origin/main, or unpack the latest release over a download;
     reinstall packages if the requirements changed.
     Returns {'from', 'to', 'packages', 'app'}: app = the macOS launcher changed (needs ./install.sh)."""
+    if current().demo:
+        raise UpdateError("Updates are disabled in Flippy Demo; rebuild the demo instead.")
     why = blocked(root)
     if why:
         raise UpdateError(why)

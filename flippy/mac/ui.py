@@ -15,6 +15,7 @@ import os
 import json
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -844,6 +845,7 @@ class Platform:
             Quartz.CGRequestPostEventAccess()  # the system prompt, the first time
             return ("Flippy needs the Accessibility permission to click: System Settings > Privacy & Security > "
                     "Accessibility, turn on Flippy, then restart it")
+        self._check_physical_input(mouse=True)
         pt = Quartz.CGPointMake(x, y)
         move = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, pt, Quartz.kCGMouseButtonLeft)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, move)
@@ -1017,6 +1019,7 @@ class Platform:
                 # shortcuts, would otherwise see "a"), no stray modifiers, and the text for the field.
                 code = hotkeys.KEYS.get("space" if ch == " " else ch.lower(), 0)
                 flags = Quartz.kCGEventFlagMaskShift if ch.isupper() else 0
+                self._check_physical_input(code=code)
                 try:
                     ev = Quartz.CGEventCreateKeyboardEvent(None, code, True)
                     Quartz.CGEventSetFlags(ev, flags)
@@ -1097,6 +1100,17 @@ class Platform:
              "option": Quartz.kCGEventFlagMaskAlternate, "ctrl": Quartz.kCGEventFlagMaskControl}
     MOD_KEYS = {"cmd": 55, "shift": 56, "option": 58, "ctrl": 59}
 
+    def _check_physical_input(self, code=None, mouse=False):
+        """Never pair synthetic release with input the user already holds."""
+        state = Quartz.kCGEventSourceStateCombinedSessionState
+        held = mouse and Quartz.CGEventSourceButtonState(state, Quartz.kCGMouseButtonLeft)
+        codes = set(self.MOD_KEYS.values())
+        if code is not None:
+            codes.add(code)
+        if held or any(Quartz.CGEventSourceKeyState(state, key) for key in codes):
+            from ..actions import ActionError
+            raise ActionError("Release physical keys and mouse buttons before Flippy acts.")
+
     def key(self, combo, check=None):
         """A shortcut like cmd+shift+space, escape or return, pressed for real."""
         err = self._can_post()
@@ -1112,6 +1126,7 @@ class Platform:
             flags |= self.FLAGS.get({"opt": "option", "alt": "option", "control": "ctrl"}.get(m, m), 0)
         if check:
             check()
+        self._check_physical_input(code=code)
         try:
             ev = Quartz.CGEventCreateKeyboardEvent(None, code, True)
             Quartz.CGEventSetFlags(ev, flags)
@@ -1154,14 +1169,34 @@ class Platform:
         """Start a fresh Flippy and quit this one. full_install: rerun ./install.sh first (the app launcher changed)."""
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         app = os.environ.get("FLIPPY_APP")
-        if full_install:
-            cmd = f"sleep 1; '{root}/install.sh' >> ~/Library/Logs/flippy.log 2>&1"
-        elif app:
-            cmd = f"sleep 1; open '{app}'"
-        else:
-            cmd = f"sleep 1; '{root}/bin/flippy-ask' start"
-        subprocess.Popen(["/bin/sh", "-c", cmd], start_new_session=True)
-        self.quit()
+        from ..profile import current
+        if full_install and current().demo:
+            return "Rebuild Flippy Demo with scripts/dev.sh build."
+        command = ([root + "/install.sh"] if full_install else
+                   ["/usr/bin/open", "-n", app] if app else [root + "/bin/flippy-ask", "start"])
+        # Wait for this daemon's cleanup, rather than reopening a still-running instance.
+        runner = '''import socket, subprocess, sys, time
+deadline = time.monotonic() + 30
+while True:
+    try:
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(1)
+            s.connect(sys.argv[1])
+    except (FileNotFoundError, ConnectionRefusedError):
+        break
+    if time.monotonic() >= deadline:
+        raise SystemExit("restart stopped: previous instance is still cleaning up")
+    time.sleep(.1)
+subprocess.run(sys.argv[2:], check=False)
+'''
+        with open(current().log, "ab") as output:
+            subprocess.Popen([sys.executable, "-c", runner, current().socket, *command], stdout=output, stderr=output,
+                             start_new_session=True)
+        self.flippy.quit()
+
+    def permission_state(self):
+        return {"screen_recording": bool(CGPreflightScreenCaptureAccess()),
+                "accessibility": bool(hotkeys.accessibility_trusted())}
 
     def show_update(self, rel, install, later):
         notes = next((ln.strip("-*# ").strip() for ln in rel["notes"].splitlines() if ln.strip("-*# ").strip()),
@@ -1208,4 +1243,4 @@ def run(make_app):
     flippy = make_app(platform)
     platform.flippy = flippy
     platform.start(flippy.command)
-    AppHelper.runEventLoop(installInterrupt=True)
+    AppHelper.runEventLoop(installInterrupt=False)  # controller owns graceful SIGINT cleanup

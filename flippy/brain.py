@@ -116,6 +116,7 @@ class Brain:
         async with ClaudeSDKClient(options=opts) as client:
             await client.query(question)
             text = ""
+            completed = False
             async for msg in client.receive_response():
                 if isinstance(msg, AssistantMessage):
                     self.last_model = msg.model
@@ -127,8 +128,11 @@ class Brain:
                     if msg.is_error or msg.subtype != "success":
                         raise BrainError(msg.result or "Desktop task did not finish.")
                     text = msg.result or text
+                    completed = True
             if desktop.cancel.is_set():
                 return f"Task stopped: {desktop.failure or 'canceled'}. Check the screen before continuing."
+            if not completed:
+                raise BrainError("Desktop task ended without a completed response.")
             return text.strip() or "Task finished without a final answer; check the screen."
 
     async def write_tips(self, app_name: str, goal: str, n: int, skip: list[str]) -> list[dict]:
@@ -142,14 +146,18 @@ class Brain:
         if skip:
             ask += "They already have these (don't repeat them):\n" + "\n".join(f"- {t}" for t in skip[-60:]) + "\n"
         ask += f"Write {n} tips."
-        parts = []
+        parts, completed = [], False
         async for msg in query(prompt=ask, options=opts):
             if isinstance(msg, AssistantMessage):
                 if getattr(msg, "error", None):
                     raise BrainError(str(msg.error))
                 parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
-            elif isinstance(msg, ResultMessage) and msg.is_error:
-                raise BrainError(msg.result or msg.subtype or "unknown error")
+            elif isinstance(msg, ResultMessage):
+                if msg.is_error or msg.subtype != "success":
+                    raise BrainError(msg.result or msg.subtype or "unknown error")
+                completed = True
+        if not completed:
+            raise BrainError("Tip generation ended without a completed response.")
         return parse_tips("".join(parts))
 
     async def ask(self, question: str, b64_jpeg: str, img_size: tuple[int, int],
@@ -186,6 +194,7 @@ class Brain:
 
         await self.client.query(messages())
         parts = []
+        completed = False
         async for msg in self.client.receive_response():
             if isinstance(msg, StreamEvent):
                 ev = msg.event
@@ -196,8 +205,12 @@ class Brain:
                 if getattr(msg, "error", None):
                     raise BrainError(str(msg.error))
                 parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
-            elif isinstance(msg, ResultMessage) and msg.is_error:
-                raise BrainError(msg.result or msg.subtype or "unknown error")
+            elif isinstance(msg, ResultMessage):
+                if msg.is_error or msg.subtype != "success":
+                    raise BrainError("The response did not complete.")
+                completed = True
+        if not completed:
+            raise BrainError("The response ended before completion.")
         text = "".join(parts).strip()
         if not text:
             raise BrainError("empty reply")

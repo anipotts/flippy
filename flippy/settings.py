@@ -7,8 +7,9 @@ daemon reacts through on_change listeners; hand-editing the file works too
 import copy
 import os
 import tomllib
+from .profile import current
 
-PATH = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "flippy", "config.toml")
+PATH = os.path.join(current().config_dir, "config.toml")
 
 DEFAULTS = {
     "claude": {
@@ -56,6 +57,12 @@ DEFAULTS = {
         "pause": "double-cmd",  # pause/resume the walkthrough: double-cmd | double-option | double-ctrl | double-shift | off
     },
 }
+
+if current().demo:
+    DEFAULTS["keys"].update(ask="cmd+option+shift+space", draw="ctrl+option+shift+space",
+                            pause="double-option", video="ctrl+option+shift+v")
+    DEFAULTS["updates"]["check"] = False
+
 
 CHOICES = {
     ("claude", "model"): ["default", "opus", "sonnet", "haiku"],

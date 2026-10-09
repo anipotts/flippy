@@ -12,7 +12,10 @@ guard let root = info["FlippyRoot"] as? String else {
     exit(1)
 }
 
-let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/flippy.log")
+let profile = info["FlippyProfile"] as? String ?? "default"
+guard profile == "default" || profile == "demo" else { exit(1) }
+let logName = profile == "demo" ? "flippy-demo.log" : "flippy.log"
+let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/" + logName)
 FileManager.default.createFile(atPath: logURL.path, contents: nil, attributes: nil)  // no-op if it exists
 let log = try? FileHandle(forWritingTo: logURL)
 log?.seekToEndOfFile()
@@ -23,6 +26,7 @@ daemon.arguments = Array(CommandLine.arguments.dropFirst())
 var env = ProcessInfo.processInfo.environment
 env.removeValue(forKey: "ANTHROPIC_API_KEY")  // bill the Pro/Max subscription, never the API
 env["FLIPPY_APP"] = Bundle.main.bundlePath
+env["FLIPPY_PROFILE"] = profile
 daemon.environment = env
 if let log = log {
     daemon.standardOutput = log

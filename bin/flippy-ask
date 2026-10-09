@@ -10,14 +10,19 @@ import sys
 import tempfile
 import time
 
-SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), "flippy.sock")  # see flippy/daemon.py
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, ROOT)
+from flippy.profile import current
+
+PROFILE = current()
+SOCK = PROFILE.socket
 DAEMON = os.path.join(os.path.dirname(os.path.realpath(__file__)), "flippy-daemon")
 APPS = []
+LOG = PROFILE.log
 if sys.platform == "darwin":
-    LOG = os.path.expanduser("~/Library/Logs/flippy.log")
-    APPS = [os.path.expanduser("~/Applications/Flippy.app"), "/Applications/Flippy.app"]
-else:
-    LOG = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "flippy.log")
+    APPS = [os.environ.get("FLIPPY_APP") or PROFILE.app]
+    if not PROFILE.demo:
+        APPS.append("/Applications/Flippy.app")
 
 
 def send(cmd):
@@ -30,16 +35,24 @@ def send(cmd):
 
 def main():
     cmd = " ".join(sys.argv[1:]) or "ask"
+    owned_stop = cmd == "stop-owned"
+    if owned_stop:
+        cmd = "quit-owned " + ROOT
     if cmd == "start":  # just make sure the daemon is running
         cmd = "ping"
         autostart = True
     else:
-        autostart = cmd not in ("quit", "dismiss", "ping")
+        autostart = not owned_stop and cmd not in ("quit", "dismiss", "ping", "doctor")
     try:
-        print(send(cmd))
+        result = send(cmd)
+        if owned_stop and result != "ok":
+            sys.exit(result)
+        print(result)
         return
     except (FileNotFoundError, ConnectionRefusedError, ConnectionResetError):
         if not autostart:
+            if owned_stop:
+                return
             sys.exit("flippy daemon not running")
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
