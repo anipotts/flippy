@@ -1086,6 +1086,15 @@ class Platform:
             ax.menu(pid, args["path"])
         elif name == "media":
             ax.media(args["action"])
+        elif name in ("click", "scroll", "drag") and args.get("real_pointer"):
+            x, y = frame.to_logical(args["x"], args["y"])
+            if name == "click":
+                act = lambda: self.click(x, y, double=args["count"] == 2)  # noqa: E731
+            elif name == "scroll":
+                act = lambda: self.scroll(x, y, args["direction"], args["lines"])  # noqa: E731
+            else:
+                act = lambda: self.drag(x, y, *frame.to_logical(args["to_x"], args["to_y"]))  # noqa: E731
+            self._borrow_pointer(pid, x, y, act, cancel)
         elif name in ("click", "scroll", "drag"):
             wid = frame.target[2]
             x, y = frame.to_logical(args["x"], args["y"])
@@ -1098,6 +1107,66 @@ class Platform:
         else:
             raise ActionError("Unsupported desktop action.")
         time.sleep(0.25)  # let the app redraw before the next look
+
+    BORROW_IDLE_S = 1.0     # the pointer is borrowed only after this long without the user's input...
+    BORROW_WAIT_S = 45.0    # ...waiting at most this long for such a pause
+
+    def _borrow_pointer(self, pid, x, y, act, cancel):
+        """For apps that ignore background clicks: wait until the user pauses, bring the app up, do the real
+        click/scroll/drag, then put the pointer back and the app they were in back in front. A fraction of a second."""
+        from . import ax
+        from ..actions import ActionError, RetryableActionError
+        hid = Quartz.kCGEventSourceStateHIDSystemState
+        idle = lambda: Quartz.CGEventSourceSecondsSinceLastEventType(hid, Quartz.kCGAnyInputEventType)  # noqa: E731
+        deadline = time.monotonic() + self.BORROW_WAIT_S
+        while idle() < self.BORROW_IDLE_S:
+            if cancel.is_set():
+                raise ActionError("Task canceled.")
+            if time.monotonic() > deadline:
+                raise RetryableActionError("The user kept working, so Flippy didn't take the pointer. Try again later "
+                                           "in the task, or use the app's controls, menus or keys.")
+            time.sleep(0.1)
+        target = ax.running_app(pid)
+        if target is None:
+            raise ActionError("The app quit. Start a new /act request.")
+        before = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+        home = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
+        try:
+            target.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)
+            win = ax._window(pid)
+            if win is not None:
+                ax.AX.AXUIElementPerformAction(win, "AXRaise")
+            for _ in range(30):  # up to 1.5 s for it to come in front
+                if AppKit.NSWorkspace.sharedWorkspace().frontmostApplication().processIdentifier() == pid:
+                    break
+                time.sleep(0.05)
+            if self._window_owner_at(x, y) != pid:
+                raise RetryableActionError("Something else is on top of that spot, so Flippy didn't click it. "
+                                           "Look again.")
+            if idle() < 0.3:  # they picked the mouse back up while the app was coming forward
+                raise RetryableActionError("The user started working again, so Flippy gave the pointer back. "
+                                           "Try again later in the task.")
+            result = act()
+            if result not in (None, "ok"):
+                raise ActionError(str(result))
+            time.sleep(0.15)
+        finally:
+            Quartz.CGWarpMouseCursorPosition(home)            # the pointer back where it was
+            Quartz.CGAssociateMouseAndMouseCursorPosition(True)
+            if before is not None and before.processIdentifier() != pid:
+                before.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)  # and their app
+
+    @staticmethod
+    def _window_owner_at(x, y):
+        """pid of the frontmost normal window under that screen point."""
+        info = Quartz.CGWindowListCopyWindowInfo(
+            Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements, Quartz.kCGNullWindowID)
+        for win in info or []:
+            b = win.get("kCGWindowBounds") or {}
+            if win.get("kCGWindowLayer", 0) == 0 and b.get("X", 0) <= x < b.get("X", 0) + b.get("Width", 0) \
+                    and b.get("Y", 0) <= y < b.get("Y", 0) + b.get("Height", 0):
+                return win.get("kCGWindowOwnerPID")
+        return None
 
     def action_preflight(self):
         """Check task eligibility before inference without inspecting foreground focus."""

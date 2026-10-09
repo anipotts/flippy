@@ -556,7 +556,9 @@ class Flippy:
         return AppFrame(*await asyncio.to_thread(self.ui.app_look, *self.action_app))
 
     async def _app_perform(self, name, args, shot, cancel, req):
-        await self._action_main(lambda: self._acting(req, name.replace("_", " ")), req)
+        what = "needs the pointer for a moment, waiting for you to pause" if args.get("real_pointer") else \
+            name.replace("_", " ")
+        await self._action_main(lambda: self._acting(req, what), req)
         if name == "use_app":
             self.action_app = await asyncio.to_thread(self.ui.app_open, args["name"], cancel)
             return

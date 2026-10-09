@@ -68,15 +68,19 @@ class Background(unittest.IsolatedAsyncioTestCase):
     async def test_click_scroll_drag_by_position_in_the_screenshot(self):
         self.assertIn("click", self.tools.catalog())
         await self.tools.invoke("look", {})
-        await self.tools.invoke("click", {"x": 50, "y": 40, "count": 1, "reason": "play"})
-        await self.tools.invoke("scroll", {"x": 50, "y": 40, "direction": "down", "lines": 3, "reason": "more"})
-        await self.tools.invoke("drag", {"x": 10, "y": 10, "to_x": 60, "to_y": 60, "reason": "move"})
-        self.assertEqual([n for n, _ in self.done], ["click", "scroll", "drag"])
+        await self.tools.invoke("click", {"x": 50, "y": 40, "count": 1, "real_pointer": False, "reason": "play"})
+        await self.tools.invoke("scroll", {"x": 50, "y": 40, "direction": "down", "lines": 3, "real_pointer": False,
+                                           "reason": "more"})
+        await self.tools.invoke("drag", {"x": 10, "y": 10, "to_x": 60, "to_y": 60, "real_pointer": False,
+                                         "reason": "move"})
+        await self.tools.invoke("click", {"x": 50, "y": 40, "count": 2, "real_pointer": True, "reason": "again"})
+        self.assertEqual([n for n, _ in self.done], ["click", "scroll", "drag", "click"])
+        self.assertTrue(self.done[-1][1]["real_pointer"])
         self.assertFalse(self.tools.cancel.is_set())
 
     async def test_a_spot_off_the_screenshot_is_a_retry_not_a_stop(self):
         await self.tools.invoke("look", {})
-        r = await self.tools.invoke("click", {"x": 500, "y": 40, "count": 1, "reason": "x"})
+        r = await self.tools.invoke("click", {"x": 500, "y": 40, "count": 1, "real_pointer": False, "reason": "x"})
         self.assertTrue(r["is_error"])
         self.assertIn("outside the screenshot", r["content"][0]["text"])
         self.assertFalse(self.tools.cancel.is_set())
