@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
+from types import SimpleNamespace
 
 from flippy import updates
 
@@ -88,15 +89,24 @@ def package(base, name, platform, files):
 class TestPackageInstall(unittest.TestCase):
     """A release download (no .git) updates from its platform's file on the latest release."""
 
+    runtime_platform = "darwin"
+
     def setUp(self):
         import tarfile
+        # Patch this module's platform view, not global sys.platform. Both release
+        # formats exercise their real requirements selection on either CI host.
+        platform_patch = mock.patch.object(updates, "sys", SimpleNamespace(platform=self.runtime_platform))
+        platform_patch.start()
+        self.addCleanup(platform_patch.stop)
+        self.platform = updates.platform_name()
+        self.requirements = updates.requirements_file()
         self.tmp = tempfile.TemporaryDirectory()
         self.base = self.tmp.name
-        old = package(self.base, "flippy-0.2.1-macos", "macos",
-                      {"VERSION": "0.2.1\n", "flippy/gone.py": "x\n", "requirements-mac.txt": "a\n"})
+        old = package(self.base, f"flippy-0.2.1-{self.platform}", self.platform,
+                      {"VERSION": "0.2.1\n", "flippy/gone.py": "x\n", self.requirements: "a\n"})
         with tarfile.open(old) as tar:
             tar.extractall(self.base)
-        self.root = os.path.join(self.base, "flippy-0.2.1-macos")
+        self.root = os.path.join(self.base, f"flippy-0.2.1-{self.platform}")
         os.makedirs(os.path.join(self.root, ".venv"))
         open(os.path.join(self.root, ".venv", "keep"), "w").write("mine")
 
@@ -112,8 +122,8 @@ class TestPackageInstall(unittest.TestCase):
 
     def test_updates_from_the_release(self):
         self.assertIsNone(updates.blocked(self.root))
-        new = package(self.base, "flippy-0.2.2-macos", "macos",
-                      {"VERSION": "0.2.2\n", "flippy/video.py": "v\n", "requirements-mac.txt": "a\nb\n"})
+        new = package(self.base, f"flippy-0.2.2-{self.platform}", self.platform,
+                      {"VERSION": "0.2.2\n", "flippy/video.py": "v\n", self.requirements: "a\nb\n"})
         res, run = self.install(new)
         self.assertEqual((res["from"], res["to"], res["packages"]), ("0.2.1", "0.2.2", True))
         self.assertEqual(updates.current_version_at(self.root), "0.2.2")
@@ -121,10 +131,12 @@ class TestPackageInstall(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.root, "flippy", "gone.py")))  # dropped by the new version
         self.assertEqual(open(os.path.join(self.root, ".venv", "keep")).read(), "mine")  # left alone
         self.assertTrue(run.called)  # pip, for the changed requirements
+        self.assertIn(os.path.join(self.root, self.requirements), run.call_args.args[0])
 
     def test_wrong_platform_is_refused(self):
-        new = package(self.base, "flippy-0.2.2-linux", "linux", {"VERSION": "0.2.2\n"})
-        rel = {"version": "0.2.2", "assets": {"flippy-0.2.2-macos.tar.gz": "https://example/x"}}
+        other_platform = "linux" if self.platform == "macos" else "macos"
+        new = package(self.base, f"flippy-0.2.2-{other_platform}", other_platform, {"VERSION": "0.2.2\n"})
+        rel = {"version": "0.2.2", "assets": {f"flippy-0.2.2-{self.platform}.tar.gz": "https://example/x"}}
         with mock.patch.object(updates, "latest_release", return_value=rel), \
                 mock.patch.object(updates, "_download", lambda url, dest: __import__("shutil").copy(new, dest)):
             with self.assertRaises(updates.UpdateError):
@@ -135,3 +147,7 @@ class TestPackageInstall(unittest.TestCase):
         with mock.patch.object(updates, "latest_release", return_value={"version": "0.2.1", "assets": {}}):
             res = updates.install(root=self.root, log=lambda *a: None)
         self.assertEqual(res["from"], res["to"])
+
+
+class TestLinuxPackageInstall(TestPackageInstall):
+    runtime_platform = "linux"
