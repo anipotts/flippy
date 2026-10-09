@@ -1,6 +1,6 @@
 # Flippy
 
-An AI tutor that sits on top of your desktop. Press a hotkey, type a question about whatever's on screen, and Claude answers in a small card, with a pointer that flies to the exact button, menu or setting it's talking about.
+An AI tutor that sits on top of your desktop. Press a hotkey, type a question about whatever's on screen, and the selected model answers in a small card, with a pointer that flies to the exact button, menu or setting it's talking about.
 
 [![Install on macOS](https://img.shields.io/badge/Install_on-macOS-111?style=for-the-badge&logo=apple&logoColor=white)](#macos)
 [![Install on Linux (COSMIC)](https://img.shields.io/badge/Install_on-Linux_(COSMIC)-e95420?style=for-the-badge&logo=linux&logoColor=white)](#linux-cosmic)
@@ -9,18 +9,18 @@ Runs on **macOS** (13+, native AppKit) and on **Linux with COSMIC on Wayland** (
 
 ## What it does
 
-- **Ask about your screen.** A hotkey opens a box; Flippy screenshots the screen, sends it to Claude with your question, and shows the answer next to a pointer on the thing it means.
+- **Ask about your screen.** A hotkey opens a box; Flippy screenshots the screen, sends it to the selected model with your question, and shows the answer next to a pointer on the thing it means.
 - **Walkthroughs.** Multi-step answers play step by step: the pointer glides from point to point and the card follows. Pause, step back/forward, seek and change speed from the card.
 - **Circle and ask.** A second hotkey lets you draw on the screen to mark something, then ask about it ("what does this say?").
-- **Tutorials that wait for you.** When Claude walks you through doing something, the steps you have to do yourself wait until you click the thing (on COSMIC, Flippy infers the click from the mouse and the screen reacting; see [docs/linux-port.md](docs/linux-port.md#tutorials-that-wait-for-clicks)). If that click opens a menu or dialog Claude couldn't see yet, Flippy takes a fresh screenshot and Claude carries on from there. Next on the card skips a step. Turn it off with `timing.wait_for_clicks`.
-- **Follow-ups.** Questions share one session, so "and where's bluetooth?" works. `/new` starts fresh; sessions also reset after 15 idle minutes.
+- **Tutorials that wait for you.** When the model walks you through doing something, the steps you have to do yourself wait until you click the thing (on COSMIC, Flippy infers the click from the mouse and the screen reacting; see [docs/linux-port.md](docs/linux-port.md#tutorials-that-wait-for-clicks)). If that click opens a menu or dialog the model couldn't see yet, Flippy takes a fresh screenshot and the model carries on from there. Next on the card skips a step. Turn it off with `timing.wait_for_clicks`.
+- **Follow-ups.** Questions retain bounded conversation context in memory, so "and where's bluetooth?" works. `/new` starts fresh; sessions also reset after 15 idle minutes. Interrupting a Claude reply closes its transport and retains the question and visible partial reply for the next turn, marked as interrupted. Claude sessions use `--no-session-persistence`; Flippy does not write this conversation history to disk.
 - **Themes.** Midnight, Y2K Player, Media Player (a 2000s media player skin), Glass (a lock-screen style card), Terminal, and one that follows your system's accent color (macOS or COSMIC). On macOS 26+, Media Player and Glass sit on real Liquid Glass.
 - **Custom pointers.** Built-in hand, ring, arrow and dot, or draw your own in the 20×24 pixel editor, or import an image and pick its tip.
-- **Check a video edit** (COSMIC for now, macOS next). Press `Super+Shift+V` in your editor, play the edit back, press it again and ask ("is the cut at 0:12 clean?", "does the title stay up long enough?"). Flippy grabs the editor's window a few times a second, in memory only, finds the preview and the cuts, and shows Claude the frames that matter. Claude sees stills, not motion, and can't hear the audio. How it works: [docs/video-review.md](docs/video-review.md).
+- **Check a video edit** (COSMIC for now, macOS next). Press `Super+Shift+V` in your editor, play the edit back, press it again and ask ("is the cut at 0:12 clean?", "does the title stay up long enough?"). Flippy grabs the editor's window a few times a second, in memory only, finds the preview and the cuts, and shows the selected model the frames that matter. The review uses stills, not motion or audio. How it works: [docs/video-review.md](docs/video-review.md).
 - **Help when you're stuck, and tips.** Flippy can watch an app you're learning and offer a hand, or a tip, at the right moment (see below).
-- **Settings window** for model, effort, theme, pointer, sizes, timing, help mode and (on macOS) hotkeys.
+- **Settings window** for provider, independent model/effort preferences, action approvals, theme, pointer, sizes, timing, help mode and (on macOS) hotkeys.
 
-Ordinary questions and tips stay tool-free. On macOS, an explicit `/act` request can use approved desktop tools (see below). Flippy uses your existing **Claude Pro/Max subscription** through the Claude Agent SDK; no API client or key is added.
+Ordinary questions, tips and video reviews stay tool-free. On macOS, an explicit `/act` request enables desktop tools under the selected approval mode (see below). The Claude connection uses your existing **Claude Pro/Max subscription** through the Claude Agent SDK, with no API-key path. The Codex / ChatGPT adapter is under development and acceptance testing; its native login and ephemeral app-server threads do not prove included-only funding. Live Codex inference and release remain gated by [subscription enforcement and capability verification](docs/chatgpt-subscription-gate.md).
 
 ## Install
 
@@ -85,15 +85,34 @@ Press the ask hotkey (`⇧⌘Space` on macOS, `Super+Shift+Space` on COSMIC), ty
 
 For draw mode, press the draw hotkey (`⌃⇧Space` / `Super+Alt`), drag to circle something, release, then type your question. Esc, right-click, the hotkey again, or 60 s of nothing cancels it.
 
-### Approved desktop tasks (macOS)
+### Desktop tasks (macOS)
 
 Put the app you want to use in front, open Flippy's question box, and type `/act <task>`, for example `/act type hello into this empty note`. Or run `flippy-ask act <task>`.
 
-Flippy takes a screenshot, proposes a click, short text entry, shortcut, scroll or drag, and shows the exact input and its reason. Non-ASCII and control characters are escaped; proposals too long to review are refused. **Allow once** permits only that input; **Stop** or leaving the card unanswered for 60 seconds ends the task. Every completed input returns a fresh screenshot to Claude. Press the ask hotkey again or run `flippy-ask dismiss` to cancel, including while typing or dragging. Cleanup releases only input posted by Flippy before another action can start.
+Settings → Automation controls approval:
 
-This uses custom tools inside the existing Agent SDK, with the same configured model, effort, and Claude login. Each task gets its own session so tools and task history don't enter ordinary tutor conversations. Screenshots and tool turns consume your subscription limits. Screen Recording and Accessibility permissions are required; allow Flippy in macOS settings and restart it if needed.
+| Mode | Behavior |
+|---|---|
+| **Ask once per app** (`per_app`, default) | Ask when a task first needs an unapproved app. **Allow app** remembers its bundle ID. Remove it in Settings → Automation → Remembered apps to make the next task ask again. |
+| **Act automatically** (`auto`) | Ordinary apps receive input without an approval card. |
+| **Ask before every input** (`every_input`) | Show the exact click, text entry, shortcut, scroll or drag and its reason. **Allow once** permits only that input. Non-ASCII/control characters are escaped; overlong proposals are refused. |
 
-The first version supports one display, at most 12 inputs per task and 160 characters per text entry, with a five-minute task timeout. Scroll uses 1–10 native wheel lines; drag follows a straight path for 0.6 seconds within the foreground window. Before dispatch, Flippy hides its preview, checks the original target geometry and compares the screen's decoded pixels with the proposed frame. Any difference stops the task, including blinking carets or animation. During drag, intentional window movement is allowed while the app, window and display must remain the same. These checks cannot eliminate the final dispatch race. Actions can affect documents or submit forms, so review every approval. Browser interaction uses your visible desktop and session; there is no browser extension or DOM driver. Linux retains the tutor only.
+Known browsers, terminals, password managers and system settings always require per-input approval in every mode. Targets without a valid app identity also require approval. This bundle-ID classification cannot establish that a particular command is safe; ordinary editors can expose consequential operations too.
+
+**Stop**, the ask hotkey or `flippy-ask dismiss` cancels further input, including while typing or dragging. An unanswered approval expires after 60 seconds. Flippy displays an acting indicator with the stop shortcut. Input cleanup releases only keys/buttons posted by Flippy before another action can start; an interrupted gesture may already have changed the document.
+
+Each completed input returns a fresh screenshot to the selected model. Tasks use isolated model conversations, with no task tools/history entering ordinary tutor follow-ups. Screen Recording and Accessibility permissions are required. Browser interaction uses the visible desktop and session, without a browser extension or DOM driver. Linux retains tutor and review features; desktop actions are currently macOS-only.
+
+| Task bounds | Ask before every input | Other modes |
+|---|---:|---:|
+| Inputs | 12 | 40 |
+| Characters per text entry | 160 | 2,000 |
+| Task timeout | 5 minutes | 10 minutes |
+| Model turns | 16 | 64 |
+
+One display is supported. Scroll uses 1–10 native wheel lines; drag follows a straight path for 0.6 seconds inside the foreground window. Foreground changes during capture get at most four capture attempts, 0.7 seconds apart. Flippy never retries a posted input automatically.
+
+Before input, Flippy hides its preview, recaptures and checks target geometry. It compares local image regions for click/scroll, both endpoints for drag, and the foreground window for typing/keys. Small pixel changes are tolerated; substantial changes stop the task. This usability check can miss small consequential changes and cannot verify meaning or eliminate the final dispatch race. During drag, intentional window movement is allowed while app, window and display identity must remain stable.
 
 ## Isolated local demo
 
@@ -103,7 +122,7 @@ The separate `~/Applications/Flippy Demo.app` uses `dev.flippy.demo`, `~/.config
 
 For acceptance, `scripts/action_fixture.py` provides a disposable native window, and `tests/fixtures/desktop.html` provides a deterministic browser page. Test approval/refusal, focus and pixel changes, typing/drag cancellation and released input. Automated tests do not prove live macOS permissions or input. Release decisions are tracked in [issue #2](https://github.com/kap-il/flippy/issues/2).
 
-For a first check, use a disposable empty TextEdit note: allow typing, verify the text, then repeat and choose **Stop**. Also try dismissing during approval and switching apps before allowing. The automated tests use fake inputs and a real in-memory MCP transport; they never operate your desktop.
+For a first check, choose **Ask before every input** in Settings → Automation and use a disposable empty TextEdit note: allow typing, verify the text, then repeat and choose **Stop**. Also try dismissing during approval and switching apps before allowing. The automated tests use fake inputs and a real in-memory MCP transport; they never operate your desktop.
 
 Everything is also scriptable through `flippy-ask`:
 
@@ -113,10 +132,10 @@ flippy-ask draw             draw mode
 flippy-ask video            start recording your editor; again to stop and ask (COSMIC)
 flippy-ask video ask <q>    ask about the last recording without the box
 flippy-ask q <question>     ask without the box
-flippy-ask act <task>       approved desktop task (macOS)
+flippy-ask act <task>       desktop task using selected approval mode (macOS)
 flippy-ask dismiss          hide the current answer
 flippy-ask pause-toggle     pause or resume the walkthrough on screen
-flippy-ask reset            start a fresh Claude session
+flippy-ask reset            start a fresh model conversation
 flippy-ask settings         open the settings window
 flippy-ask setup            open the first-run setup window
 flippy-ask help-mode quiet  help mode on (or off)
@@ -159,9 +178,14 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 
 | Key | Values |
 |---|---|
+| `provider.mode` | `auto` (default), `claude`, `codex`; automatic selects a sole available subscription and asks you to choose when both are connected |
+| `codex.model` | `default` or an account-supported model slug; live Codex inference remains under acceptance gates |
+| `codex.effort` | `low`, `medium` (default), `high`, `xhigh`; the selected model must support the value |
+| `act.mode` | `per_app` (default), `auto`, `every_input`; see desktop task approvals above |
+| `act.allowed_apps` | TOML string array of remembered macOS bundle IDs, e.g. `["com.apple.TextEdit"]`; remove an app in Settings → Automation |
 | `claude.model` | `default`, `opus`, `sonnet`, `haiku` |
 | `claude.effort` | `low`, `medium`, `high`, `max` |
-| `claude.image` | screenshot size sent to Claude: `1366`, `1920`, `0` (full) |
+| `claude.image` | screenshot long edge: `1366`, `1920`, `0` (full) |
 | `look.theme` | `midnight`, `y2k`, `mediaplayer`, `glass`, `terminal`, `cosmic` |
 | `look.player_shine` | `wmp` (gloss bars) or `none`: reflections on the Media Player theme's Liquid Glass (macOS) |
 | `look.pointer` | `theme`, `hand`, `ring`, `arrow`, `dot`, `glass` (Liquid Glass lens), `glasshand`, or `custom:<name>` |
@@ -172,7 +196,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `timing.wait_for_clicks` | `true` (default): tutorial steps wait until you click the thing |
 | `help.mode` | `off`, `quiet` (offer a hand when stuck), `tips` (that, plus cached tips) |
 | `help.apps`, `help.muted` | comma-separated app ids (macOS bundle ids, e.g. `com.ableton.live`; Wayland app ids on COSMIC, e.g. `io.lmms.LMMS`) |
-| `automation.clicks` | `false` (default) or `true`: lets `flippy-ask click <x> <y> [double]` click on screen (macOS, needs the Accessibility permission). When on, any program running as you can make Flippy click. `/act` uses its separate per-input approval and does not enable scripted clicks. |
+| `automation.clicks` | `false` (default) or `true`: lets `flippy-ask click <x> <y> [double]` click on screen (macOS, needs the Accessibility permission). When on, any program running as you can make Flippy click. `/act` uses its separate approval policy and does not enable scripted clicks. |
 | `updates.check` | `true` (default): look for a new release once a day |
 | `keys.pause` | `double-cmd` (default), `double-option`, `double-ctrl`, `double-shift` or `off`: pause/resume a walkthrough (macOS, needs the Accessibility permission; on COSMIC, bind `flippy-ask pause-toggle` to a shortcut) |
 | `keys.ask`, `keys.draw` | macOS hotkeys, e.g. `cmd+shift+space` (modifiers: `cmd`, `ctrl`, `option`, `shift`) |
@@ -212,7 +236,7 @@ rm -rf ~/.config/flippy   # settings and custom pointers, if you want them gone 
 ```
 install.sh  picks scripts/install_mac.sh or scripts/install_linux.sh
 bin/        flippy-ask (CLI, talks to the daemon over a Unix socket), flippy-daemon (launcher)
-flippy/     shared: daemon (controller), Claude brain, overlay painting, POINT-tag parsing, themes, settings
+flippy/     shared: daemon (controller), provider routing and Claude brain, overlay painting, POINT-tag parsing, themes, settings
 flippy/linux/  GTK + gtk4-layer-shell windows, portal screenshots, Wayland watcher (help mode, clicks), panel icon, settings, setup
 flippy/mac/    AppKit overlay and windows, screencapture, Carbon hotkeys, menu bar, first-run setup
 packaging/macos/  Flippy.app launcher (Swift) and icon

@@ -7,6 +7,7 @@ shortcuts file (backed up first), which COSMIC picks up right away.
 import os
 import shutil
 import subprocess
+import shlex
 
 import gi
 
@@ -15,6 +16,7 @@ from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from . import desktop  # noqa: E402
 from .settings_window import SHORTCUTS, flippy_shortcuts, pretty_accel  # noqa: E402
+from .. import settings
 
 ASK = os.path.expanduser("~/.local/bin/flippy-ask")
 
@@ -26,11 +28,13 @@ WANTED = [("Ask about the screen", "", ["Super", "Shift"], "space"),
 
 
 def claude_logged_in():
-    return os.path.exists(os.path.expanduser("~/.claude/.credentials.json"))
+    from ..providers import CONNECTION_STATUS
+    return CONNECTION_STATUS["claude"] is True
 
 
 def needs_setup():
-    return not claude_logged_in()
+    from ..providers import setup_ready
+    return not setup_ready()
 
 
 def claude_cli():
@@ -43,6 +47,19 @@ def claude_cli():
 def open_login_terminal():
     """Run `claude` in a terminal so they can /login with their Pro/Max account."""
     cmd = f"unset ANTHROPIC_API_KEY; '{claude_cli()}'; exec $SHELL"
+    for term in (["gnome-terminal", "--"], ["x-terminal-emulator", "-e"], ["kgx", "--"], ["xterm", "-e"]):
+        if shutil.which(term[0]):
+            subprocess.Popen(term + ["sh", "-c", cmd], start_new_session=True)
+            return True
+    return False
+
+
+def open_codex_login():
+    cli = shutil.which("codex")
+    if not cli:
+        subprocess.Popen(["xdg-open", "https://developers.openai.com/codex/cli/"])
+        return False
+    cmd = "unset OPENAI_API_KEY CODEX_API_KEY; " + shlex.quote(cli) + " -c 'forced_login_method=\"chatgpt\"' login"
     for term in (["gnome-terminal", "--"], ["x-terminal-emulator", "-e"], ["kgx", "--"], ["xterm", "-e"]):
         if shutil.which(term[0]):
             subprocess.Popen(term + ["sh", "-c", cmd], start_new_session=True)
@@ -101,6 +118,15 @@ class SetupWindow(Adw.Window):
         btn.connect("clicked", lambda *_: open_login_terminal())
         self.login_row.add_suffix(btn)
         g.add(self.login_row)
+        codex = Adw.ActionRow(title="ChatGPT via Codex", subtitle="API keys are refused. Included-only credit enforcement is still under verification.")
+        self.codex_mark = Gtk.Image(valign=Gtk.Align.CENTER)
+        codex.add_prefix(self.codex_mark)
+        sign_in = Gtk.Button(label="Sign in…", valign=Gtk.Align.CENTER)
+        sign_in.connect("clicked", lambda *_: open_codex_login())
+        codex.add_suffix(sign_in)
+        g.add(codex)
+        from .settings_window import combo_row
+        g.add(combo_row("Use", "Choose one if both subscriptions are connected", "provider", "mode", settings.options("provider", "mode")))
         page.add(g)
 
         self.keys = Adw.PreferencesGroup(title="2. Keyboard shortcuts",
@@ -132,6 +158,8 @@ class SetupWindow(Adw.Window):
     def _refresh(self):
         ok = claude_logged_in()
         self.login_mark.set_from_icon_name("emblem-ok-symbolic" if ok else "dialog-warning-symbolic")
+        from ..providers import CONNECTION_STATUS
+        self.codex_mark.set_from_icon_name("emblem-ok-symbolic" if CONNECTION_STATUS["codex"] is True else "dialog-warning-symbolic")
         have = {args for _, args in flippy_shortcuts()}
         bound = {args: pretty_accel(accel) for accel, args in flippy_shortcuts()}
         key = tuple(sorted(bound.items()))
