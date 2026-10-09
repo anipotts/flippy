@@ -6,7 +6,7 @@ outside this module lets the tool contract be tested without a desktop or Claude
 import asyncio
 import json
 import threading
-from dataclasses import dataclass
+from .frames import ScreenFrame as Screenshot
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
@@ -30,17 +30,8 @@ class ActionError(Exception):
     """A fixed, user-readable refusal; never wrap a raw backend exception in this."""
 
 
-@dataclass(frozen=True)
-class Screenshot:
-    jpeg: str
-    size: tuple[int, int]
-    logical_size: tuple[float, float]
-    target: tuple  # platform's foreground app/window/display identity, checked again before input
-
-    def content(self):
-        w, h = self.size
-        return [{"type": "text", "text": f"Screenshot: {w}x{h} pixels; origin top-left."},
-                {"type": "image", "data": self.jpeg, "mimeType": "image/jpeg"}]
+class InputCleanupError(ActionError):
+    """Native release failed; the controller must disable input until restart."""
 
 
 class DesktopTools:
@@ -60,6 +51,8 @@ class DesktopTools:
             try:
                 if self.cancel.is_set():
                     raise ActionError("Task stopped. Start a new /act request to continue.")
+                if name == "screenshot":
+                    self._validate(name, args)
                 if name != "screenshot":
                     if self.snapshot is None:
                         raise ActionError("Take a screenshot before acting.")
@@ -90,54 +83,78 @@ class DesktopTools:
                         "is_error": True}
 
     def _validate(self, name, args):
-        if name == "click":
+        spec = TOOL_CATALOG.get(name)
+        if not isinstance(args, dict) or spec is None or set(args) != set(spec["schema"].get("required", [])):
+            raise ActionError("Invalid action arguments.")
+        if name == "screenshot":
+            return
+        reason = args["reason"]
+        if not isinstance(reason, str) or not 1 <= len(reason) <= 120:
+            raise ActionError("Invalid action reason.")
+        if name in ("click", "scroll", "drag"):
             w, h = self.snapshot.size
-            x, y = args["x"], args["y"]
-            if type(x) is not int or type(y) is not int or not (0 <= x < w and 0 <= y < h):
-                raise ActionError("Click is outside the screenshot.")  # never clamp an input coordinate
+            pairs = [(args["x"], args["y"])]
+            if name == "drag":
+                pairs.append((args["to_x"], args["to_y"]))
+            if any(type(x) is not int or type(y) is not int or not (0 <= x < w and 0 <= y < h)
+                   for x, y in pairs):
+                raise ActionError("Action is outside the screenshot.")
+            if name == "drag":
+                mods = args["modifiers"]
+                if (pairs[0] == pairs[1] or not isinstance(mods, list)
+                        or any(not isinstance(m, str) or m not in MODIFIERS for m in mods)
+                        or len(set(mods)) != len(mods)):
+                    raise ActionError("Invalid drag.")
+            if name == "scroll" and (args["direction"] not in DIRECTIONS
+                                      or type(args["lines"]) is not int or not 1 <= args["lines"] <= 10):
+                raise ActionError("Invalid scroll.")
         elif name == "type":
             text = args["text"]
             if not isinstance(text, str) or not text or len(text) > MAX_TEXT or "\0" in text:
                 raise ActionError("Invalid text.")
             try:
-                text.encode("utf-16-le")  # refuse unpaired surrogates before showing approval
+                text.encode("utf-16-le")
             except UnicodeError:
                 raise ActionError("Invalid text.") from None
-        elif name == "key":
-            if args["combo"] not in KEYS:
-                raise ActionError("Unsupported shortcut.")
-        else:
-            raise ActionError("Unknown action.")
+        elif name == "key" and args["combo"] not in KEYS:
+            raise ActionError("Unsupported shortcut.")
 
     def server(self):
-        reason = {"type": "string", "minLength": 1, "maxLength": 120,
-                  "description": "What this action will accomplish."}
+        adapters = []
+        for name, spec in TOOL_CATALOG.items():
+            async def handle(args, name=name):
+                return await self.invoke(name, args)
+            adapters.append(tool(name, spec["description"], spec["schema"])(handle))
+        return create_sdk_mcp_server("desktop", tools=adapters)
 
-        def schema(properties):
-            return {"type": "object", "properties": {**properties, "reason": reason},
-                    "required": [*properties, "reason"], "additionalProperties": False}
 
-        @tool("screenshot", "See the main display. Required before the first action.",
-              {"type": "object", "properties": {}, "additionalProperties": False})
-        async def screenshot(args):
-            return await self.invoke("screenshot", args)
+MODIFIERS = ("cmd", "shift", "option", "ctrl")
+DIRECTIONS = ("up", "down", "left", "right")
+_COORD = {"type": "integer", "minimum": 0}
 
-        @tool("click", "Click a point in the latest screenshot; returns the resulting screen.",
-              schema({"x": {"type": "integer", "minimum": 0}, "y": {"type": "integer", "minimum": 0}}))
-        async def click(args):
-            return await self.invoke("click", args)
 
-        @tool("type", "Type into the focused field; waits until finished and returns the resulting screen.",
-              schema({"text": {"type": "string", "minLength": 1, "maxLength": MAX_TEXT}}))
-        async def type_text(args):
-            return await self.invoke("type", args)
+def _schema(properties):
+    properties = {**properties, "reason": {"type": "string", "minLength": 1, "maxLength": 120}}
+    return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
 
-        @tool("key", "Press a supported Mac shortcut; returns the resulting screen.",
-              schema({"combo": {"type": "string", "enum": list(KEYS)}}))
-        async def key(args):
-            return await self.invoke("key", args)
 
-        return create_sdk_mcp_server("desktop", tools=[screenshot, click, type_text, key])
+TOOL_CATALOG = {
+    "screenshot": {"description": "See the main display before acting.",
+                   "schema": {"type": "object", "properties": {}, "additionalProperties": False}},
+    "click": {"description": "Click a point and return the resulting screen.", "schema": _schema({"x": _COORD, "y": _COORD})},
+    "type": {"description": "Type into the focused field and return the resulting screen.",
+             "schema": _schema({"text": {"type": "string", "minLength": 1, "maxLength": MAX_TEXT}})},
+    "key": {"description": "Press a supported shortcut and return the resulting screen.",
+            "schema": _schema({"combo": {"type": "string", "enum": list(KEYS)}})},
+    "scroll": {"description": "Scroll at a point by bounded wheel lines and return the resulting screen.",
+               "schema": _schema({"x": _COORD, "y": _COORD,
+                                  "direction": {"type": "string", "enum": list(DIRECTIONS)},
+                                  "lines": {"type": "integer", "minimum": 1, "maximum": 10}})},
+    "drag": {"description": "Drag along a straight path in 0.6 seconds and return the resulting screen.",
+             "schema": _schema({"x": _COORD, "y": _COORD, "to_x": _COORD, "to_y": _COORD,
+                                "modifiers": {"type": "array", "items": {"type": "string", "enum": list(MODIFIERS)},
+                                              "uniqueItems": True, "maxItems": 4}})},
+}
 
 
 def approval_text(name, args):
