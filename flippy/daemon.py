@@ -17,7 +17,9 @@ import threading
 import time
 
 from . import loop, onboarding, settings, themes, tips, updates, video, watch
-from .brain import Brain, BrainError
+from .brain import BrainError
+from .providers import Brain, ProviderChoiceRequired
+from .codex_provider import CodexError
 from .frames import prepare_frame
 from .requests import Request
 from .profile import current, Instance
@@ -79,11 +81,10 @@ class Flippy:
         self.marked = False      # next question is about what the user drew
         self.gen = 0
         self.request = None
-        self.allowed_apps = set(settings.get("act", "allowed_apps"))
         self.input_disabled = False
         self.input_worker = None
         self.quitting = False
-        self.followup_token = None
+        # Give Python's OS signal handlers a bounded main-thread wakeup while idle.
         loop.timeout_add(250, lambda: not self.quitting)
         self.background_futures = set()
         self.fade_animation_id = 0
@@ -94,6 +95,7 @@ class Flippy:
         self.busy = False
         self.action_tools = None
         self.action_future = None
+        self.allowed_apps = set(settings.get("act", "allowed_apps"))
         self.tutorial = False    # the current answer is a tutorial: its ":click" steps wait for their click
         self.fade_id = 0
         self.fading = False
@@ -120,6 +122,8 @@ class Flippy:
         LISTENERS.append(self.tour.on_event)
         loop.timeout_add(3000, self._maybe_start_tour)
         self._run(self.brain.start(), lambda r, e: log("claude session ready" if not e else f"session start failed: {e}"))
+        self.connection_future = None
+        loop.timeout_add(5000, self._connection_tick)
 
         ui.listen(SOCK_PATH, self.command)
         os.chmod(SOCK_PATH, 0o600)
@@ -127,6 +131,16 @@ class Flippy:
         log(f"listening on {SOCK_PATH}")
 
     # --- plumbing ---
+    def _connection_tick(self):
+        if self.quitting:
+            return False
+        from .providers import setup_ready
+        if not self.busy and (not setup_ready() or getattr(self.ui, "setup_win", None)):
+            if self.connection_future is None or self.connection_future.done():
+                self.connection_future = self._run(self.brain.connections(), lambda r, e: None)
+        return True
+
+
     def _maybe_start_tour(self):
         if self.quitting:
             return False
@@ -689,7 +703,7 @@ class Flippy:
                 "permission": "Check macOS Screen Recording and Accessibility permissions.",
                 "operation_failed": "The operation failed or timed out.",
             }
-            message = messages[reason]
+            message = error.safe_message if isinstance(error, CodexError) else messages[reason]
             self._fail("Desktop task stopped: " + message + " Check the screen before continuing.")
         else:
             self.overlay.show_text(result)
@@ -1338,9 +1352,11 @@ class Flippy:
 
     def _on_setting(self, section, key, value):
         log("setting changed")
-        if section == "claude" and key in ("model", "effort"):
+        if section in ("claude", "codex", "provider") and key in ("model", "effort", "mode"):
             if self.request and self.request.pending:
                 self.dismiss()
+            for future in tuple(self.background_futures):
+                future.cancel()
             self._apply_claude_settings()
         elif section == "act" and key == "mode":
             if self.action_tools:
@@ -1361,7 +1377,10 @@ class Flippy:
     def _apply_claude_settings(self):
         model, effort = settings.get("claude", "model"), settings.get("claude", "effort")
         self.brain.configure(None if model == "default" else model, effort)
-        self.overlay.meta = f"{'CLAUDE' if model == 'default' else model.upper()} · {effort.upper()}"
+        provider = settings.get("provider", "mode")
+        if provider == "codex":
+            model, effort = settings.get("codex", "model"), settings.get("codex", "effort")
+        self.overlay.meta = f"{provider.upper() if model == 'default' else model.upper()} · {effort.upper()}"
 
     def _apply_theme(self):
         theme = themes.get(settings.get("look", "theme"))
@@ -1582,17 +1601,21 @@ def wants_tutorial(question):
 
 
 def _friendly_error(err):
+    if isinstance(err, ProviderChoiceRequired):
+        return str(err)
+    if isinstance(err, CodexError) and getattr(err, "safe_message", None):
+        return err.safe_message
     s = str(err) or type(err).__name__
     low = s.lower()
     if isinstance(err, (asyncio.TimeoutError, TimeoutError)):
-        return "Claude took too long to answer. Try again."
+        return "The model took too long to answer. Try again."
     if "rate_limit" in low or "usage limit" in low or "limit reached" in low or "429" in low:
-        return f"Usage limit hit on your Claude plan. ({s})"
+        return "Subscription usage limit reached. No provider fallback was attempted."
     if "authentication" in low or "login" in low or "401" in low:
-        return "Not logged in to Claude Code. Run `claude` in a terminal and /login."
+        return "Connect your subscription in Setup, then try again."
     if "network" in low or "connect" in low or "dns" in low or "offline" in low:
-        return f"Can't reach Claude (network?). ({s})"
-    return f"Something went wrong: {s}"
+        return "Could not reach the model. Check the connection."
+    return "The model request failed. Check your connection and subscription in Setup."
 
 
 def main():

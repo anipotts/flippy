@@ -16,7 +16,7 @@ from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 from .. import loop, settings
 from ..profile import current
 from . import hotkeys
-from .widgets import Form, button, checkbox, label
+from .widgets import Form, button, checkbox, label, popup
 
 APP = os.environ.get("FLIPPY_APP")  # set by Flippy.app's launcher; None when run from a terminal
 AGENT_LABEL = current().bundle_id
@@ -27,12 +27,8 @@ WIDTH = 560
 
 # ---- checks
 def claude_logged_in():
-    """Claude Code keeps its login in the keychain (or ~/.claude/.credentials.json)."""
-    if os.path.exists(os.path.expanduser("~/.claude/.credentials.json")):
-        return True
-    r = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return r.returncode == 0
+    from ..providers import CONNECTION_STATUS
+    return CONNECTION_STATUS["claude"] is True
 
 
 def screen_ok():
@@ -40,7 +36,8 @@ def screen_ok():
 
 
 def needs_setup():
-    return not (claude_logged_in() and screen_ok())
+    from ..providers import setup_ready
+    return not (setup_ready() and screen_ok())
 
 
 def claude_cli():
@@ -55,6 +52,19 @@ def open_login_terminal():
     """Run `claude` in Terminal so the user can /login with their Pro/Max account."""
     cmd = f"unset ANTHROPIC_API_KEY; '{claude_cli()}'"
     script = f'tell application "Terminal" to do script "{cmd}"\ntell application "Terminal" to activate'
+    subprocess.Popen(["osascript", "-e", script])
+
+
+def open_codex_login():
+    # The owner completes Codex's native browser flow; Flippy never handles tokens.
+    import shutil
+    import shlex
+    cli = shutil.which("codex")
+    if not cli:
+        subprocess.Popen(["open", "https://developers.openai.com/codex/cli/"])
+        return
+    command = "unset OPENAI_API_KEY CODEX_API_KEY; " + shlex.quote(cli) + " -c 'forced_login_method=\"chatgpt\"' login"
+    script = 'tell application "Terminal" to do script ' + __import__('json').dumps(command)
     subprocess.Popen(["osascript", "-e", script])
 
 
@@ -109,8 +119,13 @@ class SetupWindow:
                                      "Two quick steps and you're set.")
 
         f.y += 6
-        f.row("1. Log in to Claude", "Flippy uses your Claude Pro or Max plan through Claude Code, not API credits.",
+        f.row("1. Connect your subscription", "Use Claude Code or Codex / ChatGPT. If both are connected, choose one below.",
               button("Log in…", open_login_terminal, self.keep), mark=self._mark("claude"))
+        f.row("ChatGPT via Codex", "API-key connections are refused. Included-only credit enforcement is still under verification.",
+              button("Sign in…", open_codex_login, self.keep), mark=self._mark("codex"))
+        f.row("Use", "Auto selects the only connected subscription. Changing provider starts a fresh conversation.",
+              popup(settings.options("provider", "mode"), settings.get("provider", "mode"),
+                    lambda value: settings.set("provider", "mode", value), self.keep))
         f.y += 6
         f.row("2. Allow screen recording", "Flippy sends a screenshot with each question so Claude can see what "
                                            "you mean. macOS applies it after Flippy restarts.",
@@ -157,7 +172,8 @@ class SetupWindow:
         return mark
 
     def _refresh(self):
-        for key, ok in (("claude", claude_logged_in()), ("screen", screen_ok())):
+        from ..providers import CONNECTION_STATUS
+        for key, ok in (("claude", claude_logged_in()), ("codex", CONNECTION_STATUS["codex"] is True), ("screen", screen_ok())):
             mark = self.marks[key]
             mark.setStringValue_("✓" if ok else "○")
             mark.setTextColor_(NSColor.systemGreenColor() if ok else NSColor.tertiaryLabelColor())

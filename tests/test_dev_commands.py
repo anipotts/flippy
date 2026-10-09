@@ -50,7 +50,8 @@ class TestDevCommands(unittest.TestCase):
         self.assertEqual(result['profile'],'demo')
         self.assertTrue(result['input_disabled'])
         self.assertEqual(result['permissions'], {'accessibility':False,'screen_recording':False})
-        self.assertEqual(set(result),{'root','pid','app','profile','version','busy','input_disabled','permissions'})
+        self.assertEqual(set(result),{'root','pid','app','profile','version','busy','input_disabled','permissions','last_action'})
+        self.assertIsNone(result['last_action'])
 
     def test_owned_quit_accepts_canonical_equivalent_checkout(self):
         spelling=str(ROOT / 'flippy' / '..')

@@ -10,14 +10,14 @@ import subprocess
 import cairo
 from AppKit import (NSAlert, NSAlertFirstButtonReturn, NSApp, NSBackingStoreBuffered, NSEvent,
                     NSEventMaskKeyDown, NSScrollView, NSTabView, NSTabViewItem, NSWindow,
-                    NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskTitled)
+                    NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskTitled, NSTextField)
 from Foundation import NSMakeRect, NSObject
 
 from .. import pointers, settings, themes, updates
 from . import hotkeys, pointer_editor
 from .cairoview import cairo_view
 from .system import appearance
-from .widgets import Form, button, checkbox, label, popup, set_popup, slider
+from .widgets import Form, button, checkbox, label, popup, set_popup, slider, target
 
 MODELS = settings.options('claude', 'model')
 EFFORTS = settings.options('claude', 'effort')
@@ -118,7 +118,7 @@ class SettingsWindow:
         self.win.setReleasedWhenClosed_(False)
         self.win.center()
         tabs = NSTabView.alloc().initWithFrame_(NSMakeRect(0, 0, WIDTH, HEIGHT))
-        for title, form in (("Appearance", self._appearance(on_preview)), ("Claude", self._claude(on_reset)),
+        for title, form in (("Appearance", self._appearance(on_preview)), ("Models", self._claude(on_reset)),
                             ("Automation", self._actions()),
                             ("Timing", self._timing(on_preview)), ("Hotkeys", self._hotkeys())):
             item = NSTabViewItem.alloc().initWithIdentifier_(title)
@@ -247,11 +247,22 @@ class SettingsWindow:
     def _claude(self, on_reset):
         f = Form(WIDTH - 40)
         self.keep.append(f)
-        f.group("Model", "Changes apply from your next question (it starts a fresh session).")
+        f.group("Connection", "Uses your signed-in subscription. Changing the connection starts a fresh session.")
+        f.row("Provider", None, self._setting_popup(f, "provider", "mode", settings.options("provider", "mode")))
+        f.group("Claude", "Model and effort apply when Claude is selected.")
         f.row("Model", None, self._setting_popup(f, "claude", "model", MODELS))
         f.row("Effort", "Higher thinks more carefully but answers slower", self._setting_popup(f, "claude", "effort", EFFORTS))
         f.row("Screenshot detail", "Sharper helps with tiny icons but uses more of your plan",
               self._setting_popup(f, "claude", "image", IMAGES))
+        f.group("Codex / ChatGPT", "Uses the Codex sign-in. Model and effort apply when Codex is selected.")
+        model = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 220, 26))
+        model.setStringValue_(settings.get("codex", "model"))
+        callback = target(self._codex_model_changed)
+        f.keep.append(callback)
+        model.setTarget_(callback)
+        model.setAction_("fire:")
+        f.row("Model", "default uses the account model; press Return to apply", model)
+        f.row("Effort", None, self._setting_popup(f, "codex", "effort", settings.options("codex", "effort")))
         f.group("Session")
         f.row("Start fresh session", "Forget the conversation so far", button("Reset", on_reset, f.keep))
         f.group("Updates", f"You have Flippy {updates.current_version()}.")
@@ -260,7 +271,11 @@ class SettingsWindow:
         f.row("Check now", None, button("Check", lambda: self.command("update"), f.keep))
         return f
 
-
+    def _codex_model_changed(self, field):
+        try:
+            settings.set("codex", "model", field.stringValue().strip())
+        except ValueError:
+            field.setStringValue_(settings.get("codex", "model"))
 
     def _actions(self):
         f = Form(WIDTH - 40)

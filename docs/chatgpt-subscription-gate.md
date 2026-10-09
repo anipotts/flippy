@@ -1,13 +1,28 @@
 # ChatGPT subscription-only implementation gate
 
-Status: blocked before provider implementation. Documentation reviewed on
-2026-10-08. No OAuth registration, account access, inference request, credit
-balance read or billing-setting change was performed for this review.
+Status: live ChatGPT inference and release are blocked on included-only funding
+and capability verification. Documentation reviewed on 2026-10-08. No OAuth
+registration, inference request, credit-balance read or billing-setting change was
+performed for this documentation review.
 
 The contribution requires included subscription usage only: no API-key billing,
 credits consumption or automatic funding fallback. Shared settings and Claude
-improvements can proceed independently. This document is not a claim that
-ChatGPT subscription integration is unavailable.
+improvements can proceed independently.
+
+Two integration routes have different implementation status:
+
+- **Codex app-server:** an adapter is being implemented around the user's existing
+  native ChatGPT login and ephemeral threads. It checks native account type and
+  rejects API-key accounts. Mocked protocol work does not establish working live
+  inference, tool-free tutor behavior or zero-credit enforcement. These remain
+  release and live-test gates.
+- **Native Sign in with ChatGPT + Responses:** the proposed direct OAuth route
+  remains blocked before implementation on the funding and eligibility evidence
+  below. No new OAuth flow or credential store is introduced by the Codex route.
+
+Neither route's connection label or authentication success proves that usage
+cannot draw from credits. The [official app-server documentation](https://developers.openai.com/codex/app-server)
+describes the runtime interface; it does not replace the funding contract.
 
 ## Verified documentation and remaining uncertainty
 
@@ -46,7 +61,7 @@ These are documentation observations, not a proof that no suitable control
 exists. Do not infer enforcement from a local remaining-usage estimate, a request
 preflight or an account with no purchased credits.
 
-## Evidence required before implementation
+## Evidence required before direct OAuth implementation or live Codex acceptance
 
 1. Obtain an official contract identifying the supported control that enables
    included allowance while denying credits for the issued Flippy client/profile.
@@ -63,8 +78,12 @@ preflight or an account with no purchased credits.
 
 Any account-control change or live billing verification retains its native
 approval boundary. An agent or maintainer's project approval cannot replace the
-funding contract. If enforcement cannot be established, keep the provider absent;
-do not add a warning, opt-in checkbox, API-key fallback or speculative OAuth path.
+funding contract. If enforcement cannot be established, keep live ChatGPT
+inference disabled. Do not use a warning or opt-in checkbox as proof, introduce an
+API-key fallback, or build the speculative direct OAuth path. For Codex, also
+verify that ordinary tutor/tip/video requests expose no action or built-in tools,
+that desktop tasks expose only the intended catalog, and that ephemeral threads
+avoid runtime persistence under the supported contract.
 
 ## Project eligibility and license
 
@@ -74,6 +93,9 @@ Flippy itself. Kap must choose the project license or obtain explicit integratio
 eligibility confirmation. This contribution does not select or add a license on
 his behalf.
 
-Once both gates pass, resume the agreed native Python sign-in/provider plan and
-add its mocked protocol tests and explicitly approved live acceptance evidence.
-Until then, the application retains its existing Claude connection.
+Once the funding and applicable route's eligibility gates pass, run explicitly
+approved live acceptance against the exact adapter revision. The direct OAuth
+route additionally needs the agreed native sign-in implementation and its
+protocol/security tests. Until then, Claude remains the demonstrated inference
+connection; provider selection and a Codex adapter must not be described as
+verified live ChatGPT functionality.
