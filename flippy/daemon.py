@@ -45,10 +45,9 @@ LISTENERS = []  # raw in-memory UI events remain available to the onboarding tou
 
 
 def log(*args):
-    first = str(args[0]) if args else ""
-    category = next((c for c in ("error", "control", "tutorial", "update", "claude", "session", "listening", "help", "draw", "tip")
-                     if first.lower().startswith(c)), "diagnostic")
-    print(time.strftime("%H:%M:%S"), category, file=sys.stderr, flush=True)
+    """Operational lines for ~/Library/Logs/flippy.log (why a task stopped, update checks, help mode...).
+    Never pass a question, an answer or typed text here: those stay out of the log (see flippy/diagnostics.py)."""
+    print(time.strftime("%H:%M:%S"), *args, file=sys.stderr, flush=True)
 
 
 def event(name, **data):

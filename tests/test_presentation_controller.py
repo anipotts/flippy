@@ -51,13 +51,17 @@ class ControllerTests(unittest.TestCase):
         h,calls=self.host(); h.submit=lambda q:None
         with tempfile.TemporaryDirectory() as tmp:
             d=Diagnostics(str(Path(tmp)/'events'))
-            with patch.object(daemon,'diagnostics',d):
-                h.command('q private question')
-                self.assertNotIn('private question',Path(d.path).read_text())
-                self.assertEqual(h.command(' '),'unknown command')
             output=io.StringIO()
-            with contextlib.redirect_stderr(output): daemon.log('error: private content', 'secret')
-            self.assertNotIn('private',output.getvalue()); self.assertNotIn('secret',output.getvalue())
+            with patch.object(daemon,'diagnostics',d), contextlib.redirect_stderr(output):
+                h.command('q private question')
+                self.assertEqual(h.command(' '),'unknown command')
+            self.assertNotIn('private question',Path(d.path).read_text())
+            self.assertNotIn('private question',output.getvalue())  # nor in the log
+            # log() itself prints its message: operational lines (why a task stopped, update checks) are the log's
+            # whole point; callers never pass questions, answers or typed text
+            output=io.StringIO()
+            with contextlib.redirect_stderr(output): daemon.log('act: ended after 2 input(s), none')
+            self.assertIn('act: ended after 2 input(s), none',output.getvalue())
 
     def test_onboarding_receives_raw_in_memory_event_without_disk_content(self):
         with tempfile.TemporaryDirectory() as tmp:

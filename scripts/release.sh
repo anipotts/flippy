@@ -15,16 +15,20 @@ git fetch -q origin main
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || { echo "main isn't in sync with origin/main" >&2; exit 1; }
 git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null && { echo "v$VERSION already exists" >&2; exit 1; }
 
+BEFORE="$(git rev-parse HEAD)"
 if [ "$(cat VERSION)" != "$VERSION" ]; then
     echo "$VERSION" > VERSION
     git commit -q -m "Release $VERSION" VERSION
 fi
+# If any check below fails, take the unpushed "Release X" commit back off main, so the next try starts clean.
+trap 'echo "release failed; undoing the version commit" >&2; git reset -q --keep "$BEFORE"' ERR
 # Verify the exact release commit before creating any tag or publishing it.
-PYTHON="${FLIPPY_PYTHON:-python3}"
+PYTHON="${FLIPPY_PYTHON:-$( [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3 )}"
 "$PYTHON" -m unittest discover -s tests
 bash -n install.sh scripts/install_mac.sh scripts/install_linux.sh scripts/package.sh
 scripts/package.sh
 [ -z "$(git status --porcelain)" ] || { echo "checks changed the release tree" >&2; exit 1; }
+trap - ERR
 git tag -a "v$VERSION" -m "Flippy $VERSION"
 git push -q origin main "v$VERSION"
 gh release create "v$VERSION" --title "Flippy $VERSION" --notes "$NOTES" \
