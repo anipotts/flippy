@@ -141,6 +141,15 @@ class TestTools(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.tools.cleanup_failed)
         self.assertTrue(self.tools.cancel.is_set())
 
+    async def test_held_input_is_its_own_reason_not_a_cleanup_failure(self):
+        from flippy.actions import InputHeldError
+        await self.tools.invoke("screenshot", {})
+        self.desktop.error = InputHeldError("Let go of the keyboard and mouse while Flippy acts.")
+        result = await self.tools.invoke("key", {"combo": "return", "reason": "press"})
+        self.assertTrue(result["is_error"])
+        self.assertEqual(self.tools.failure_code, "input_held")
+        self.assertFalse(self.tools.cleanup_failed)  # nothing was pressed, so nothing needs a restart
+
     async def test_bounded_scroll_and_drag(self):
         await self.tools.invoke("screenshot", {})
         for name, args in (("scroll", {"x": 30, "y": 40, "direction": "left", "lines": 10, "reason": "pan"}),

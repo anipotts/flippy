@@ -31,10 +31,17 @@ Keep your final reply short and plain text. Do not emit POINT tags or click-gate
 
 class ActionError(Exception):
     """A fixed, user-readable refusal; never wrap a raw backend exception in this."""
+    code = None  # the controller's reason code; None = classify from the message
 
 
 class InputCleanupError(ActionError):
     """Native release failed; the controller must disable input until restart."""
+    code = "cleanup_failed"
+
+
+class InputHeldError(ActionError):
+    """A real key or mouse button was still down when Flippy was about to act. Nothing to clean up."""
+    code = "input_held"
 
 
 def app_id(target):
@@ -120,6 +127,7 @@ class DesktopTools:
         self.snapshot = None
         self.actions = 0
         self.failure = None
+        self.failure_code = None
         self.cleanup_failed = False
 
     def stop(self):
@@ -158,6 +166,8 @@ class DesktopTools:
                 raise
             except Exception as err:
                 self.cleanup_failed = self.cleanup_failed or isinstance(err, InputCleanupError)
+                if self.failure is None and isinstance(err, ActionError):
+                    self.failure_code = err.code
                 self.stop()  # no later tool, including a queued parallel call, may act after a failure
                 self.failure = self.failure or (str(err) if isinstance(err, ActionError) else "Desktop operation failed.")
                 return {"content": [{"type": "text", "text": f"Task stopped: {self.failure}"}],

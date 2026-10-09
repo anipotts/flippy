@@ -57,6 +57,18 @@ class TestActionResults(unittest.TestCase):
                 f.overlay.show_text.assert_not_called()
                 event.assert_called_once_with('action_result',request_id=17,count=0,outcome='stopped',reason_code=code)
 
+    def test_reason_code_from_the_refusal_wins_over_its_wording(self):
+        # "Let go of the keyboard..." used to read as a release failure ("restart Flippy") by word matching
+        for failure, code in (("Let go of the keyboard and mouse while Flippy acts.", "input_held"),
+                              ("Release physical keys and mouse buttons before Flippy acts.", "input_held")):
+            with self.subTest(failure=failure):
+                tools=SimpleNamespace(failure=failure,failure_code=code,actions=1,cleanup_failed=False)
+                f,event=controller(tools)
+                f._action_done(tools,SimpleNamespace(identity=20),None,None)
+                self.assertEqual(f.last_action['reason_code'],'input_held')
+                self.assertFalse(f.last_action['cleanup_failed'])
+                self.assertNotIn('Restart Flippy',str(f._fail.call_args))
+
     def test_success_counts_inputs_and_doctor_exposes_only_safe_receipt(self):
         tools=SimpleNamespace(failure=None,actions=2,cleanup_failed=False)
         f,event=controller(tools)

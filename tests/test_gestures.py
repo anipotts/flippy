@@ -12,7 +12,10 @@ class TestGestures(unittest.TestCase):
         platform = next(n for n in source.body if isinstance(n, ast.ClassDef) and n.name == 'Platform')
         methods = [n for n in platform.body if isinstance(n, ast.FunctionDef)
                    and n.name in ('_gesture', 'drag', 'scroll', 'key', 'type_text', 'click', '_check_physical_input')]
-        namespace = {'__name__': 'flippy.mac.ui', '__package__': 'flippy.mac', 'Quartz': Mock(), 'time': SimpleNamespace(sleep=Mock()),
+        now = [0.0]  # a fake clock: sleep advances it, so the held-input grace period ends without waiting
+        clock = SimpleNamespace(monotonic=lambda: now[0],
+                                sleep=Mock(side_effect=lambda s: now.__setitem__(0, now[0] + s)))
+        namespace = {'__name__': 'flippy.mac.ui', '__package__': 'flippy.mac', 'Quartz': Mock(), 'time': clock,
                      'hotkeys': SimpleNamespace(KEYS={'return': 36})}
         for n in methods:
             exec(compile(ast.Module(body=[n], type_ignores=[]), '<native gesture>', 'exec'), namespace)
@@ -30,6 +33,7 @@ class TestGestures(unittest.TestCase):
         self.ui._gesture_mouse = Mock()
         self.ui._modifier = Mock()
         self.ui.MOD_KEYS = {'cmd':55,'shift':56}
+        self.ui.HELD_GRACE_S = 0.4
         self.ui.FLAGS = {'cmd':1,'shift':2}
 
     def test_drag_straight_path_and_final_release(self):
@@ -109,6 +113,19 @@ class TestGestures(unittest.TestCase):
         from flippy.actions import ActionError
         self.q.CGEventSourceButtonState.return_value=True
         with self.assertRaises(ActionError): self.ui.click(10,20)
+        self.q.CGEventPost.assert_not_called()
+
+    def test_input_that_lets_go_within_the_grace_period_does_not_stop_it(self):
+        # the click on "Allow", or Flippy's own last keystroke, can read as down for a moment
+        self.q.CGEventSourceButtonState.side_effect = [True, True, False]
+        self.assertEqual(self.ui.click(10, 20), 'ok')
+        self.assertTrue(self.q.CGEventPost.called)
+
+    def test_held_input_is_reported_as_held_not_as_a_cleanup_failure(self):
+        from flippy.actions import InputHeldError
+        self.q.CGEventSourceKeyState.return_value = True
+        with self.assertRaises(InputHeldError):
+            self.ui.key('return')
         self.q.CGEventPost.assert_not_called()
 
     def test_physical_held_key_and_typing_post_no_events(self):

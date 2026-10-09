@@ -1121,16 +1121,33 @@ class Platform:
              "option": Quartz.kCGEventFlagMaskAlternate, "ctrl": Quartz.kCGEventFlagMaskControl}
     MOD_KEYS = {"cmd": 55, "shift": 56, "option": 58, "ctrl": 59}
 
+    HELD_GRACE_S = 0.4  # a key or click that just ended (yours, or Flippy's own last input) can still read as down
+
     def _check_physical_input(self, code=None, mouse=False):
-        """Never pair synthetic release with input the user already holds."""
+        """Never pair synthetic release with input the user already holds. Waits briefly for input that is
+        just ending, so the click on "Allow" or Flippy's previous keystroke doesn't count as held."""
         state = Quartz.kCGEventSourceStateCombinedSessionState
-        held = mouse and Quartz.CGEventSourceButtonState(state, Quartz.kCGMouseButtonLeft)
         codes = set(self.MOD_KEYS.values())
         if code is not None:
             codes.add(code)
-        if held or any(Quartz.CGEventSourceKeyState(state, key) for key in codes):
-            from ..actions import ActionError
-            raise ActionError("Release physical keys and mouse buttons before Flippy acts.")
+        deadline = time.monotonic() + self.HELD_GRACE_S
+        while True:
+            held_mouse = bool(mouse and Quartz.CGEventSourceButtonState(state, Quartz.kCGMouseButtonLeft))
+            held_keys = sorted(k for k in codes if Quartz.CGEventSourceKeyState(state, k))
+            if not held_mouse and not held_keys:
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.02)
+        print(f"flippy: act: input still held after {self.HELD_GRACE_S}s (mouse={held_mouse}, key codes {held_keys})",
+              flush=True)
+        from ..actions import InputHeldError
+        raise InputHeldError("Let go of the keyboard and mouse while Flippy acts.")
+
+    def app_name(self, bundle_id, pid):
+        """The app's display name for approval cards ("Notes"), or None."""
+        app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid) if type(pid) is int else None
+        return str(app.localizedName()) if app is not None and app.localizedName() else None
 
     def key(self, combo, check=None):
         """A shortcut like cmd+shift+space, escape or return, pressed for real."""

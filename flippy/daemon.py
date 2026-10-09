@@ -617,10 +617,12 @@ class Flippy:
                     self.overlay.queue_draw()
                 self.overlay.point(x, y, label)
             app = shot.target[0] if shot.target else "this app"
+            if shot.target and hasattr(self.ui, "app_name"):
+                app = self.ui.app_name(*shot.target[:2]) or app  # "Notes", not com.apple.Notes
             buttons = [("Stop", lambda: chosen(False)), ("Allow once", lambda: chosen(True))]
             if per_app:
-                buttons = [("Stop", lambda: chosen(False)), ("Allow app", lambda: chosen(True)),
-                           ("Always allow app", lambda: chosen(True, True))]
+                buttons = [("Stop", lambda: chosen(False)), (f"Allow {app}", lambda: chosen(True)),
+                           (f"Always allow {app}", lambda: chosen(True, True))]
             self.ui.action_card.card(f"Allow Flippy to use {app} for this task?" if per_app else "Allow Flippy to act?",
                 "Subsequent inputs in this app run until the task finishes or you stop it." if per_app else approval_text(name, args), buttons,
                 on_timeout=lambda: chosen(False), timeout_s=60, width=480)
@@ -635,8 +637,13 @@ class Flippy:
         fresh = await self._capture_frame(req, targeted=True)
         if fresh.target != shot.target:
             raise ActionError("The foreground window or display changed. Take a new screenshot before acting.")
-        if shot.substantial_change(fresh, name, args):
-            raise ActionError("The screen changed while approval was pending. Start a new /act request.")
+        # Clicks check the spot they aim at. Typing and shortcuts only compare the whole window when this exact
+        # input was approved on a card: between steps the app is expected to change (Notes just made the note),
+        # and the same-app/window check above still stops input that would land somewhere else.
+        policy = getattr(self, "action_policy", None)
+        exact = policy is None or policy.mode == "every_input" or policy.sensitive(shot.target)
+        if (name in ("click", "scroll", "drag") or exact) and shot.substantial_change(fresh, name, args):
+            raise ActionError("The screen changed before Flippy could act. Start a new /act request.")
         await self._action_main(lambda: self._acting(req, name), req)
         worker = asyncio.create_task(asyncio.to_thread(self.ui.action_input, name, args, fresh, cancel))
         self.input_worker = worker
@@ -660,7 +667,9 @@ class Flippy:
         failure = (tools.failure or "").lower()
         stopped = bool(error or tools.failure)
         reason = "operation_failed" if stopped else "none"
-        if "screen changed" in failure:
+        if getattr(tools, "failure_code", None):  # the refusal said what it was
+            reason = tools.failure_code
+        elif "screen changed" in failure:
             reason = "pixels_changed"
         elif "foreground" in failure:
             reason = "target_changed"
@@ -668,10 +677,13 @@ class Flippy:
             reason = "capture_failed"
         elif "declined" in failure:
             reason = "declined"
-        elif tools.cleanup_failed or "cleanup" in failure or "release" in failure:
+        elif tools.cleanup_failed or "cleanup could not" in failure or "release could not" in failure:
             reason = "cleanup_failed"
         elif "accessibility" in failure or "permission" in failure:
             reason = "permission"
+        # why it ended: reason codes and Flippy's own fixed refusal texts only, never the task or Claude's reply
+        globals().get("log", lambda *a: None)(f"act: ended after {tools.actions} input(s), {reason}"
+                                              + (f": {tools.failure}" if tools.failure else ""))
         self.last_action = {"request_id": req.identity, "completed_inputs": tools.actions,
                             "stopped": stopped, "cleanup_failed": tools.cleanup_failed,
                             "reason_code": reason}
@@ -681,7 +693,9 @@ class Flippy:
         self.ui.action_card.hide()
         if stopped:
             messages = {
-                "pixels_changed": "The screen changed while approval was pending.",
+                "pixels_changed": "The screen changed before Flippy could act.",
+                "input_held": "A key or mouse button was held down, so Flippy didn't act. Keep your hands off the "
+                              "keyboard and mouse while it works.",
                 "target_changed": "The foreground window or display changed.",
                 "capture_failed": "Could not capture the screen.",
                 "declined": "Action declined.",
@@ -697,7 +711,7 @@ class Flippy:
 
     async def _ask(self, question, req, keep_marks=False):
         frame = await self._capture_frame(req, keep_marks=keep_marks)
-        await self._action_main(lambda: self.overlay.show_text("thinking…", phase="thinking"), req)
+        await self._action_main(lambda: (self.overlay.show_text("thinking…", phase="thinking"), event("thinking")), req)
         if self.brain.dirty or (self.last_ask and time.monotonic() - self.last_ask > IDLE_RESET_S):
             await self.brain.reset()
         self.last_ask = time.monotonic()
