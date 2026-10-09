@@ -1149,6 +1149,8 @@ class Flippy:
         if section in ("claude", "codex", "provider") and key in ("model", "effort", "mode"):
             if self.request and self.request.pending:
                 self.dismiss()
+            for future in tuple(self.background_futures):
+                future.cancel()
             self._apply_claude_settings()
         elif section == "act" and key == "mode":
             if self.action_tools:
