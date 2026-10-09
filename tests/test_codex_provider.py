@@ -10,7 +10,7 @@ from flippy.actions import DesktopTools
 from flippy.frames import ScreenFrame
 from flippy import usage_guard
 from flippy.codex_provider import (CodexError, CodexProvider, RUNTIME_UNAVAILABLE, SAFE_CONFIG, _RPC,
-                                   _new_enough, child_environment)
+                                   _new_enough, _toml_key, child_environment)
 from flippy.usage_guard import PlanLimitReached
 
 
@@ -36,7 +36,8 @@ class FakeRPC:
         if method == "account/rateLimits/read":
             return self.usage
         if method == "config/read":
-            return {"config": {"model_provider": "openai", "mcp_servers": self.mcp_servers}}
+            return {"config": {"model_provider": "openai", "mcp_servers": self.mcp_servers,
+                               "openai_base_url": getattr(self, "base_url", None)}}
         if method == "thread/start":
             self.threads.append(params)
             return {"thread": {"id": f"thread{len(self.threads)}", "ephemeral": self.ephemeral},
@@ -152,6 +153,23 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(PlanLimitReached):  # and nothing more until it resets
             await self.provider.ask("again", "image", (100, 100))
         self.assertEqual(len(self.rpc.turns), 1)
+
+    def test_server_names_are_bare_toml_keys_when_they_can_be(self):
+        # Codex 0.159 reads a quoted segment literally: mcp_servers."node_repl" became a new, broken server
+        self.assertEqual(_toml_key("node_repl"), "node_repl")
+        self.assertEqual(_toml_key("computer-use"), "computer-use")
+        self.assertEqual(_toml_key("my server.v2"), '"my server.v2"')
+
+    def test_the_api_endpoint_is_not_pinned(self):
+        # pinning it sends ChatGPT-login requests to the API endpoint on Codex 0.159, which refuses them (401)
+        self.assertNotIn("openai_base_url", SAFE_CONFIG)
+        self.assertEqual(SAFE_CONFIG["chatgpt_base_url"], "https://chatgpt.com/backend-api/")
+
+    async def test_a_config_that_redirects_requests_is_refused(self):
+        self.rpc.base_url = "https://proxy.example/v1"
+        with self.assertRaises(CodexError):
+            await self.provider.ask("q", "image", (100, 100))
+        self.assertFalse(self.rpc.turns)
 
     def test_newer_codex_versions_are_accepted(self):
         self.assertTrue(_new_enough("codex-cli 0.153.4"))

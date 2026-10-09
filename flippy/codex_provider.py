@@ -7,6 +7,7 @@ not an atomic promise that the next request cannot spend existing credits.
 import asyncio
 import contextlib
 import json
+import re
 import os
 import shutil
 import tempfile
@@ -35,7 +36,8 @@ DISABLED_FEATURES = (
 SAFE_CONFIG = {
     "forced_login_method": "chatgpt", "model_provider": "openai",
     "chatgpt_base_url": "https://chatgpt.com/backend-api/",
-    "openai_base_url": "https://api.openai.com/v1",
+    # Not openai_base_url: on Codex 0.159 setting it sends ChatGPT-login requests to the API endpoint, which refuses
+    # them (401, missing api.responses.write). _isolate checks the user's config doesn't override it instead.
     "web_search": "disabled", "project_doc_max_bytes": 0,
     "tools.update_plan.enabled": False, "tools.experimental_request_user_input.enabled": False,
     "history.persistence": "none", "analytics.enabled": False,
@@ -317,6 +319,8 @@ class CodexProvider:
         effective = (await self._rpc.request("config/read", {"includeLayers": False})).get("config", {})
         if effective.get("model_provider") != "openai":
             raise CodexError(ISOLATION_BLOCKED)
+        if effective.get("openai_base_url") not in (None, "", "https://api.openai.com/v1"):
+            raise CodexError(ISOLATION_BLOCKED)  # the user's config points requests elsewhere: don't follow it
         servers = effective.get("mcp_servers", {})
         if not isinstance(servers, dict):
             raise CodexError(ISOLATION_BLOCKED)
@@ -325,7 +329,7 @@ class CodexProvider:
         names = tuple(servers)
         del effective, servers
         if names:
-            overrides = {f'mcp_servers.{json.dumps(name, ensure_ascii=False)}.enabled': False for name in names}
+            overrides = {f'mcp_servers.{_toml_key(name)}.enabled': False for name in names}
             await self._rpc.close()
             self._rpc = await self._connect({**SAFE_CONFIG, **overrides})
             effective = (await self._rpc.request("config/read", {"includeLayers": False})).get("config", {})
@@ -534,3 +538,11 @@ def _new_enough(version_line):
         return parts(version_line.removeprefix("codex-cli ").strip()) >= parts(SUPPORTED_VERSION)
     except ValueError:
         return False
+
+
+def _toml_key(name):
+    """One segment of a -c key path. Bare when TOML allows it: newer Codex (0.159) reads a quoted segment
+    literally, so `mcp_servers."node_repl".enabled=false` made a new, transport-less server named "node_repl" (with
+    the quotes) and --strict-config refused to start. Quoted only when a bare key can't express the name; the
+    enabled-is-false check after relaunch still refuses if a server stays on."""
+    return name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name, ensure_ascii=False)
