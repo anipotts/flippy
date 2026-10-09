@@ -16,7 +16,7 @@ Runs on **macOS** (13+, native AppKit) and on **Linux with COSMIC on Wayland** (
 - **Follow-ups.** Questions share one session, so "and where's bluetooth?" works. `/new` starts fresh; sessions also reset after 15 idle minutes.
 - **Themes.** Midnight, Y2K Player, Media Player (a 2000s media player skin), Glass (a lock-screen style card), Terminal, and one that follows your system's accent color (macOS or COSMIC). On macOS 26+, Media Player and Glass sit on real Liquid Glass.
 - **Custom pointers.** Built-in hand, ring, arrow and dot, or draw your own in the 20×24 pixel editor, or import an image and pick its tip.
-- **Check a video edit** (COSMIC for now, macOS next). Press `Super+Shift+V` in your editor, play the edit back, press it again and ask ("is the cut at 0:12 clean?", "does the title stay up long enough?"). Flippy grabs the editor's window a few times a second, in memory only, finds the preview and the cuts, and shows Claude the frames that matter. Claude sees stills, not motion, and can't hear the audio. How it works: [docs/video-review.md](docs/video-review.md).
+- **Check a video edit.** Press `⌃⌥V` on macOS or `Super+Shift+V` on COSMIC in your editor, play the edit back, press it again and ask ("is the cut at 0:12 clean?", "does the title stay up long enough?"). Flippy grabs the editor's window a few times a second, in memory only, finds the preview and the cuts, and shows Claude the frames that matter. Claude sees stills, not motion, and can't hear the audio. How it works: [docs/video-review.md](docs/video-review.md).
 - **Help when you're stuck, and tips.** Flippy can watch an app you're learning and offer a hand, or a tip, at the right moment (see below).
 - **Settings window** for model, effort, theme, pointer, sizes, timing, help mode and (on macOS) hotkeys.
 
@@ -71,7 +71,7 @@ Use the full path; custom shortcuts don't always see `~/.local/bin` on `PATH`. T
 
 If you installed gtk4-layer-shell somewhere other than `~/.local`, set `FLIPPY_LAYER_SHELL_LIB` to its library directory.
 
-Single monitor only for now, on both platforms. A few macOS features aren't possible on COSMIC yet (real Liquid Glass, scripted clicks, the double-tap pause key); [docs/linux-port.md](docs/linux-port.md) says why, and how the rest works there.
+Single monitor only for now, on both platforms. A few macOS features aren't on COSMIC yet (`/act` desktop tasks, real Liquid Glass, scripted clicks); 0.2.6 brings them ([docs/linux-0.2.6.md](docs/linux-0.2.6.md)). The double-tap pause key can't work on Wayland, so COSMIC uses a normal shortcut. [docs/linux-port.md](docs/linux-port.md) explains how the rest works there.
 
 ## Updates
 
@@ -219,6 +219,7 @@ packaging/macos/  Flippy.app launcher (Swift) and icon
 scripts/    the macOS and Linux installers, release.sh, package.sh (the per-platform release downloads)
 tests/      python -m unittest discover tests
 docs/       linux-port.md: how the macOS features work on COSMIC, and what's still blocked;
+            linux-0.2.6.md: instructions for bringing COSMIC up to macOS (/act, pointer input, glass);
             video-review.md: video review, and how to build it on macOS
 ```
 

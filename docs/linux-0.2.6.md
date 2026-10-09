@@ -20,6 +20,9 @@ glass").
   direct calls to the platform functions don't need that.
 - **Kill test processes by PID**, never `pkill -f <pattern>`. Stop Flippy with `flippy-ask quit` before running a
   second copy (see `docs/video-review.md`, "Mistakes not to make").
+- **Keep tests importable on both platforms.** CI runs the suite on Ubuntu and macOS on every push
+  (`.github/workflows/checks.yml`). A shared test must never import `flippy.mac.*` (AppKit doesn't exist on Linux)
+  or `flippy.linux.*` (GTK isn't on the macOS runner); fake them, or `skipUnless` the platform.
 - Work on a branch (`linux/0.2.6`), commit as you go, push, open a PR into `main`. Don't release; Kapil merges and
   releases.
 - Write code like the surrounding code: short docstrings that say why, same naming and comment density.
@@ -155,6 +158,16 @@ keyboard events delivered over libei. This replaces "Scripted mouse: blocked" in
      can't be put back exactly: leave it where it ended up and say so in the docstring. Give up after 45 s of the
      user working, with a `RetryableActionError`, exactly like macOS.
   3. `/act` `key` and the `type` fallback, through the same borrow (activate → virtual keyboard → reactivate).
+- **Borrow as rarely as possible.** Wayland has no way to click a background window without the real pointer and
+  focus, so on COSMIC every position-based action costs a focus flash. Keep them rare:
+  1. **Controls before positions.** When Claude clicks a spot, first hit-test the AT-SPI tree at that window
+     position (`Component.get_accessible_at_point(x, y, Atspi.CoordType.WINDOW)`); if it's a pressable control,
+     `do_action` it in the background, exactly like `ax._press_at` on macOS. Only borrow when nothing pressable is
+     there.
+  2. **Menus and text before keys.** Typing goes in through `EditableText` at the caret; most shortcuts have a menu
+     item the `menu` tool picks without focus. Say so in the Linux prompt wording.
+  3. **Batch.** If Claude sends several position actions in a row, do them in one borrow (activate once, do them
+     all, reactivate once) instead of one flash each.
 - Because every click borrows focus on Linux, make the click tool's description say so on Linux, or have
   `real_pointer: false` behave like `true` there. Don't change the macOS catalog: give the Linux Platform a flag the
   controller passes into `DesktopTools` (`catalog=`) if the wording has to differ.
