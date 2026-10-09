@@ -1,6 +1,7 @@
-"""Small, setup-only AppKit pieces. Native controls keep their normal behavior."""
+"""The setup and settings windows' look: black, gray outlines, sharp corners. Controls keep their normal behavior."""
 from AppKit import (NSButton, NSColor, NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSImage,
                     NSImageView, NSView, NSFontWeightMedium, NSFontWeightSemibold)
+import objc
 from Foundation import NSAttributedString, NSMakeRect
 from .widgets import label, target
 
@@ -54,27 +55,39 @@ def card(width, height):
     return panel(width, height, SURFACE, outline=OUTLINE)
 
 
-def _outline(control, title=None):
+def _outline(control, title=None, bright=True, edge=OUTLINE):
     control.setBordered_(False)
     control.setWantsLayer_(True)
     layer = control.layer()
     layer.setCornerRadius_(0)
     layer.setBorderWidth_(1)
-    layer.setBorderColor_(color(OUTLINE).CGColor())
+    layer.setBorderColor_(color(edge).CGColor())
     layer.setBackgroundColor_(color(SURFACE).CGColor())
     if title is not None:
         control.setAttributedTitle_(NSAttributedString.alloc().initWithString_attributes_(title, {
-            NSForegroundColorAttributeName: color(TEXT),
+            NSForegroundColorAttributeName: color(TEXT if bright else MUTED).colorWithAlphaComponent_(
+                1 if control.isEnabled() else 0.4),
             NSFontAttributeName: NSFont.systemFontOfSize_weight_(12, NSFontWeightMedium)}))
 
 
 class OutlineButton(NSButton):
     """A black, sharp-cornered button with a light outline; darkens while pressed."""
+    selected = None  # a tab: True = the page shown
+
     def highlight_(self, on):
         self.layer().setBackgroundColor_(color(PRESSED if on else SURFACE).CGColor())
 
     def setTitle_(self, title):
-        _outline(self, title)
+        self._title = title
+        _outline(self, title, bright=self.selected is not False, edge=TEXT if self.selected else OUTLINE)
+
+    def setEnabled_(self, on):
+        objc.super(OutlineButton, self).setEnabled_(on)
+        self.setTitle_(getattr(self, "_title", None) or self.title())
+
+    def set_selected(self, on):
+        self.selected = bool(on)
+        self.setTitle_(self._title)
 
 
 def button(title, fn, keep, primary=False):
@@ -85,14 +98,60 @@ def button(title, fn, keep, primary=False):
     b.setAction_("fire:")
     if primary:
         b.setKeyEquivalent_("\r")
-    _outline(b, title)
+    b.setTitle_(title)
     b.sizeToFit()
+    w, h = b.frame().size
+    b.setFrameSize_((w + 16, max(h, 26)))
     return b
 
 
 def outline_popup(popup):
     _outline(popup)
     return popup
+
+
+def check(on, fn, keep):
+    """A square outlined checkbox: ✓ when on. fn(bool) on change."""
+    b = OutlineButton.buttonWithTitle_target_action_("", None, None)
+    b.setFrameSize_((22, 22))
+
+    def show():
+        b.setTitle_("✓" if b.on else "")
+
+    def flip(sender):
+        b.on = not b.on
+        show()
+        fn(b.on)
+    t = target(flip)
+    keep.append(t)
+    b.setTarget_(t)
+    b.setAction_("fire:")
+    b.on = bool(on)
+    show()
+    b.setAccessibilityRole_("AXCheckBox")
+    return b
+
+
+def outline_field(field, width=220, height=26):
+    """A text field drawn black inside the outline, sharp corners: returns the outlined box holding it."""
+    box = panel(width, height, SURFACE, outline=OUTLINE)
+    field.setBezeled_(False)
+    field.setBordered_(False)
+    field.setDrawsBackground_(False)
+    field.setTextColor_(color(TEXT))
+    field.setFont_(NSFont.systemFontOfSize_(13))
+    field.setFrame_(NSMakeRect(8, (height - 18) / 2, width - 16, 18))
+    box.addSubview_(field)
+    return box
+
+
+def outline_slider(box):
+    """widgets.slider()'s box: the track filled in gray instead of the system accent."""
+    from AppKit import NSSlider
+    for view in box.subviews():
+        if isinstance(view, NSSlider):
+            view.setTrackFillColor_(color(TEXT))
+    return box
 
 
 def flippy_mark(size):
