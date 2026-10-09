@@ -882,26 +882,102 @@ class Platform:
     def move(self, x, y):
         return self._can_post() or self._mouse(Quartz.kCGEventMouseMoved, x, y) or "ok"
 
+    def _gesture(self, points, drag, modifiers=(), check=None):
+        """Synchronous worker body; completion acknowledges release of owned input."""
+        if drag and Quartz.CGEventSourceButtonState(Quartz.kCGEventSourceStateCombinedSessionState, Quartz.kCGMouseButtonLeft):
+            raise RuntimeError("Release the physical mouse button before dragging.")
+        down = False
+        owned = []
+        position = points[0][:2]
+        flags = 0
+        try:
+            for mod in modifiers:
+                if check:
+                    check()
+                code = self.MOD_KEYS[mod]
+                if Quartz.CGEventSourceKeyState(Quartz.kCGEventSourceStateCombinedSessionState, code):
+                    raise RuntimeError("Release physical modifiers before dragging.")
+                owned.append(mod)
+                flags |= self.FLAGS[mod]
+                self._modifier(mod, flags)
+            for i, (x, y, dt) in enumerate(points):
+                if check:
+                    check()
+                position = x, y
+                if drag and i == 0:
+                    self._mouse(Quartz.kCGEventMouseMoved, x, y)
+                    time.sleep(0.025)
+                    if check:
+                        check()
+                    down = True  # release even if posting reports a failure after delivery
+                    self._gesture_mouse(Quartz.kCGEventLeftMouseDown, x, y, flags)
+                else:
+                    self._gesture_mouse(Quartz.kCGEventLeftMouseDragged if down else Quartz.kCGEventMouseMoved,
+                                        x, y, flags)
+                if dt:
+                    time.sleep(max(dt, 0.004))
+            return "ok"
+        finally:
+            release_error = None
+            if down:
+                try:
+                    self._gesture_mouse(Quartz.kCGEventLeftMouseUp, *position, flags)
+                except Exception as err:
+                    release_error = err
+            for mod in reversed(owned):
+                flags &= ~self.FLAGS[mod]
+                try:
+                    self._modifier(mod, flags)
+                except Exception as err:
+                    release_error = release_error or err
+            if release_error:
+                from ..actions import InputCleanupError
+                raise InputCleanupError("Input release could not be confirmed. Restart Flippy before acting again.") from None
+
+    @staticmethod
+    def _gesture_mouse(kind, x, y, flags):
+        ev = Quartz.CGEventCreateMouseEvent(None, kind, Quartz.CGPointMake(x, y), Quartz.kCGMouseButtonLeft)
+        Quartz.CGEventSetFlags(ev, flags)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+
+    def _modifier(self, mod, flags):
+        ev = Quartz.CGEventCreateKeyboardEvent(None, self.MOD_KEYS[mod], bool(flags & self.FLAGS[mod]))
+        Quartz.CGEventSetFlags(ev, flags)
+        Quartz.CGEventSetType(ev, Quartz.kCGEventFlagsChanged)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+
     def path(self, points, drag):
-        """points: [(x, y, seconds until the next point)]; drag: hold the button the whole way."""
+        """Compatibility wrapper for asynchronous scripted demo paths."""
         err = self._can_post()
         if err:
             return err
+        if not points:
+            return "empty path"
+        threading.Thread(target=self._gesture, args=(points, drag), daemon=True).start()
+        return "ok"
 
-        def run():
-            down = False
-            for i, (x, y, dt) in enumerate(points):
-                if drag and i == 0:
-                    self._mouse(Quartz.kCGEventMouseMoved, x, y)
-                    time.sleep(0.05)
-                    self._mouse(Quartz.kCGEventLeftMouseDown, x, y)
-                    down = True
-                else:
-                    self._mouse(Quartz.kCGEventLeftMouseDragged if down else Quartz.kCGEventMouseMoved, x, y)
-                time.sleep(max(dt, 0.004))
-            if down:
-                self._mouse(Quartz.kCGEventLeftMouseUp, *points[-1][:2])
-        threading.Thread(target=run, daemon=True).start()
+    def drag(self, x, y, to_x, to_y, modifiers=(), check=None):
+        err = self._can_post()
+        if err:
+            return err
+        points = [(x + (to_x - x) * i / 24, y + (to_y - y) * i / 24,
+                   0.6 / 24 if i < 24 else 0) for i in range(25)]
+        return self._gesture(points, True, modifiers, check)
+
+    def scroll(self, x, y, direction, lines, check=None):
+        err = self._can_post()
+        if err:
+            return err
+        if check:
+            check()
+        self._mouse(Quartz.kCGEventMouseMoved, x, y)
+        time.sleep(0.025)
+        if check:
+            check()
+        vertical = lines if direction == "up" else -lines if direction == "down" else 0
+        horizontal = lines if direction == "left" else -lines if direction == "right" else 0
+        ev = Quartz.CGEventCreateScrollWheelEvent(None, Quartz.kCGScrollEventUnitLine, 2, vertical, horizontal)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
         return "ok"
 
     def type_text(self, text, on_key=None, wait=False, check=None):
@@ -964,7 +1040,23 @@ class Platform:
         elif name == "type":
             result = self.type_text(args["text"], wait=True, check=check)
         elif name == "key":
-            result = self.key(args["combo"])
+            result = self.key(args["combo"], check=check)
+        elif name == "scroll":
+            x = args["x"] * shot.logical_size[0] / shot.size[0]
+            y = args["y"] * shot.logical_size[1] / shot.size[1]
+            result = self.scroll(x, y, args["direction"], args["lines"], check=check)
+        elif name == "drag":
+            def identity_check():
+                if cancel.is_set():
+                    raise ActionError("Task canceled.")
+                state = self.action_state()
+                if state[:3] != shot.target[:3] or state[-1] != shot.target[-1]:
+                    raise ActionError("The foreground window or display changed.")
+            result = self.drag(args["x"] * shot.logical_size[0] / shot.size[0],
+                               args["y"] * shot.logical_size[1] / shot.size[1],
+                               args["to_x"] * shot.logical_size[0] / shot.size[0],
+                               args["to_y"] * shot.logical_size[1] / shot.size[1],
+                               args["modifiers"], check=identity_check)
         else:
             raise ActionError("Unsupported desktop action.")
         if result != "ok":
@@ -974,7 +1066,7 @@ class Platform:
              "option": Quartz.kCGEventFlagMaskAlternate, "ctrl": Quartz.kCGEventFlagMaskControl}
     MOD_KEYS = {"cmd": 55, "shift": 56, "option": 58, "ctrl": 59}
 
-    def key(self, combo):
+    def key(self, combo, check=None):
         """A shortcut like cmd+shift+space, escape or return, pressed for real."""
         err = self._can_post()
         if err:
@@ -987,11 +1079,19 @@ class Platform:
         flags = 0
         for m in parts[:-1]:
             flags |= self.FLAGS.get({"opt": "option", "alt": "option", "control": "ctrl"}.get(m, m), 0)
-        for down in (True, False):
-            ev = Quartz.CGEventCreateKeyboardEvent(None, code, down)
+        if check:
+            check()
+        try:
+            ev = Quartz.CGEventCreateKeyboardEvent(None, code, True)
             Quartz.CGEventSetFlags(ev, flags)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
             time.sleep(0.03)
+            if check:
+                check()
+        finally:
+            ev = Quartz.CGEventCreateKeyboardEvent(None, code, False)
+            Quartz.CGEventSetFlags(ev, flags)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
         return "ok"
 
     def tap(self, mod, times):

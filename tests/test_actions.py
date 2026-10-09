@@ -10,7 +10,7 @@ import anyio
 from mcp import ClientSession
 from mcp.shared.memory import create_client_server_memory_streams
 
-from flippy.actions import ActionError, DesktopTools, MAX_ACTIONS, Screenshot, approval_text
+from flippy.actions import ActionError, DesktopTools, MAX_ACTIONS, TOOL_CATALOG, Screenshot, approval_text
 from flippy.brain import Brain, BrainError
 from claude_agent_sdk import ResultMessage
 
@@ -61,8 +61,8 @@ class TestTools(unittest.IsolatedAsyncioTestCase):
     async def test_decline_stops_queued_calls(self):
         await self.tools.invoke("screenshot", {})
         self.desktop.allowed = False
-        results = await asyncio.gather(self.tools.invoke("key", {"combo": "return"}),
-                                       self.tools.invoke("type", {"text": "do not type"}))
+        results = await asyncio.gather(self.tools.invoke("key", {"combo": "return", "reason": "press"}),
+                                       self.tools.invoke("type", {"text": "do not type", "reason": "write"}))
         self.assertTrue(all(r["is_error"] for r in results))
         self.assertEqual(len(self.desktop.approvals), 1)
         self.assertEqual(self.desktop.inputs, [])
@@ -87,7 +87,7 @@ class TestTools(unittest.IsolatedAsyncioTestCase):
     async def test_backend_error_does_not_expose_raw_details(self):
         await self.tools.invoke("screenshot", {})
         self.desktop.error = RuntimeError("secret path /private/example")
-        result = await self.tools.invoke("key", {"combo": "return"})
+        result = await self.tools.invoke("key", {"combo": "return", "reason": "press"})
         self.assertTrue(result["is_error"])
         self.assertNotIn("/private", str(result))
         self.assertTrue(self.tools.cancel.is_set())
@@ -102,9 +102,9 @@ class TestTools(unittest.IsolatedAsyncioTestCase):
     async def test_action_limit(self):
         await self.tools.invoke("screenshot", {})
         for _ in range(MAX_ACTIONS):
-            result = await self.tools.invoke("key", {"combo": "tab"})
+            result = await self.tools.invoke("key", {"combo": "tab", "reason": "advance"})
             self.assertNotIn("is_error", result)
-        self.assertTrue((await self.tools.invoke("key", {"combo": "tab"}))["is_error"])
+        self.assertTrue((await self.tools.invoke("key", {"combo": "tab", "reason": "advance"}))["is_error"])
         self.assertEqual(len(self.desktop.inputs), MAX_ACTIONS)
 
     async def test_cancel_during_approval_prevents_input(self):
@@ -114,7 +114,7 @@ class TestTools(unittest.IsolatedAsyncioTestCase):
             self.tools.stop()
             return True
         self.tools.approve = approve
-        self.assertTrue((await self.tools.invoke("key", {"combo": "return"}))["is_error"])
+        self.assertTrue((await self.tools.invoke("key", {"combo": "return", "reason": "press"}))["is_error"])
         self.assertEqual(self.desktop.inputs, [])
 
     async def test_coroutine_cancellation_stops_the_native_worker(self):
@@ -125,12 +125,39 @@ class TestTools(unittest.IsolatedAsyncioTestCase):
             started.set()
             await asyncio.Event().wait()
         self.tools.perform = perform
-        task = asyncio.create_task(self.tools.invoke("type", {"text": "test"}))
+        task = asyncio.create_task(self.tools.invoke("type", {"text": "test", "reason": "write"}))
         await started.wait()
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
         self.assertTrue(self.tools.cancel.is_set())
+
+    async def test_bounded_scroll_and_drag(self):
+        await self.tools.invoke("screenshot", {})
+        for name, args in (("scroll", {"x": 30, "y": 40, "direction": "left", "lines": 10, "reason": "pan"}),
+                           ("drag", {"x": 1, "y": 2, "to_x": 100, "to_y": 200, "modifiers": [], "reason": "move"})):
+            self.assertNotIn("is_error", await self.tools.invoke(name, args))
+        self.assertEqual(self.tools.actions, 2)
+        self.assertEqual(self.desktop.captures, 3)
+
+    async def test_gesture_validation_before_approval(self):
+        scroll = {"x": 1, "y": 2, "direction": "down", "lines": 1, "reason": "scroll"}
+        drag = {"x": 1, "y": 2, "to_x": 3, "to_y": 4, "modifiers": [], "reason": "drag"}
+        cases = [("scroll", {**scroll, "lines": n}) for n in (0, 11, True, 1.2)]
+        cases += [("scroll", {**scroll, "direction": "diagonal"}),
+                  ("drag", {**drag, "to_x": 1, "to_y": 2}),
+                  ("drag", {**drag, "modifiers": ["cmd", "cmd"]}),
+                  ("drag", {**drag, "modifiers": ["alt"]}),
+                  ("drag", {**drag, "to_x": 1920}),
+                  ("drag", {**drag, "extra": 1}),
+                  ("drag", {**drag, "reason": ""}),
+                  ("drag", {k: v for k, v in drag.items() if k != "modifiers"})]
+        for name, args in cases:
+            with self.subTest(args=args):
+                tools = self.desktop.tools()
+                await tools.invoke("screenshot", {})
+                self.assertTrue((await tools.invoke(name, args))["is_error"])
+        self.assertEqual(self.desktop.approvals, [])
 
     async def test_mcp_schema_images_and_refusals_over_real_transport(self):
         server = self.tools.server()["instance"]
@@ -140,7 +167,7 @@ class TestTools(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(*client_streams) as client:
                     await client.initialize()
                     listed = await client.list_tools()
-                    self.assertEqual({t.name for t in listed.tools}, {"screenshot", "click", "type", "key"})
+                    self.assertEqual({t.name for t in listed.tools}, set(TOOL_CATALOG))
                     invalid = await client.call_tool("click", {"x": 1, "y": 2})  # reason required
                     self.assertTrue(invalid.model_dump(by_alias=True)["isError"])
                     result = await client.call_tool("screenshot", {})
@@ -199,7 +226,7 @@ class TestActionSession(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(options.setting_sources, [])
         self.assertTrue(options.strict_mcp_config)
         self.assertEqual(set(options.allowed_tools),
-                         {f"mcp__desktop__{n}" for n in ("screenshot", "click", "type", "key")})
+                         {f"mcp__desktop__{n}" for n in TOOL_CATALOG})
         self.assertEqual(brain.options.mcp_servers, {})
         self.assertEqual(brain.options.allowed_tools, [])
         self.assertEqual(brain.options.max_turns, 1)
@@ -283,7 +310,7 @@ class TestNativeAdapter(unittest.TestCase):
     def test_missing_accessibility_prevents_events(self):
         with patch.object(self.module.Quartz, "CGPreflightPostEventAccess", return_value=False), \
                 patch.object(self.ui, "key") as key, self.assertRaises(ActionError):
-            self.ui.action_input("key", {"combo": "return"}, self.shot, self.cancel)
+            self.ui.action_input("key", {"combo": "return", "reason": "press"}, self.shot, self.cancel)
         key.assert_not_called()
 
     def test_typing_waits_for_all_characters(self):
