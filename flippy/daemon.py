@@ -316,6 +316,9 @@ class Flippy:
         self._run_request(req, self._ask(question, req, keep_marks=keep_marks), self._on_answer, ASK_TIMEOUT_S)
 
     def _begin_request(self, mode):
+        review = getattr(self, "video", None)
+        if review and review.recording and mode != "video-record":
+            review.cancel()
         previous = getattr(self, "request", None)
         if previous:
             previous.cancel(loop.source_remove)
