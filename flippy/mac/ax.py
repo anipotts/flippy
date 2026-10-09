@@ -377,11 +377,16 @@ def type_text(pid, text, cancel):
         time.sleep(0.012)
 
 
+# macOS virtual key codes for keys hotkeys.KEYS (letters, digits, space...) doesn't have
+NAV_KEYS = {"return": 36, "tab": 48, "space": 49, "delete": 51, "escape": 53, "left": 123, "right": 124,
+            "down": 125, "up": 126, "forwarddelete": 117, "home": 115, "end": 119, "pageup": 116, "pagedown": 121}
+
+
 def key(pid, combo, flags_by_mod):
     if not Quartz.CGPreflightPostEventAccess():
         raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
     parts = [p.strip().lower() for p in combo.split("+")]
-    code = hotkeys.KEYS.get(parts[-1])
+    code = NAV_KEYS.get(parts[-1], hotkeys.KEYS.get(parts[-1]))
     if code is None:
         raise RetryableActionError(f"Unknown key {parts[-1]!r}.")
     flags = 0

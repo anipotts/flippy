@@ -1,6 +1,7 @@
 """Background desktop tasks (flippy/actions.py BACKGROUND_CATALOG): controls by number, refusals that let the
 task go on, and what approval cards say."""
 import asyncio
+import sys
 import threading
 import unittest
 
@@ -93,6 +94,16 @@ class NoWindow(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([n for n, _ in done], ["media", "menu"])
         r = await tools.invoke("media", {"action": "eject", "reason": "x"})
         self.assertTrue(r["is_error"])
+
+
+@unittest.skipUnless(sys.platform == "darwin", "macOS key codes")
+class Keys(unittest.TestCase):
+    def test_every_key_offered_to_claude_has_a_key_code(self):
+        from flippy.actions import APP_KEYS
+        from flippy.mac import ax
+        for combo in APP_KEYS:
+            name = combo.split("+")[-1]
+            self.assertIsNotNone(ax.NAV_KEYS.get(name, ax.hotkeys.KEYS.get(name)), combo)
 
 
 class Describe(unittest.TestCase):
