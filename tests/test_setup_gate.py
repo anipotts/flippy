@@ -48,9 +48,14 @@ class Gate(unittest.TestCase):
 
     def test_requests_failing_on_login(self):
         lost = {"claude": False, "codex": None}
-        self.assertTrue(setup_gate.login_error(ProviderChoiceRequired("Connect"), lost, "claude"))
-        self.assertFalse(setup_gate.login_error(ProviderChoiceRequired("Both"), {"claude": True, "codex": True}, "auto"))
-        self.assertTrue(setup_gate.login_error(RuntimeError("401 authentication_error"), CONNECTED, "claude"))
+        self.assertTrue(setup_gate.login_error(ProviderChoiceRequired("Connect", kind="claude-login"), lost, "claude"))
+        self.assertTrue(setup_gate.login_error(ProviderChoiceRequired("Connect", kind="none"), lost, "auto"))
+        self.assertFalse(setup_gate.login_error(ProviderChoiceRequired("Both", kind="pick"),
+                                                {"claude": True, "codex": True}, "auto"))
+        from flippy.brain import BrainError
+        self.assertTrue(setup_gate.login_error(BrainError("authentication_failed", kind="authentication_failed"),
+                                               CONNECTED, "claude"))
+        self.assertTrue(setup_gate.login_error(BrainError("API Error: 401"), CONNECTED, "claude"))
         self.assertFalse(setup_gate.login_error(TimeoutError(), CONNECTED, "claude"))
 
 

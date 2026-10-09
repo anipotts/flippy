@@ -20,7 +20,7 @@ def controller(tools):
     ns={'event':event,'os':os,'json':json,'__file__':str(path),'CodexError':CodexError,'PlanLimitReached':PlanLimitReached,
         'PROFILE':SimpleNamespace(demo=True,name='demo'),
         'updates':SimpleNamespace(current_version=lambda:'fixture'),
-        'settings':SimpleNamespace(get=lambda *args:10),'act_memory':Mock(),'log':Mock(),'setup_gate':Mock()}
+        'settings':SimpleNamespace(get=lambda *args:10),'act_memory':Mock(),'log':Mock(),'setup_gate':Mock(),'errors':__import__('flippy.errors').errors}
     for node in cls.body:
         if isinstance(node,ast.FunctionDef) and node.name in ('_action_done','command'):
             exec(compile(ast.Module(body=[node],type_ignores=[]),'<action results>','exec'),ns)
@@ -40,8 +40,8 @@ class TestActionResults(unittest.TestCase):
         tools=SimpleNamespace(failure=None,actions=0,cleanup_failed=False)
         f,_=controller(tools)
         safe = "Codex could not complete this request. Try starting a new chat."
-        f._action_done(tools,SimpleNamespace(identity=20),None,CodexError(safe))
-        self.assertIn(safe, f._fail.call_args.args[0])
+        f._action_done(tools,SimpleNamespace(identity=20),None,CodexError(safe, "CODEX-FAILED"))
+        self.assertEqual(f._fail.call_args.args[0], "Desktop task stopped. Codex couldn't answer. · CODEX-FAILED")
         self.assertEqual(f.last_action['completed_inputs'],0)
     def test_refusals_are_categorical_and_never_show_model_success(self):
         cases=(('The screen changed while approval was pending.','pixels_changed'),
@@ -86,8 +86,8 @@ class TestActionResults(unittest.TestCase):
                        CodexError('Desktop task stopped. Check the screen before continuing.'))
         shown=f._fail.call_args.args[0]
         self.assertEqual(shown.count('Desktop task stopped'),1)
-        self.assertEqual(shown.count('Check the screen before continuing'),1)
         self.assertIn('Spotify quit',shown)
+        self.assertTrue(shown.endswith('· ACT-STOPPED'))
 
     def test_success_counts_inputs_and_doctor_exposes_only_safe_receipt(self):
         tools=SimpleNamespace(failure=None,actions=2,cleanup_failed=False)

@@ -44,7 +44,10 @@ reply with only a JSON array: [{"text": "...", "level": 1}, ...]
 
 
 class BrainError(Exception):
-    pass
+    """kind: Claude's reply error (claude_agent_sdk AssistantMessageError) or "incomplete"; see flippy/errors.py."""
+    def __init__(self, message="", kind=None):
+        super().__init__(message)
+        self.kind = kind
 
 
 # Claude Code saves every session to ~/.claude/projects/, screenshots included. Flippy's sessions live only in
@@ -150,18 +153,18 @@ class Brain:
                 elif isinstance(msg, AssistantMessage):
                     self.last_model = msg.model
                     if getattr(msg, "error", None):
-                        raise BrainError(str(msg.error))
+                        raise BrainError(str(msg.error), kind=str(msg.error))
                     # Only the last assistant message is the task's final answer.
                     text = "".join(b.text for b in msg.content if isinstance(b, TextBlock))
                 elif isinstance(msg, ResultMessage):
                     if msg.is_error or msg.subtype != "success":
-                        raise BrainError(msg.result or "Desktop task did not finish.")
+                        raise BrainError(msg.result or "Desktop task did not finish.", kind="incomplete")
                     text = msg.result or text
                     completed = True
             if desktop.cancel.is_set():
                 return f"Task stopped: {desktop.failure or 'canceled'}. Check the screen before continuing."
             if not completed:
-                raise BrainError("Desktop task ended without a completed response.")
+                raise BrainError("Desktop task ended without a completed response.", kind="incomplete")
             return text.strip() or "Task finished without a final answer; check the screen."
 
     async def write_tips(self, app_name: str, goal: str, n: int, skip: list[str]) -> list[dict]:
@@ -183,7 +186,7 @@ class Brain:
                 self._usage(msg)
             elif isinstance(msg, AssistantMessage):
                 if getattr(msg, "error", None):
-                    raise BrainError(str(msg.error))
+                    raise BrainError(str(msg.error), kind=str(msg.error))
                 parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
             elif isinstance(msg, ResultMessage):
                 if msg.is_error or msg.subtype != "success":
@@ -258,17 +261,17 @@ class Brain:
             elif isinstance(msg, AssistantMessage):
                 self.last_model = msg.model
                 if getattr(msg, "error", None):
-                    raise BrainError(str(msg.error))
+                    raise BrainError(str(msg.error), kind=str(msg.error))
                 parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
             elif isinstance(msg, ResultMessage):
                 if msg.is_error or msg.subtype != "success":
-                    raise BrainError("The response did not complete.")
+                    raise BrainError("The response did not complete.", kind="incomplete")
                 completed = True
         if not completed:
-            raise BrainError("The response ended before completion.")
+            raise BrainError("The response ended before completion.", kind="incomplete")
         text = "".join(parts).strip()
         if not text:
-            raise BrainError("empty reply")
+            raise BrainError("empty reply", kind="incomplete")
         return text
 
 

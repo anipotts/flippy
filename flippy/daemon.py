@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 
-from . import act_memory, loop, onboarding, settings, setup_gate, themes, tips, updates, video, watch
+from . import act_memory, errors, loop, onboarding, settings, setup_gate, themes, tips, updates, video, watch
 from .brain import BrainError
 from .providers import Brain, ProviderChoiceRequired
 from .codex_provider import CodexError
@@ -705,28 +705,19 @@ class Flippy:
             log(f"act: couldn't save what worked ({type(err).__name__})")
         self.ui.action_card.hide()
         if stopped:
-            messages = {
-                "pixels_changed": "The screen changed before Flippy could act.",
-                "input_held": "A key or mouse button was held down, so Flippy didn't act. Keep your hands off the "
-                              "keyboard and mouse while it works.",
-                "target_changed": "The foreground window or display changed.",
-                "capture_failed": "Could not capture the screen.",
-                "declined": "Action declined.",
-                "cleanup_failed": "Input release could not be confirmed. Restart Flippy before acting again.",
-                "permission": "Check macOS Screen Recording and Accessibility permissions.",
-                "operation_failed": "The operation failed or timed out.",
-            }
+            code = errors.ACT_REASONS.get(reason, "ACT-STOPPED")
+            if error is not None and not tools.failure:  # the provider ended it: its own code
+                code = errors.code_of(error)
+                log("act: error", errors.describe(error)[1])
             if isinstance(error, PlanLimitReached):
-                message = str(error)
+                message = errors.say(code, str(error))
             elif reason == "operation_failed" and tools.failure:
-                message = tools.failure  # the refusal itself says what happened (Flippy's own fixed wording)
-            elif isinstance(error, CodexError) and not tools.failure:
-                message = error.safe_message
+                # Flippy's own fixed refusal says what happened ("Action limit reached...", "Spotify quit...")
+                message = errors.say(code, tools.failure.removeprefix("Desktop task stopped. ")
+                                     .removeprefix("Task stopped: ").replace(" Check the screen before continuing.", ""))
             else:
-                message = messages[reason]
-            message = message.removeprefix("Desktop task stopped. ").removeprefix("Task stopped: ")
-            message = message.replace(" Check the screen before continuing.", "")
-            self._fail("Desktop task stopped: " + message + " Check the screen before continuing.")
+                message = errors.say(code)
+            self._fail("Desktop task stopped. " + message)
             if error:
                 self._open_setup_if(setup_gate.login_error, error)
         else:
@@ -749,7 +740,9 @@ class Flippy:
             return
         if err:
             self._stop_playback()
-            self._fail(_friendly_error(err))
+            shown, logged = errors.describe(err)
+            log("error", logged)  # the code and the error's first line, never the question
+            self._fail(shown)
             self._open_setup_if(setup_gate.login_error, err)
             return
         raw, gen = result
@@ -1430,26 +1423,6 @@ def wants_tutorial(question):
     """Is this a "how do I do X" / "now add X" request (a tutorial: steps wait for their clicks) or a question?"""
     q = question.lower().strip()
     return bool(TUTORIAL_RE.search(q) or DO_RE.search(q))
-
-
-def _friendly_error(err):
-    if isinstance(err, PlanLimitReached):  # says which plan, why, and when it resets
-        return str(err)
-    if isinstance(err, ProviderChoiceRequired):
-        return str(err)
-    if isinstance(err, CodexError) and getattr(err, "safe_message", None):
-        return err.safe_message
-    s = str(err) or type(err).__name__
-    low = s.lower()
-    if isinstance(err, (asyncio.TimeoutError, TimeoutError)):
-        return "The model took too long to answer. Try again."
-    if "rate_limit" in low or "usage limit" in low or "limit reached" in low or "429" in low:
-        return "Subscription usage limit reached. No provider fallback was attempted."
-    if "authentication" in low or "login" in low or "401" in low:
-        return "Connect your subscription in Setup, then try again."
-    if "network" in low or "connect" in low or "dns" in low or "offline" in low:
-        return "Could not reach the model. Check the connection."
-    return "The model request failed. Check your connection and subscription in Setup."
 
 
 def main():

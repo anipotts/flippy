@@ -9,7 +9,7 @@ from .brain import Brain as ClaudeBrain, BrainError
 
 
 class ProviderChoiceRequired(BrainError):
-    pass
+    """kind: claude-login, codex-login, none (nothing connected) or pick (both connected on Automatic)."""
 
 
 CONNECTION_STATUS = {"claude": None, "codex": None}
@@ -79,14 +79,16 @@ class Brain:
                                         else await self.providers["codex"].available())
             if CONNECTION_STATUS[mode] is not True:
                 raise ProviderChoiceRequired("Connect " + ("Claude Code" if mode == "claude" else "Codex / ChatGPT")
-                                             + " with your subscription in Setup. API-key connections are refused.")
+                                             + " with your subscription in Setup. API-key connections are refused.",
+                                             kind=mode + "-login")
             return mode
         claude, codex = await asyncio.gather(claude_available(), self.providers["codex"].available())
         CONNECTION_STATUS.update(claude=claude, codex=codex)
         if claude != codex:
             return "claude" if claude else "codex"
         raise ProviderChoiceRequired("Both subscriptions are connected. Choose Claude or ChatGPT in Settings → Models."
-                                     if claude else "Connect Claude Code or Codex with your subscription, then choose it in Settings → Models.")
+                                     if claude else "Connect Claude Code or Codex with your subscription, then choose it in Settings → Models.",
+                                     kind="pick" if claude else "none")
 
     async def connections(self):
         claude, codex = await asyncio.gather(claude_available(), self.providers["codex"].available())

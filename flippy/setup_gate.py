@@ -62,8 +62,5 @@ def launch_reason(status, mode):
 
 def login_error(err, status, mode):
     """Did this failed request fail because the subscription needs logging in again?"""
-    from .providers import ProviderChoiceRequired
-    if isinstance(err, ProviderChoiceRequired):
-        return relogin_needed(status, mode)
-    text = str(err).lower()
-    return any(k in text for k in ("authentication", "not logged in", "log in again", "login required", "401"))
+    from .errors import LOGIN_CODES, code_of
+    return code_of(err) in LOGIN_CODES

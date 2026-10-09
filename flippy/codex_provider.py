@@ -54,14 +54,16 @@ SAFE_CONFIG = {
 
 
 class CodexError(BrainError):
-    """Only fixed, user-readable text may cross the provider boundary."""
-    def __init__(self, safe_message):
+    """Only fixed, user-readable text may cross the provider boundary. code: see flippy/errors.py."""
+    def __init__(self, safe_message, code="CODEX-FAILED"):
         self.safe_message = safe_message
+        self.code = code
         super().__init__(safe_message)
 
 
 class CodexSignInRequired(CodexError):
-    pass
+    def __init__(self, safe_message):
+        super().__init__(safe_message, "CODEX-LOGIN")
 
 
 # Apps opened from the Dock or Finder get PATH=/usr/bin:/bin:/usr/sbin:/sbin, not the terminal's, so a Codex
@@ -135,7 +137,7 @@ class _RPC:
     async def launch(cls, config):
         executable = codex_executable()
         if not executable:
-            raise CodexError("Install Codex and sign in with ChatGPT to use it in Flippy.")
+            raise CodexError("Install Codex and sign in with ChatGPT to use it in Flippy.", "CODEX-MISSING")
         directory = tempfile.TemporaryDirectory(prefix="flippy-codex-")
         config = {**config, "log_dir": directory.name, "sqlite_home": directory.name}
         version = None
@@ -146,7 +148,7 @@ class _RPC:
             )
             output, _ = await asyncio.wait_for(version.communicate(), 5)
             if version.returncode or not _new_enough(output.decode().strip()):
-                raise CodexError(f"Update Codex to {SUPPORTED_VERSION} or newer to use it in Flippy.")
+                raise CodexError(f"Update Codex to {SUPPORTED_VERSION} or newer to use it in Flippy.", "CODEX-OLD")
             process = await asyncio.create_subprocess_exec(
                 executable, "app-server", "--listen", "stdio://", "--strict-config",
                 *_config_args(config), cwd=directory.name, env=child_environment(),
@@ -174,7 +176,7 @@ class _RPC:
                     future = self.pending.pop(message["id"], None)
                     if future is not None and not future.done():
                         if "error" in message:
-                            future.set_exception(CodexError("Codex could not complete this request."))
+                            future.set_exception(CodexError("Codex could not complete this request.", "CODEX-FAILED"))
                         else:
                             future.set_result(message.get("result", {}))
         except (OSError, ValueError, TypeError, asyncio.LimitOverrunError):
@@ -182,18 +184,18 @@ class _RPC:
         finally:
             for future in self.pending.values():
                 if not future.done():
-                    future.set_exception(CodexError("Codex disconnected. Try starting a new chat."))
+                    future.set_exception(CodexError("Codex disconnected. Try starting a new chat.", "CODEX-DISCONNECTED"))
             self.pending.clear()
             await self.events.put({"method": "flippy/disconnected"})
 
     async def send(self, message):
         if self.closed:
-            raise CodexError("Codex disconnected. Try starting a new chat.")
+            raise CodexError("Codex disconnected. Try starting a new chat.", "CODEX-DISCONNECTED")
         try:
             self.process.stdin.write((json.dumps(message, ensure_ascii=True) + "\n").encode())
             await self.process.stdin.drain()
         except (OSError, RuntimeError):
-            raise CodexError("Codex disconnected. Try starting a new chat.") from None
+            raise CodexError("Codex disconnected. Try starting a new chat.", "CODEX-DISCONNECTED") from None
 
     async def request(self, method, params, timeout=10):
         self.sequence += 1
@@ -204,7 +206,7 @@ class _RPC:
             await self.send({"id": request_id, "method": method, "params": params})
             return await asyncio.wait_for(future, timeout)
         except asyncio.TimeoutError:
-            raise CodexError("Codex did not respond. Try starting a new chat.") from None
+            raise CodexError("Codex did not respond. Try starting a new chat.", "CODEX-NO-RESPONSE") from None
         finally:
             self.pending.pop(request_id, None)
 
@@ -300,14 +302,14 @@ class CodexProvider:
 
     async def start(self):
         if self.blocked_reason == RUNTIME_UNAVAILABLE:
-            raise CodexError(RUNTIME_UNAVAILABLE)
+            raise CodexError(RUNTIME_UNAVAILABLE, "CODEX-RUNTIME")
         if self._rpc is None:
             try:
                 self._rpc = await self._connect(SAFE_CONFIG)
             except CodexError:
                 raise
             except Exception:
-                raise CodexError("Codex could not start. Check its installation and ChatGPT sign-in.") from None
+                raise CodexError("Codex could not start. Check its installation and ChatGPT sign-in.", "CODEX-START") from None
         self.dirty = False
 
     async def stop(self):
@@ -340,12 +342,12 @@ class CodexProvider:
             return
         effective = (await self._rpc.request("config/read", {"includeLayers": False})).get("config", {})
         if effective.get("model_provider") != "openai":
-            raise CodexError(ISOLATION_BLOCKED)
+            raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
         if effective.get("openai_base_url") not in (None, "", "https://api.openai.com/v1"):
-            raise CodexError(ISOLATION_BLOCKED)  # the user's config points requests elsewhere: don't follow it
+            raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")  # the user's config points requests elsewhere: don't follow it
         servers = effective.get("mcp_servers", {})
         if not isinstance(servers, dict):
-            raise CodexError(ISOLATION_BLOCKED)
+            raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
         # Empty TOML maps merge with inherited maps, rather than clearing them.
         # Only IDs survive this read; never log or retain credential-bearing config.
         names = tuple(servers)
@@ -356,7 +358,7 @@ class CodexProvider:
             self._rpc = await self._connect({**SAFE_CONFIG, **overrides})
             effective = (await self._rpc.request("config/read", {"includeLayers": False})).get("config", {})
             if any(server.get("enabled") is not False for server in effective.get("mcp_servers", {}).values()):
-                raise CodexError(ISOLATION_BLOCKED)
+                raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
             del effective
         self._isolated = True
 
@@ -374,7 +376,7 @@ class CodexProvider:
         })
         if (result.get("modelProvider") != "openai" or not result.get("thread", {}).get("ephemeral")
                 or result.get("instructionSources") or result.get("runtimeWorkspaceRoots")):
-            raise CodexError(ISOLATION_BLOCKED)
+            raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
         self.last_model = result.get("model")
         thread_id = result["thread"]["id"]
         cursor = None
@@ -384,7 +386,7 @@ class CodexProvider:
             })
             if any(server.get("tools") or server.get("resources") or server.get("resourceTemplates")
                    for server in inventory.get("data", [])):
-                raise CodexError(ISOLATION_BLOCKED)
+                raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
             cursor = inventory.get("nextCursor")
             if not cursor:
                 break
@@ -421,7 +423,7 @@ class CodexProvider:
                 or not isinstance(params.get("arguments"), dict)):
             await self._rpc.send({"id": event["id"],
                                   "error": {"code": -32601, "message": "Tool unavailable in Flippy."}})
-            raise CodexError(ISOLATION_BLOCKED)
+            raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
         self._tool_request = event["id"]
         result = await desktop.invoke(name, params["arguments"])
         content = []
@@ -431,12 +433,12 @@ class CodexProvider:
             elif item.get("type") == "image" and item.get("mimeType") == "image/jpeg":
                 content.append({"type": "inputImage", "imageUrl": "data:image/jpeg;base64," + item["data"]})
             else:
-                raise CodexError("Flippy could not return the desktop result.")
+                raise CodexError("Flippy could not return the desktop result.", "ACT-FAILED")
         await self._rpc.send({"id": event["id"],
                               "result": {"contentItems": content, "success": not result.get("is_error", False)}})
         self._tool_request = None
         if desktop.cancel.is_set():
-            raise CodexError("Desktop task stopped. Check the screen before continuing.")
+            raise CodexError("Desktop task stopped. Check the screen before continuing.", "ACT-STOPPED")
 
     def _remember(self, question, reply):
         self.history.append((question[:6000], reply[:12000]))
@@ -475,17 +477,17 @@ class CodexProvider:
                         if method != "item/tool/call":
                             await self._rpc.send({"id": event["id"], "error": {
                                 "code": -32601, "message": "Capability unavailable in Flippy."}})
-                            raise CodexError(ISOLATION_BLOCKED)
+                            raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
                         tool_calls += 1
                         if desktop and tool_calls > desktop.max_turns:
                             await self._rpc.send({"id": event["id"], "result": {
                                 "contentItems": [{"type": "inputText", "text": "Task tool limit reached."}],
                                 "success": False}})
-                            raise CodexError("Desktop task reached its tool limit. Check the screen before continuing.")
+                            raise CodexError("Desktop task reached its tool limit. Check the screen before continuing.", "ACT-LIMIT")
                         await self._tool_call(event, desktop, thread_id, turn_id)
                         continue
                     if method == "flippy/disconnected":
-                        raise CodexError("Codex disconnected. Try starting a new chat.")
+                        raise CodexError("Codex disconnected. Try starting a new chat.", "CODEX-DISCONNECTED")
                     if method == "account/rateLimits/updated":  # mid-request: stop before credits are touched
                         if GUARDS["codex"].codex(params.get("rateLimits") or {}):
                             raise PlanLimitReached(GUARDS["codex"].message())
@@ -506,10 +508,10 @@ class CodexProvider:
                             final_items.append(item["id"])
                     elif method == "turn/completed" and params.get("turn", {}).get("id") == turn_id:
                         if params["turn"].get("status") != "completed":
-                            raise CodexError("Codex did not finish this request. Try starting a new chat.")
+                            raise CodexError("Codex did not finish this request. Try starting a new chat.", "CODEX-INCOMPLETE")
                         text = messages.get(final_items[-1], "") if final_items else next(reversed(messages.values()), "")
                         if not text.strip():
-                            raise CodexError("Codex finished without a reply. Try starting a new chat.")
+                            raise CodexError("Codex finished without a reply. Try starting a new chat.", "CODEX-INCOMPLETE")
                         if conversation:
                             self._remember(question, text.strip())
                         return text.strip()
@@ -525,7 +527,7 @@ class CodexProvider:
                 self._rpc, self._thread, self._isolated = None, None, False
                 if isinstance(error, (CodexError, PlanLimitReached, asyncio.CancelledError)):
                     raise
-                raise CodexError("Codex could not complete this request. Try starting a new chat.") from None
+                raise CodexError("Codex could not complete this request. Try starting a new chat.", "CODEX-FAILED") from None
             finally:
                 self._active_task, self._active_turn, self._desktop, self._tool_request = None, None, None, None
 
