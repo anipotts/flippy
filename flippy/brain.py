@@ -3,10 +3,11 @@ import asyncio
 import os
 from dataclasses import replace
 
-from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, StreamEvent,
+from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, RateLimitEvent, ResultMessage, StreamEvent,
                               TextBlock, query)
 
 from .frames import prepare_image
+from .usage_guard import GUARDS, PlanLimitReached
 
 # The pointing instructions are adapted from Clicky (MIT: see THIRD_PARTY_NOTICES.md).
 SYSTEM_PROMPT = """\
@@ -43,7 +44,10 @@ reply with only a JSON array: [{"text": "...", "level": 1}, ...]
 
 
 class BrainError(Exception):
-    pass
+    """kind: Claude's reply error (claude_agent_sdk AssistantMessageError) or "incomplete"; see flippy/errors.py."""
+    def __init__(self, message="", kind=None):
+        super().__init__(message)
+        self.kind = kind
 
 
 # Claude Code saves every session to ~/.claude/projects/, screenshots included. Flippy's sessions live only in
@@ -118,6 +122,12 @@ class Brain:
             self.replay_context = False
             await self._start()
 
+    @staticmethod
+    def _usage(msg):
+        """A rate-limit report from Claude: stop this request if it would run on extra usage (flippy/usage_guard.py)."""
+        if GUARDS["claude"].claude(msg.rate_limit_info):
+            raise PlanLimitReached(GUARDS["claude"].message())
+
     async def act(self, question, desktop):
         """An isolated tool session using the tutor's existing model/auth settings.
 
@@ -132,26 +142,29 @@ class Brain:
                        max_turns=getattr(desktop, "max_turns", 16),
                        include_partial_messages=False, mcp_servers={"desktop": desktop.server()},
                        allowed_tools=[f"mcp__desktop__{name}" for name in names])
+        GUARDS["claude"].check()
         async with ClaudeSDKClient(options=opts) as client:
             await client.query(question)
             text = ""
             completed = False
             async for msg in client.receive_response():
-                if isinstance(msg, AssistantMessage):
+                if isinstance(msg, RateLimitEvent):
+                    self._usage(msg)
+                elif isinstance(msg, AssistantMessage):
                     self.last_model = msg.model
                     if getattr(msg, "error", None):
-                        raise BrainError(str(msg.error))
+                        raise BrainError(str(msg.error), kind=str(msg.error))
                     # Only the last assistant message is the task's final answer.
                     text = "".join(b.text for b in msg.content if isinstance(b, TextBlock))
                 elif isinstance(msg, ResultMessage):
                     if msg.is_error or msg.subtype != "success":
-                        raise BrainError(msg.result or "Desktop task did not finish.")
+                        raise BrainError(msg.result or "Desktop task did not finish.", kind="incomplete")
                     text = msg.result or text
                     completed = True
             if desktop.cancel.is_set():
                 return f"Task stopped: {desktop.failure or 'canceled'}. Check the screen before continuing."
             if not completed:
-                raise BrainError("Desktop task ended without a completed response.")
+                raise BrainError("Desktop task ended without a completed response.", kind="incomplete")
             return text.strip() or "Task finished without a final answer; check the screen."
 
     async def write_tips(self, app_name: str, goal: str, n: int, skip: list[str]) -> list[dict]:
@@ -166,11 +179,14 @@ class Brain:
         if skip:
             ask += "They already have these (don't repeat them):\n" + "\n".join(f"- {t}" for t in skip[-60:]) + "\n"
         ask += f"Write {n} tips."
+        GUARDS["claude"].check()
         parts, completed = [], False
         async for msg in query(prompt=ask, options=opts):
-            if isinstance(msg, AssistantMessage):
+            if isinstance(msg, RateLimitEvent):
+                self._usage(msg)
+            elif isinstance(msg, AssistantMessage):
                 if getattr(msg, "error", None):
-                    raise BrainError(str(msg.error))
+                    raise BrainError(str(msg.error), kind=str(msg.error))
                 parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
             elif isinstance(msg, ResultMessage):
                 if msg.is_error or msg.subtype != "success":
@@ -224,6 +240,8 @@ class Brain:
             self.history.pop(0)
 
     async def _reply(self, content, on_text):
+        GUARDS["claude"].check()
+
         async def messages():
             yield {"type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None}
 
@@ -231,7 +249,9 @@ class Brain:
         parts = []
         completed = False
         async for msg in self.client.receive_response():
-            if isinstance(msg, StreamEvent):
+            if isinstance(msg, RateLimitEvent):
+                self._usage(msg)
+            elif isinstance(msg, StreamEvent):
                 ev = msg.event
                 if ev.get("type") == "content_block_delta" and ev.get("delta", {}).get("type") == "text_delta":
                     delta = ev["delta"]["text"]
@@ -241,17 +261,17 @@ class Brain:
             elif isinstance(msg, AssistantMessage):
                 self.last_model = msg.model
                 if getattr(msg, "error", None):
-                    raise BrainError(str(msg.error))
+                    raise BrainError(str(msg.error), kind=str(msg.error))
                 parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
             elif isinstance(msg, ResultMessage):
                 if msg.is_error or msg.subtype != "success":
-                    raise BrainError("The response did not complete.")
+                    raise BrainError("The response did not complete.", kind="incomplete")
                 completed = True
         if not completed:
-            raise BrainError("The response ended before completion.")
+            raise BrainError("The response ended before completion.", kind="incomplete")
         text = "".join(parts).strip()
         if not text:
-            raise BrainError("empty reply")
+            raise BrainError("empty reply", kind="incomplete")
         return text
 
 

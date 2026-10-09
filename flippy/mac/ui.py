@@ -317,7 +317,11 @@ def box_style(theme):
     st = {"bg": _rgba(24 / 255, 24 / 255, 28 / 255, 0.94), "border": _rgba(90 / 255, 160 / 255, 1, 0.55),
           "border_w": 1, "radius": 14, "fg": _hex("f2f2f2"), "font": sys_font, "field_bg": None,
           "field_border": None, "field_radius": 0, "hint": _rgba(1, 1, 1, 0.5), "hint_font": (None, 12)}
-    if theme.key == "cosmic":
+    if theme.key == "mono":
+        st.update(bg=_rgba(0, 0, 0, 0.96), border=_rgba(*theme.outline), radius=0, fg=_rgba(*theme.fg),
+                  field_bg=_rgba(0, 0, 0, 1), field_border=_rgba(*theme.outline, 0.7), field_radius=0,
+                  hint=_rgba(*theme.fg, 0.55))
+    elif theme.key == "cosmic":
         st.update(bg=_rgba(*theme.bg, 0.96), border=_rgba(*theme.accent, 0.7), radius=theme.radius,
                   fg=_rgba(*theme.fg), hint=_rgba(*theme.fg, 0.5))
     elif theme.key == "terminal":
@@ -577,9 +581,8 @@ class Platform:
         self._bind_keys()
         settings.on_change(lambda section, key, value: section == "keys" and self._bind_keys())
         self._menu_bar()
-        from .setup_window import needs_setup
-        if needs_setup():
-            loop.timeout_add(300, lambda: self.open_setup())
+        # setup opens by itself only on install, a new major version or a lost login (flippy/setup_gate.py,
+        # decided once the first login check is done)
 
     def open_setup(self):
         from .setup_window import SetupWindow
@@ -1065,7 +1068,7 @@ class Platform:
     def app_act(self, name, args, frame, cancel):
         """press / set_text / focus / type / key / menu in the frame's app. Runs on the task's worker thread."""
         from . import ax
-        from ..actions import ActionError
+        from ..actions import ActionError, RetryableActionError
         pid = frame.target[1]
         if ax.running_app(pid) is None:
             raise ActionError("The app quit. Start a new /act request.")
@@ -1086,6 +1089,13 @@ class Platform:
             ax.menu(pid, args["path"])
         elif name == "media":
             ax.media(args["action"])
+        elif name == "app_action":
+            from . import scripts
+            app = scripts.app_for(args["action"])
+            target = ax.running_app(pid)
+            if app and (target is None or str(target.localizedName()) != app):
+                raise RetryableActionError(f"{args['action']} works on {app}; use_app {app} first.")
+            return scripts.run(args["action"], args["args"])
         elif name in ("click", "scroll", "drag") and args.get("real_pointer"):
             x, y = frame.to_logical(args["x"], args["y"])
             if name == "click":
@@ -1136,13 +1146,19 @@ class Platform:
             win = ax._window(pid)
             if win is not None:
                 ax.AX.AXUIElementPerformAction(win, "AXRaise")
-            for _ in range(30):  # up to 1.5 s for it to come in front
-                if AppKit.NSWorkspace.sharedWorkspace().frontmostApplication().processIdentifier() == pid:
+            # Up to 1.5 s for the app to come in front and its window to be the one at that spot: window order
+            # lags activation, and checking once refused clicks that would have landed.
+            for i in range(30):
+                front = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication().processIdentifier() == pid
+                if front and self._window_owner_at(x, y) == pid:
                     break
+                if i % 10 == 9 and win is not None:
+                    ax.AX.AXUIElementPerformAction(win, "AXRaise")
                 time.sleep(0.05)
-            if self._window_owner_at(x, y) != pid:
-                raise RetryableActionError("Something else is on top of that spot, so Flippy didn't click it. "
-                                           "Look again.")
+            else:
+                raise RetryableActionError("Another window still covered that spot after Flippy brought the app "
+                                           "forward, so it didn't click. Look again and retry, or use a control, "
+                                           "menu or key instead.")
             if idle() < 0.3:  # they picked the mouse back up while the app was coming forward
                 raise RetryableActionError("The user started working again, so Flippy gave the pointer back. "
                                            "Try again later in the task.")
@@ -1271,7 +1287,8 @@ class Platform:
 
     def app_name(self, bundle_id, pid):
         """The app's display name for approval cards ("Notes"), or None."""
-        app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid) if type(pid) is int else None
+        from . import ax
+        app = ax.running_app(pid) if type(pid) is int else None
         return str(app.localizedName()) if app is not None and app.localizedName() else None
 
     def key(self, combo, check=None):

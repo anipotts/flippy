@@ -42,7 +42,8 @@ def controller(queue):
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'Flippy')
     names = ('_owns', '_run_request', '_action_main', '_capture_frame', '_capture_frame_once', '_unlink',
              '_action_perform', '_on_answer', '_begin_request', '_schedule_fade', '_action_approve', '_start_playback', '_play_coords')
-    ns = {'asyncio': asyncio, 'loop': queue, 'Request': Request, 'ActionError': ActionError, 'approval_text': lambda *args: 'proposal',
+    from flippy.playback import Playback
+    ns = {'asyncio': asyncio, 'loop': queue, 'Request': Request, 'Playback': Playback, 'ActionError': ActionError, 'approval_text': lambda *args: 'proposal',
           'time': time, 'event': Mock(), 'os': __import__('os'), 'prepare_frame': Mock(), 'settings': SimpleNamespace(get=lambda *args: 1920),
           '_friendly_error': Mock(return_value='sanitized')}
     for n in cls.body:
@@ -79,9 +80,10 @@ class TestLifecycle(unittest.IsolatedAsyncioTestCase):
         f, _ = controller(queue)
         f.gen = 7
         f._play_tick = Mock()
+        f._resume_ticking = Mock()  # flippy/playback.py's Playback now holds the state; no timer in this test
         frame = ScreenFrame("image", (1920, 1080), (1440, 810))
         f._start_playback(7, frame.size, frame.original_size, frame=frame)
-        self.assertIs(f.play["frame"], frame)
+        self.assertIs(f.play.frame, frame)
         self.assertEqual(f._play_coords(SimpleNamespace(x=960, y=540)), (720, 405))
         self.assertEqual(f._play_coords(SimpleNamespace(x=-10, y=2000)), (0, 1079 * 810 / 1080))
 

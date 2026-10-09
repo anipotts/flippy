@@ -91,9 +91,26 @@ def _short(value):
 
 # ---- which app
 
+def _running():
+    """Every running app. Read from NSWorkspace's list: NSRunningApplication's lookups by pid or bundle id, called
+    from the task's worker thread, returned nothing for an app launched moments earlier (a task stopped with
+    "Spotify quit" while Spotify ran under exactly that pid), while this list had it."""
+    return [a for a in AppKit.NSWorkspace.sharedWorkspace().runningApplications() if not a.isTerminated()]
+
+
 def running_app(pid):
-    app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
-    return app if app is not None and not app.isTerminated() else None
+    return next((a for a in _running() if a.processIdentifier() == pid), None)
+
+
+def _relaunched(bundle, old_pid):
+    """The same app under a new process (it restarted, or swapped processes), or None if it's really gone."""
+    if not bundle:
+        return None
+    apps = [a for a in _running() if str(a.bundleIdentifier() or "") == bundle
+            and a.activationPolicy() == AppKit.NSApplicationActivationPolicyRegular]
+    if any(a.processIdentifier() == old_pid for a in apps):
+        return old_pid
+    return apps[0].processIdentifier() if apps else None
 
 
 def front_app():
@@ -177,8 +194,18 @@ def look(bundle, name, pid):
     elements: {id: (AX element, role, label, actions)}; ids are only good until the next look.
     No window, or one that's minimized or can't be captured, isn't a dead end: its controls (if any) and the
     app's menus are still listed, and menus and media keys work without a window."""
-    if running_app(pid) is None:
+    # The app by its bundle id first (a process id can go stale), the process id only when there's no bundle id
+    current = _relaunched(bundle, pid) if bundle else (pid if running_app(pid) is not None else None)
+    if current is None and running_app(pid) is not None:
+        current = pid
+    if current is None:
+        running = [(str(a.bundleIdentifier()), a.processIdentifier(), a.isTerminated())
+                   for a in AppKit.NSWorkspace.sharedWorkspace().runningApplications()
+                   if str(a.localizedName() or "") == name]
+        print(f"flippy: act: {name} looks gone: had pid {pid} bundle {bundle!r}; running with that name: {running}",
+              flush=True)
         raise ActionError(f"{name} quit. Start a new /act request.")
+    pid = current
     win = _window(pid)
     minimized = bool(win is not None and _attr(win, "AXMinimized"))
     frame = _frame(win) if win is not None else None

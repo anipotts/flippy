@@ -310,9 +310,8 @@ class Platform:
             self.tray = Tray(self)
         except Exception as e:  # no tray is no reason not to run
             print(f"flippy: panel icon unavailable: {e}", flush=True)
-        from .setup_window import needs_setup
-        if needs_setup():
-            loop.timeout_add(300, lambda: self.open_setup() and False)
+        # setup opens by itself only on install, a new major version or a lost login (flippy/setup_gate.py,
+        # decided once the first login check is done)
 
     # --- video review (flippy/video.py): the window in front, grabbed a few times a second
     def video_window(self):

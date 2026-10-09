@@ -8,16 +8,17 @@ import os
 import subprocess
 
 import cairo
-from AppKit import (NSAlert, NSAlertFirstButtonReturn, NSApp, NSBackingStoreBuffered, NSEvent,
-                    NSEventMaskKeyDown, NSScrollView, NSTabView, NSTabViewItem, NSWindow,
-                    NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskTitled)
+from AppKit import (NSAlert, NSAlertFirstButtonReturn, NSApp, NSAppearance, NSBackingStoreBuffered, NSEvent,
+                    NSEventMaskKeyDown, NSNoTabsNoBorder, NSScrollView, NSTabView, NSTabViewItem, NSWindow,
+                    NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskTitled, NSTextField)
 from Foundation import NSMakeRect, NSObject
 
 from .. import pointers, settings, themes, updates
 from . import hotkeys, pointer_editor
 from .cairoview import cairo_view
-from .system import appearance
-from .widgets import Form, button, checkbox, label, popup, set_popup, slider
+from . import setup_style as style
+from .setup_style import button
+from .widgets import Form, label, popup as _popup, set_popup, slider, target
 
 MODELS = settings.options('claude', 'model')
 EFFORTS = settings.options('claude', 'effort')
@@ -29,7 +30,8 @@ SHINES = settings.options('look', 'player_shine')
 TINT_COLORS = settings.options('look', 'glass_color')
 PAUSE_KEYS = settings.options('keys', 'pause')
 WIDTH, HEIGHT = 640, 720
-THUMB_W, THUMB_H = 280, 150
+TAB_BAR = 52
+THUMB_W, THUMB_H = 288, 150
 
 SAMPLE = themes.Card(text="The pointer glides here and the panel follows it.", header="Wi-Fi",
                      steps=["Control Center", "Wi-Fi"], step=1, progress=0.45, meta="OPUS · LOW", follow=True)
@@ -49,13 +51,32 @@ def draw_thumb(cr, w, h, theme):
     cr.scale(k, k)
     theme.draw(cr, 0, 0, cw, ch, SAMPLE, 1.2, opts)
     cr.restore()
-    style = settings.get("look", "pointer")
-    themes.draw_pointer(cr, theme, theme.pointer if style == "theme" else style, 22, 18, 1.0, 0.45, 10_000)
-    if settings.get("look", "theme") == theme.key:  # selected: accent ring
-        cr.set_source_rgb(*appearance()[1])
-        cr.set_line_width(4)
-        cr.rectangle(2, 2, w - 4, h - 4)
-        cr.stroke()
+    pointer = settings.get("look", "pointer")
+    themes.draw_pointer(cr, theme, theme.pointer if pointer == "theme" else pointer, 22, 18, 1.0, 0.45, 10_000)
+    selected = settings.get("look", "theme") == theme.key  # selected: a bright, thicker outline
+    cr.set_source_rgb(*(style.TEXT if selected else style.OUTLINE))
+    cr.set_line_width(4 if selected else 1)
+    inset = 2 if selected else 0.5
+    cr.rectangle(inset, inset, w - 2 * inset, h - 2 * inset)
+    cr.stroke()
+
+
+def popup(*args, **kwargs):
+    return style.outline_popup(_popup(*args, **kwargs))
+
+
+def checkbox(_title, on, fn, keep):
+    return style.check(on, fn, keep)
+
+
+class StyledForm(Form):
+    """Form in the setup window's look: a divider above each group, muted descriptions."""
+    def group(self, title, description=None):
+        if self.y > 20:
+            self.y += 10
+            style.rule(self.view, self.y, self.width - 2 * self.pad, x=self.pad)
+            self.y += 4
+        Form.group(self, title, description)
 
 
 class WindowDelegate(NSObject):
@@ -117,19 +138,39 @@ class SettingsWindow:
         self.win.setTitle_("Flippy Settings")
         self.win.setReleasedWhenClosed_(False)
         self.win.center()
-        tabs = NSTabView.alloc().initWithFrame_(NSMakeRect(0, 0, WIDTH, HEIGHT))
-        for title, form in (("Appearance", self._appearance(on_preview)), ("Claude", self._claude(on_reset)),
+        dark = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
+        self.win.setAppearance_(dark)
+        self.win.setBackgroundColor_(style.color(style.BACKGROUND))
+        root = style.panel(WIDTH, HEIGHT)
+        # pages switch with outlined buttons along the top (the native tab strip doesn't take the look)
+        tabs = NSTabView.alloc().initWithFrame_(NSMakeRect(0, TAB_BAR, WIDTH, HEIGHT - TAB_BAR))
+        tabs.setTabViewType_(NSNoTabsNoBorder)
+        tabs.setDrawsBackground_(False)
+        self.tab_buttons = []
+        x = 24
+        for title, form in (("Appearance", self._appearance(on_preview)), ("Models", self._claude(on_reset)),
                             ("Automation", self._actions()),
                             ("Timing", self._timing(on_preview)), ("Hotkeys", self._hotkeys())):
             item = NSTabViewItem.alloc().initWithIdentifier_(title)
             item.setLabel_(title)
-            scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, WIDTH - 20, HEIGHT - 60))
+            scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, WIDTH, HEIGHT - TAB_BAR))
             scroll.setHasVerticalScroller_(True)
+            scroll.setAutohidesScrollers_(True)
             scroll.setDrawsBackground_(False)
             scroll.setDocumentView_(form.finish())
             item.setView_(scroll)
             tabs.addTabViewItem_(item)
-        self.win.setContentView_(tabs)
+            tab = button(title, lambda title=title: self._show_tab(title), self.keep)
+            tab.setAccessibilityRole_("AXRadioButton")
+            style.place(root, tab, x, 14)
+            x += tab.frame().size.width - 1  # shared edges
+            self.tab_buttons.append((title, tab))
+        style.rule(root, TAB_BAR - 1, WIDTH, x=0)
+        style.place(root, tabs, 0, TAB_BAR)
+        self.tabs = tabs
+        self._show_tab("Appearance")
+        root.setAppearance_(dark)
+        self.win.setContentView_(root)
 
         self._listener = lambda s, k, v: self._changed(s, k)
         settings.on_change(self._listener)
@@ -142,6 +183,11 @@ class SettingsWindow:
             on_close()
         self.delegate.on_close = closed
         self.win.setDelegate_(self.delegate)
+
+    def _show_tab(self, title):
+        self.tabs.selectTabViewItemWithIdentifier_(title)
+        for name, tab in self.tab_buttons:
+            tab.set_selected(name == title)
 
     def present(self):
         NSApp.activateIgnoringOtherApps_(True)  # a normal window: it needs the keyboard
@@ -200,11 +246,11 @@ class SettingsWindow:
 
     def _setting_slider(self, form, section, key):
         spec = settings.SETTINGS[section, key]
-        return slider(spec.minimum, spec.maximum, spec.step, settings.get(section, key), lambda v: settings.set(section, key, v),
-                      form.keep, spec.digits)
+        return style.outline_slider(slider(spec.minimum, spec.maximum, spec.step, settings.get(section, key),
+                                           lambda v: settings.set(section, key, v), form.keep, spec.digits))
 
     def _appearance(self, on_preview):
-        f = Form(WIDTH - 40)
+        f = StyledForm(WIDTH)
         self.keep.append(f)
         f.group("Theme", "Sets the answer panel, pointer, pen and question box together.")
         for i, theme in enumerate(themes.THEMES.values()):
@@ -245,13 +291,24 @@ class SettingsWindow:
         return f
 
     def _claude(self, on_reset):
-        f = Form(WIDTH - 40)
+        f = StyledForm(WIDTH)
         self.keep.append(f)
-        f.group("Model", "Changes apply from your next question (it starts a fresh session).")
+        f.group("Connection", "Uses your signed-in subscription. Changing the connection starts a fresh session.")
+        f.row("Provider", None, self._setting_popup(f, "provider", "mode", settings.options("provider", "mode")))
+        f.group("Claude", "Model and effort apply when Claude is selected.")
         f.row("Model", None, self._setting_popup(f, "claude", "model", MODELS))
         f.row("Effort", "Higher thinks more carefully but answers slower", self._setting_popup(f, "claude", "effort", EFFORTS))
         f.row("Screenshot detail", "Sharper helps with tiny icons but uses more of your plan",
               self._setting_popup(f, "claude", "image", IMAGES))
+        f.group("Codex / ChatGPT", "Uses the Codex sign-in. Model and effort apply when Codex is selected.")
+        model = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 220, 26))
+        model.setStringValue_(settings.get("codex", "model"))
+        callback = target(self._codex_model_changed)
+        f.keep.append(callback)
+        model.setTarget_(callback)
+        model.setAction_("fire:")
+        f.row("Model", "default uses the account model; press Return to apply", style.outline_field(model))
+        f.row("Effort", None, self._setting_popup(f, "codex", "effort", settings.options("codex", "effort")))
         f.group("Session")
         f.row("Start fresh session", "Forget the conversation so far", button("Reset", on_reset, f.keep))
         f.group("Updates", f"You have Flippy {updates.current_version()}.")
@@ -260,10 +317,14 @@ class SettingsWindow:
         f.row("Check now", None, button("Check", lambda: self.command("update"), f.keep))
         return f
 
-
+    def _codex_model_changed(self, field):
+        try:
+            settings.set("codex", "model", field.stringValue().strip())
+        except ValueError:
+            field.setStringValue_(settings.get("codex", "model"))
 
     def _actions(self):
-        f = Form(WIDTH - 40)
+        f = StyledForm(WIDTH)
         self.keep.append(f)
         f.group("Desktop tasks", "Applies only to /act. Questions and walkthroughs remain tool-free.")
         f.row("Approval", None, self._setting_popup(f, "act", "mode", settings.options("act", "mode")))
@@ -293,7 +354,7 @@ class SettingsWindow:
             settings.remove_allowed_app(apps[index])
 
     def _timing(self, on_preview):
-        f = Form(WIDTH - 40)
+        f = StyledForm(WIDTH)
         self.keep.append(f)
         f.group("Answers")
         f.row("Stay up for", "Seconds after the answer finishes", self._setting_slider(f, "timing", "show_seconds"))
@@ -312,7 +373,7 @@ class SettingsWindow:
         return f
 
     def _hotkeys(self):
-        f = Form(WIDTH - 40)
+        f = StyledForm(WIDTH)
         self.keep.append(f)
         f.group("Shortcuts", "Work from any app. Click one, then press the new combination (Esc cancels).")
         for name, what in (("ask", "Ask about the screen"), ("draw", "Circle something, then ask"),

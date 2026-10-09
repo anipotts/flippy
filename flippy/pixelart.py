@@ -1,4 +1,9 @@
-"""The pixel pointer editor's model, shared by the GTK and AppKit editors: grid, tools, undo, load/save."""
+"""The pointer editor's model, shared by the GTK and AppKit editors: grid, tools, undo, load/save.
+
+Two ways to draw: pixel art on the GRID_W x GRID_H grid (cells), or smooth (a normal drawing: round brush
+strokes on a canvas RES times finer than the grid). Either way the tip (hotspot) is a grid cell, and the
+pointer shows at the same size.
+"""
 import math
 
 import cairo
@@ -7,6 +12,8 @@ from . import pointers, themes
 
 GRID_W, GRID_H = 20, 24
 CELL = 18
+RES = 16                    # smooth drawing: canvas pixels per grid cell
+BRUSHES = (6, 12, 24)       # smooth brush widths, in canvas pixels (thin, medium, thick)
 PALETTE = [None, (0, 0, 0), (1, 1, 1), (0.55, 0.55, 0.6), (1.0, 0.25, 0.2), (1.0, 0.6, 0.1), (1.0, 0.9, 0.2),
            (0.2, 0.85, 0.35), (0.25, 0.6, 1.0), (0.6, 0.35, 0.95), (1.0, 0.5, 0.75), (0.55, 0.35, 0.2)]
 
@@ -35,34 +42,99 @@ def from_sprite(grid_rows, tip_col):
     return cells, (ox + tip_col, oy)
 
 
+def _blank_smooth():
+    return cairo.ImageSurface(cairo.FORMAT_ARGB32, GRID_W * RES, GRID_H * RES)
+
+
+def _copy(surf):
+    out = _blank_smooth()
+    cr = cairo.Context(out)
+    cr.set_source_surface(surf)
+    cr.paint()
+    return out
+
+
 class PixelArt:
     def __init__(self, name=None):
         self.cells = [[None] * GRID_W for _ in range(GRID_H)]
+        self.smooth = None        # a cairo surface when drawing smooth; None = pixel art
+        self.brush = BRUSHES[1]
+        self.last = None          # the previous point of a smooth stroke
         self.hotspot = (GRID_W // 2, 0)
         self.undo_stack = []
         if name:
             self.load(name)
 
+    @property
+    def pixel(self):
+        return self.smooth is None
+
     def snapshot(self):
-        self.undo_stack.append(([row[:] for row in self.cells], self.hotspot))
+        self.undo_stack.append(([row[:] for row in self.cells], None if self.pixel else _copy(self.smooth),
+                                self.hotspot))
         self.undo_stack = self.undo_stack[-50:]
 
     def undo(self):
         if self.undo_stack:
-            self.cells, self.hotspot = self.undo_stack.pop()
+            self.cells, self.smooth, self.hotspot = self.undo_stack.pop()  # mode included
+
+    def set_pixel(self, pixel):
+        """Switch modes, keeping the drawing: cells become blocks on the canvas, or the canvas is sampled per cell."""
+        if pixel == self.pixel:
+            return
+        self.snapshot()
+        if pixel:
+            self.cells = self._smooth_to_cells()
+            self.smooth = None
+        else:
+            self.smooth = self._cells_to_smooth()
+
+    def _cells_to_smooth(self):
+        surf = _blank_smooth()
+        cr = cairo.Context(surf)
+        cr.set_antialias(cairo.ANTIALIAS_NONE)
+        for y, row in enumerate(self.cells):
+            for x, c in enumerate(row):
+                if c is not None:
+                    cr.set_source_rgb(*c)
+                    cr.rectangle(x * RES, y * RES, RES, RES)
+                    cr.fill()
+        surf.flush()
+        return surf
+
+    def _smooth_to_cells(self):
+        self.smooth.flush()
+        data, stride = self.smooth.get_data(), self.smooth.get_stride()
+        cells = [[None] * GRID_W for _ in range(GRID_H)]
+        for cy in range(GRID_H):
+            for cx in range(GRID_W):
+                i = (cy * RES + RES // 2) * stride + (cx * RES + RES // 2) * 4
+                b, g, r, a = data[i:i + 4]
+                if a > 127:
+                    cells[cy][cx] = (r / a, g / a, b / a)
+        return cells
 
     def blank(self):
         self.snapshot()
         self.cells = [[None] * GRID_W for _ in range(GRID_H)]
+        if not self.pixel:
+            self.smooth = _blank_smooth()
 
     def start(self, kind):
         self.snapshot()
         rows, tip = (themes.HAND, themes.HAND_TIP_COL) if kind == "hand" else (themes.ARROW, 0)
         self.cells, self.hotspot = from_sprite(rows, tip)
+        if not self.pixel:
+            self.smooth = self._cells_to_smooth()
 
     def load(self, name):
         surf = pointers.surface(name)
         if surf is None:
+            return
+        m = pointers.meta(name)
+        if not m["pixel"] and (surf.get_width(), surf.get_height()) == (GRID_W * RES, GRID_H * RES):
+            self.smooth = _copy(surf)  # a smooth drawing made here
+            self.hotspot = (m["hotspot"][0] // RES, m["hotspot"][1] // RES)
             return
         w, h = min(surf.get_width(), GRID_W), min(surf.get_height(), GRID_H)
         data, stride = surf.get_data(), surf.get_stride()
@@ -77,6 +149,58 @@ class PixelArt:
     def cell_at(x, y):
         cx, cy = int(x // CELL), int(y // CELL)
         return (cx, cy) if 0 <= cx < GRID_W and 0 <= cy < GRID_H else None
+
+    # ---- smooth drawing (canvas coordinates: the editor's on-screen px; CELL of them per grid cell)
+    def stroke_to(self, x, y, color, mirror=False):
+        """Continue the stroke to (x, y); color None erases. Call end_stroke() when the button lifts."""
+        k = RES / CELL
+        point = (x * k, y * k)
+        start = self.last or point
+        cr = cairo.Context(self.smooth)
+        cr.set_line_cap(cairo.LINE_CAP_ROUND)
+        cr.set_line_join(cairo.LINE_JOIN_ROUND)
+        cr.set_line_width(self.brush)
+        if color is None:
+            cr.set_operator(cairo.OPERATOR_CLEAR)
+        else:
+            cr.set_source_rgb(*color)
+        for flip in ((False, True) if mirror else (False,)):
+            fx = (lambda v: GRID_W * RES - v) if flip else (lambda v: v)
+            cr.move_to(fx(start[0]), start[1])
+            cr.line_to(fx(point[0]) + (0.01 if point == start else 0), point[1])  # a dot for a click
+            cr.stroke()
+        self.smooth.flush()
+        self.last = point
+
+    def end_stroke(self):
+        self.last = None
+
+    def fill_smooth(self, x, y, color):
+        """Flood fill the area under (x, y) (canvas px) by color and coverage, tolerant of soft brush edges."""
+        k = RES / CELL
+        sx, sy = int(x * k), int(y * k)
+        W, H = GRID_W * RES, GRID_H * RES
+        if not (0 <= sx < W and 0 <= sy < H):
+            return
+        self.smooth.flush()
+        data, stride = self.smooth.get_data(), self.smooth.get_stride()
+        at = lambda px, py: bytes(data[py * stride + px * 4: py * stride + px * 4 + 4])
+        target = at(sx, sy)
+        new = bytes((0, 0, 0, 0)) if color is None else bytes(
+            (round(color[2] * 255), round(color[1] * 255), round(color[0] * 255), 255))
+        if target == new:
+            return
+        close = lambda p: all(abs(a - b) <= 48 for a, b in zip(p, target))
+        seen, stack = set(), [(sx, sy)]
+        while stack:
+            px, py = stack.pop()
+            if (px, py) in seen or not (0 <= px < W and 0 <= py < H) or not close(at(px, py)):
+                continue
+            seen.add((px, py))
+            i = py * stride + px * 4
+            data[i:i + 4] = new
+            stack += [(px + 1, py), (px - 1, py), (px, py + 1), (px, py - 1)]
+        self.smooth.mark_dirty()
 
     def paint(self, cell, color, mirror=False):
         cx, cy = cell
@@ -97,6 +221,8 @@ class PixelArt:
                 stack += [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
 
     def surface(self):
+        if not self.pixel:
+            return _copy(self.smooth)
         surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, GRID_W, GRID_H)
         cr = cairo.Context(surf)
         for y in range(GRID_H):
@@ -111,14 +237,22 @@ class PixelArt:
 
     def draw_canvas(self, cr, w, h, mirror=False):
         checker(cr, 0, 0, w, h, CELL / 2)
-        for y in range(GRID_H):
+        if not self.pixel:
+            cr.save()
+            cr.scale(CELL / RES, CELL / RES)
+            pat = cairo.SurfacePattern(self.smooth)
+            pat.set_filter(cairo.FILTER_GOOD)
+            cr.set_source(pat)
+            cr.paint()
+            cr.restore()
+        for y in range(GRID_H if self.pixel else 0):
             for x in range(GRID_W):
                 c = self.cells[y][x]
                 if c is not None:
                     cr.set_source_rgb(*c)
                     cr.rectangle(x * CELL, y * CELL, CELL, CELL)
                     cr.fill()
-        cr.set_source_rgba(0, 0, 0, 0.18)
+        cr.set_source_rgba(0, 0, 0, 0.18 if self.pixel else 0.08)  # the grid stays: the tip snaps to it
         cr.set_line_width(1)
         for x in range(GRID_W + 1):
             cr.move_to(x * CELL + 0.5, 0)
@@ -142,8 +276,8 @@ class PixelArt:
     def draw_preview(self, cr, w, h):
         """The pointer at real size on a dark and a light background."""
         surf = self.surface()
-        px = themes.sprite_px(1.0)
-        hx, hy = self.hotspot
+        px = themes.sprite_px(1.0) / (1 if self.pixel else RES)
+        hx, hy = self.hotspot if self.pixel else self._smooth_hotspot()
         for i, bg in enumerate(((0.12, 0.12, 0.14), (0.92, 0.92, 0.94))):
             cr.set_source_rgb(*bg)
             cr.rectangle(i * w / 2, 0, w / 2, h)
@@ -152,16 +286,23 @@ class PixelArt:
             cr.translate(i * w / 2 + w / 4 - hx * px, 10 - hy * px)
             cr.scale(px, px)
             pat = cairo.SurfacePattern(surf)
-            pat.set_filter(cairo.FILTER_NEAREST)
+            pat.set_filter(cairo.FILTER_NEAREST if self.pixel else cairo.FILTER_GOOD)
             cr.set_source(pat)
             cr.paint()
             cr.restore()
+
+    def _smooth_hotspot(self):
+        """The tip cell's center on the smooth canvas."""
+        return self.hotspot[0] * RES + RES // 2, self.hotspot[1] * RES + RES // 2
 
     def save(self, name, editing=None, flip=True):
         name = name.strip() or "My pointer"
         if editing and name != editing:
             pointers.delete(editing)
-        pointers.save(name, self.surface(), self.hotspot, pixel=True, flip=flip)
+        if self.pixel:
+            pointers.save(name, self.surface(), self.hotspot, pixel=True, flip=flip)
+        else:
+            pointers.save(name, self.surface(), self._smooth_hotspot(), pixel=False, flip=flip, grid_h=GRID_H)
         return name
 
 

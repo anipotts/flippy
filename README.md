@@ -99,6 +99,10 @@ The first version supports one display, at most 12 inputs per task and 160 chara
 
 With the normal source dependencies installed in `.venv`, run `scripts/dev.sh build`, `run`, `ask <command>`, `stop` or `doctor`. `script/build_and_run.sh --verify` builds, launches and checks the demo socket. Builds never install login items or initiate authentication.
 
+To use the contribution as your normal app, run `scripts/dev.sh --app run`. This builds `~/Applications/Flippy.app` with the normal `dev.flippy.app` identity, configuration and hotkeys. `--app doctor` checks that profile; `--app stop` stops it only if this checkout owns the process. An existing app belonging to another checkout is never replaced. This is a local build of the contribution branch, not an upstream release.
+
+Setup shows the exact running app and a draggable icon for adding it to macOS permission lists. Use the direct Screen Recording and Accessibility links; if a pane does not accept a drop, reveal the app in Finder and select it using the pane’s `+` button. macOS owns permission approval. Restart Flippy afterward and let its live checks confirm access.
+
 The separate `~/Applications/Flippy Demo.app` uses `dev.flippy.demo`, `~/.config/flippy-demo`, its own socket, logs and caches. Updates and autostart are disabled. Its defaults are `⌘⌥⇧Space` to ask, `⌃⌥⇧Space` to draw, `⌃⌥⇧V` for video and double-Option to pause. Native permission prompts may appear after ad hoc signing. The normal app is not stopped or replaced.
 
 For acceptance, `scripts/action_fixture.py` provides a disposable native window, and `tests/fixtures/desktop.html` provides a deterministic browser page. Test approval/refusal, focus and pixel changes, typing/drag cancellation and released input. Automated tests do not prove live macOS permissions or input. Release decisions are tracked in [issue #2](https://github.com/kap-il/flippy/issues/2).
@@ -183,6 +187,7 @@ Every question sends a screenshot, which uses your subscription limits faster th
 
 ## Troubleshooting
 
+- **An error with a code** (like `Claude couldn't answer. · CLAUDE-FAILED`): look the code up in [docs/errors.md](docs/errors.md) for what happened and what to do.
 - **Logs:** `~/Library/Logs/flippy.log` on macOS, `~/.local/state/flippy.log` on Linux.
 - **Nothing happens on the hotkey:** run `~/.local/bin/flippy-ask` in a terminal to see the error. On Linux, "daemon didn't start" usually means gtk4-layer-shell isn't where `bin/flippy-daemon` looks (see `FLIPPY_LAYER_SHELL_LIB`). On macOS, another app may already own the shortcut; the log says so, and Settings → Hotkeys can change it.
 - **macOS: answers say Flippy needs Screen Recording:** allow Flippy in System Settings → Privacy & Security → Screen & System Audio Recording, then restart it (menu bar icon → Setup… → Restart Flippy).
@@ -220,7 +225,8 @@ scripts/    the macOS and Linux installers, release.sh, package.sh (the per-plat
 tests/      python -m unittest discover tests
 docs/       linux-port.md: how the macOS features work on COSMIC, and what's still blocked;
             linux-0.2.6.md: instructions for bringing COSMIC up to macOS (/act, pointer input, glass);
-            video-review.md: video review, and how to build it on macOS
+            video-review.md: video review, and how to build it on macOS;
+            errors.md: every error code Flippy shows, what it means and what to do
 ```
 
 ## Credits

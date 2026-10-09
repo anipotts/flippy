@@ -1633,8 +1633,150 @@ window.flippy-box entry { font-size: 16px; border-radius: 12px; background: rgba
 window.flippy-box .flippy-hint { color: rgba(255,255,255,0.6); font-size: 12px; }"""
 
 
-THEMES = {th.key: th for th in (Midnight(), Y2K(), MediaPlayer(), Glass(), Terminal(), Cosmic())}
+class Mono(Theme):
+    """Black with gray outlines and sharp corners, like the setup and settings windows; grayscale pointers.
+    Playback is a seek slider and a speed slider (white fill, dark track, light pill knob) plus square buttons."""
+    key, name = "mono", "Mono"
+    pointer = "hand"
+    hand_fill = (0.94, 0.945, 0.95)
+    hand_outline = (0.36, 0.36, 0.38)
+    accent = (0.94, 0.945, 0.95)
+    tap = (0.85, 0.85, 0.87)
+    pen = (0.92, 0.92, 0.94)
+    bg = (0.0, 0.0, 0.0)
+    outline = (0.50, 0.50, 0.52)
+    fg = (0.94, 0.945, 0.95)
+    muted = (0.62, 0.64, 0.68)
+    err = (1.0, 0.55, 0.5)
+    font = "Noto Sans"
+    radius = 0
+    P, BTN, ROW = 16, 26, 30
+
+    def _w(self, card):
+        return 360 if card.follow else 480
+
+    def _layouts(self, cr, card, opts):
+        w = self._w(card) - 2 * self.P
+        head = layout(cr, card.header, self.font, opts["text_size"] - 1, width=w, bold=True) if card.header else None
+        body = layout(cr, card.text or " ", self.font, opts["text_size"], width=w)
+        return head, body
+
+    def size(self, card, opts):
+        head, body = self._layouts(_measure_ctx, card, opts)
+        h = self.P + (lsize(head)[1] + 4 if head else 0) + lsize(body)[1] + self.P
+        if lean_controls(card, opts):
+            h += 2 * self.ROW + 6
+        return self._w(card), h
+
+    def _geom(self, x, y, w, h):
+        P, B = self.P, self.BTN
+        r2 = y + h - P / 2 - self.ROW / 2 - 2   # buttons and speed
+        r1 = r2 - self.ROW                      # seek
+        close_x = x + w - P - B
+        return {"r1": r1, "r2": r2, "count": (x + P, r1),
+                "seek": (x + P + 52, r1, w - 2 * P - 52),
+                "prev": (x + P, r2 - B / 2), "toggle": (x + P + B + 6, r2 - B / 2),
+                "next": (x + P + 2 * (B + 6), r2 - B / 2), "close": (close_x, r2 - B / 2),
+                "speed": (close_x - 14 - 110, r2, 110),
+                "speed_cycle": (close_x - 14 - 110 - 8 - 46, r2 - B / 2, 46, B)}  # the "1.25×" button
+
+    def hit_regions(self, card, x, y, w, h, opts=None):
+        if not lean_controls(card, opts or {}):
+            return {}
+        G, B = self._geom(x, y, w, h), self.BTN
+        hits = {name: (*G[name], B, B) for name in ("prev", "toggle", "next", "close")}
+        sx, sy, sw = G["seek"]
+        hits["seek"] = (sx, sy - 9, sw, 18)
+        vx, vy, vw = G["speed"]
+        hits["speed"] = (vx, vy - 9, vw, 18)
+        hits["speed_cycle"] = G["speed_cycle"]
+        return hits
+
+    def _slider(self, cr, x, cy, w, frac, pressed):
+        """A sharp bar: white fill up to the value, dark track after it. The knob shows only while it's held."""
+        frac = max(0.0, min(frac, 1.0))
+        cr.rectangle(x, cy - 3, w, 6)
+        cr.set_source_rgba(0.16, 0.16, 0.17, 1)
+        cr.fill()
+        cr.rectangle(x, cy - 3, w * frac, 6)
+        cr.set_source_rgba(*self.fg, 1)
+        cr.fill()
+        if pressed:
+            kw, kh = 22, 14
+            kx = x + (w - kw) * frac
+            round_rect(cr, kx, cy - kh / 2 + 1, kw, kh, kh / 2)  # shadow
+            cr.set_source_rgba(0, 0, 0, 0.5)
+            cr.fill()
+            round_rect(cr, kx, cy - kh / 2, kw, kh, kh / 2)
+            cr.set_source_rgba(0.85, 0.85, 0.86, 1)
+            cr.fill()
+
+    def _button(self, cr, bx, by, name, pressed):
+        B = self.BTN
+        if pressed:
+            cr.rectangle(bx, by, B, B)
+            cr.set_source_rgba(0.16, 0.16, 0.17, 1)
+            cr.fill()
+        cr.rectangle(bx + 0.5, by + 0.5, B - 1, B - 1)
+        cr.set_source_rgba(*self.outline, 1)
+        cr.set_line_width(1)
+        cr.stroke()
+        glyph(cr, name, bx + B / 2, by + B / 2, 5 if name != "close" else 4.5, (*self.fg, 1))
+
+    def draw(self, cr, x, y, w, h, card, t, opts):
+        cr.rectangle(x + 0.5, y + 0.5, w - 1, h - 1)
+        cr.set_source_rgba(*self.bg, opts["card_opacity"])
+        cr.fill_preserve()
+        cr.set_source_rgba(*self.outline, 1)
+        cr.set_line_width(1)
+        cr.stroke()
+        head, body = self._layouts(cr, card, opts)
+        ty = y + self.P
+        if head:
+            show(cr, head, x + self.P, ty, (*self.fg, 1))
+            ty += lsize(head)[1] + 4
+        show(cr, body, x + self.P, ty, (*(self.err if card.error else (self.fg if head is None else self.muted)), 1))
+        if not lean_controls(card, opts):
+            return
+        G = self._geom(x, y, w, h)
+        pressed = opts.get("pressed")
+        cr.rectangle(x + self.P, G["r1"] - self.ROW / 2 - 2, w - 2 * self.P, 1)  # divider above the controls
+        cr.set_source_rgba(0.22, 0.22, 0.23, 1)
+        cr.fill()
+        n = max(len(card.steps), 1)
+        count = layout(cr, f"{min(card.step + 1, n)} / {n}", self.font, 11)
+        cx, cy = G["count"]
+        show(cr, count, cx, cy - lsize(count)[1] / 2, (*self.muted, 1))
+        sx, sy, sw = G["seek"]
+        self._slider(cr, sx, sy, sw, card.progress, pressed == "seek")
+        for name in ("prev", "toggle", "next", "close"):
+            g = name if name != "toggle" else ("pause" if playing(card) else "play")
+            self._button(cr, *G[name], g, pressed == name)
+        vx, vy, vw = G["speed"]
+        bx, by, bw, bh = G["speed_cycle"]  # a square-cornered button: click steps through the speeds
+        if pressed == "speed_cycle":
+            cr.rectangle(bx, by, bw, bh)
+            cr.set_source_rgba(0.16, 0.16, 0.17, 1)
+            cr.fill()
+        cr.rectangle(bx + 0.5, by + 0.5, bw - 1, bh - 1)
+        cr.set_source_rgba(*self.outline, 1)
+        cr.set_line_width(1)
+        cr.stroke()
+        sl = layout(cr, f"{card.speed:g}×", self.font, 11, bold=True)
+        show(cr, sl, bx + (bw - lsize(sl)[0]) / 2, by + (bh - lsize(sl)[1]) / 2, (*self.fg, 1))
+        self._slider(cr, vx, vy, vw, speed_to_frac(card.speed), pressed == "speed")
+
+    def box_css(self):
+        return """
+window.flippy-box .flippy-card { background: rgba(0,0,0,0.96); border: 1px solid rgb(128,128,133);
+  border-radius: 0; padding: 12px 16px; color: #f0f1f2; }
+window.flippy-box entry { font-size: 16px; border-radius: 0; background: #000; color: #f0f1f2;
+  border: 1px solid rgb(128,128,133); }
+window.flippy-box .flippy-hint { color: rgba(240,241,242,0.55); font-size: 12px; }"""
+
+
+THEMES = {th.key: th for th in (Mono(), Midnight(), Y2K(), MediaPlayer(), Glass(), Terminal(), Cosmic())}
 
 
 def get(key):
-    return THEMES.get(key, THEMES["midnight"])
+    return THEMES.get(key, THEMES["mono"])

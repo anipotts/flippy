@@ -215,3 +215,25 @@ class StopFreesFlippy(unittest.TestCase):
         f.action_tools = None
         daemon.Flippy.dismiss(f)
         self.assertTrue(f.busy)  # cleared by the request's own finally, once the shared conversation is drained
+
+
+@unittest.skipUnless(sys.platform == "darwin", "macOS apps")
+class Reopened(unittest.TestCase):
+    def test_a_stale_process_falls_back_to_the_app_by_bundle_id(self):
+        from unittest.mock import patch
+        from flippy.mac import ax
+        with patch.object(ax, "running_app", return_value=None), \
+                patch.object(ax, "_relaunched", return_value=4242) as relaunched, \
+                patch.object(ax, "_window", return_value=None), patch.object(ax, "_menus", return_value="  (none)"):
+            jpeg, size, target, elements, text = ax.look("com.spotify.client", "Spotify", 111)
+        relaunched.assert_called_once_with("com.spotify.client", 111)
+        self.assertEqual(target[1], 4242)       # carries on with the app's current process
+        self.assertIn("no window open", text)
+
+    def test_an_app_that_is_really_gone_still_stops_the_task(self):
+        from unittest.mock import patch
+        from flippy.actions import ActionError
+        from flippy.mac import ax
+        with patch.object(ax, "running_app", return_value=None), patch.object(ax, "_relaunched", return_value=None):
+            with self.assertRaises(ActionError):
+                ax.look("com.example.app", "Example", 111)

@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
+from flippy.codex_provider import CodexError
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -15,10 +16,11 @@ def controller(tools):
     tree=ast.parse(path.read_text())
     cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='Flippy')
     event=Mock()
-    ns={'event':event,'os':os,'json':json,'__file__':str(path),
+    from flippy.usage_guard import PlanLimitReached
+    ns={'event':event,'os':os,'json':json,'__file__':str(path),'CodexError':CodexError,'PlanLimitReached':PlanLimitReached,
         'PROFILE':SimpleNamespace(demo=True,name='demo'),
         'updates':SimpleNamespace(current_version=lambda:'fixture'),
-        'settings':SimpleNamespace(get=lambda *args:10)}
+        'settings':SimpleNamespace(get=lambda *args:10),'act_memory':Mock(),'log':Mock(),'setup_gate':Mock(),'errors':__import__('flippy.errors').errors}
     for node in cls.body:
         if isinstance(node,ast.FunctionDef) and node.name in ('_action_done','command'):
             exec(compile(ast.Module(body=[node],type_ignores=[]),'<action results>','exec'),ns)
@@ -28,12 +30,19 @@ def controller(tools):
     f.action_future=object()
     f.ui=SimpleNamespace(action_card=SimpleNamespace(hide=Mock()))
     f.overlay=SimpleNamespace(show_text=Mock())
-    f._fail=Mock(); f._schedule_fade=Mock()
+    f._fail=Mock(); f._schedule_fade=Mock(); f._open_setup_if=Mock()
     f.busy=False; f.input_disabled=False
     return f,event
 
 
 class TestActionResults(unittest.TestCase):
+    def test_subscription_gate_is_visible_without_backend_details(self):
+        tools=SimpleNamespace(failure=None,actions=0,cleanup_failed=False)
+        f,_=controller(tools)
+        safe = "Codex could not complete this request. Try starting a new chat."
+        f._action_done(tools,SimpleNamespace(identity=20),None,CodexError(safe, "CODEX-FAILED"))
+        self.assertEqual(f._fail.call_args.args[0], "Desktop task stopped. Codex couldn't answer. · CODEX-FAILED")
+        self.assertEqual(f.last_action['completed_inputs'],0)
     def test_refusals_are_categorical_and_never_show_model_success(self):
         cases=(('The screen changed while approval was pending.','pixels_changed'),
                ('The foreground window or display changed.','target_changed'),
@@ -68,6 +77,17 @@ class TestActionResults(unittest.TestCase):
                 self.assertEqual(f.last_action['reason_code'],'input_held')
                 self.assertFalse(f.last_action['cleanup_failed'])
                 self.assertNotIn('Restart Flippy',str(f._fail.call_args))
+
+    def test_the_real_reason_shows_once(self):
+        # Codex wraps a stopped task as "Desktop task stopped. Check the screen..." and the controller wrapped it again
+        tools=SimpleNamespace(failure='Spotify quit. Start a new /act request.',failure_code=None,actions=2,cleanup_failed=False)
+        f,event=controller(tools)
+        f._action_done(tools,SimpleNamespace(identity=21),None,
+                       CodexError('Desktop task stopped. Check the screen before continuing.'))
+        shown=f._fail.call_args.args[0]
+        self.assertEqual(shown.count('Desktop task stopped'),1)
+        self.assertIn('Spotify quit',shown)
+        self.assertTrue(shown.endswith('· ACT-STOPPED'))
 
     def test_success_counts_inputs_and_doctor_exposes_only_safe_receipt(self):
         tools=SimpleNamespace(failure=None,actions=2,cleanup_failed=False)
