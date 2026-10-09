@@ -394,3 +394,70 @@ def key(pid, combo, flags_by_mod):
         flags |= flags_by_mod[m]
     _post(pid, code, True, flags)
     _post(pid, code, False, flags)
+
+
+# ---- by position, for controls the Accessibility API doesn't list (Spotify's Play button, canvases...)
+# Coordinates arrive in screen points (the controller converts from the look's pixels). The events go to the app's
+# process with its window id on them (CGEventPostToPid), so your pointer doesn't move and the app stays where it
+# is. Many apps accept these in the background; when one doesn't, the next look shows nothing happened.
+
+PRESSABLE = {"AXButton", "AXLink", "AXCheckBox", "AXRadioButton", "AXMenuButton", "AXPopUpButton", "AXTab",
+             "AXDisclosureTriangle", "AXSwitch", "AXMenuItem"}
+
+
+def _mouse(pid, wid, kind, x, y, clicks=1):
+    ev = Quartz.CGEventCreateMouseEvent(None, kind, (x, y), Quartz.kCGMouseButtonLeft)
+    Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventClickState, clicks)
+    if wid:  # the window it's for: the two public fields, and 51, which the window server reads too
+        for field in (Quartz.kCGMouseEventWindowUnderMousePointer,
+                      Quartz.kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent, 51):
+            Quartz.CGEventSetIntegerValueField(ev, field, wid)
+    Quartz.CGEventPostToPid(pid, ev)
+
+
+def _press_at(pid, x, y):
+    """If a real control sits at that point, press it through the Accessibility API. True if it did."""
+    err, el = AX.AXUIElementCopyElementAtPosition(AX.AXUIElementCreateApplication(pid), x, y, None)
+    if err != 0 or el is None or _attr(el, "AXRole") not in PRESSABLE:
+        return False
+    return AX.AXUIElementPerformAction(el, "AXPress") == 0
+
+
+def click(pid, wid, x, y, count, cancel):
+    if count == 1 and _press_at(pid, x, y):
+        return "pressed"
+    if not Quartz.CGPreflightPostEventAccess():
+        raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+    for n in range(1, count + 1):
+        _check(cancel)
+        _mouse(pid, wid, Quartz.kCGEventLeftMouseDown, x, y, n)
+        time.sleep(0.03)
+        _mouse(pid, wid, Quartz.kCGEventLeftMouseUp, x, y, n)
+        time.sleep(0.06)
+    return "clicked"
+
+
+def scroll(pid, wid, x, y, direction, lines):
+    if not Quartz.CGPreflightPostEventAccess():
+        raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+    dy = lines if direction == "up" else -lines if direction == "down" else 0
+    dx = lines if direction == "left" else -lines if direction == "right" else 0
+    ev = Quartz.CGEventCreateScrollWheelEvent(None, Quartz.kCGScrollEventUnitLine, 2, dy, dx)
+    Quartz.CGEventSetLocation(ev, (x, y))
+    if wid:
+        Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventWindowUnderMousePointer, wid)
+    Quartz.CGEventPostToPid(pid, ev)
+
+
+def drag(pid, wid, x, y, to_x, to_y, cancel, steps=24, seconds=0.6):
+    if not Quartz.CGPreflightPostEventAccess():
+        raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+    _mouse(pid, wid, Quartz.kCGEventLeftMouseDown, x, y)
+    try:
+        for i in range(1, steps + 1):
+            _check(cancel)
+            t = i / steps
+            _mouse(pid, wid, Quartz.kCGEventLeftMouseDragged, x + (to_x - x) * t, y + (to_y - y) * t)
+            time.sleep(seconds / steps)
+    finally:
+        _mouse(pid, wid, Quartz.kCGEventLeftMouseUp, to_x, to_y)  # always let go, even when stopped midway

@@ -65,12 +65,22 @@ class Background(unittest.IsolatedAsyncioTestCase):
         r = await self.tools.invoke("press", {"element": 2, "reason": "save"})
         self.assertNotIn("is_error", r)
 
-    async def test_old_coordinate_tools_are_not_offered(self):
-        self.assertNotIn("click", self.tools.catalog())
+    async def test_click_scroll_drag_by_position_in_the_screenshot(self):
+        self.assertIn("click", self.tools.catalog())
         await self.tools.invoke("look", {})
-        r = await self.tools.invoke("click", {"x": 1, "y": 1, "reason": "x"})
+        await self.tools.invoke("click", {"x": 50, "y": 40, "count": 1, "reason": "play"})
+        await self.tools.invoke("scroll", {"x": 50, "y": 40, "direction": "down", "lines": 3, "reason": "more"})
+        await self.tools.invoke("drag", {"x": 10, "y": 10, "to_x": 60, "to_y": 60, "reason": "move"})
+        self.assertEqual([n for n, _ in self.done], ["click", "scroll", "drag"])
+        self.assertFalse(self.tools.cancel.is_set())
+
+    async def test_a_spot_off_the_screenshot_is_a_retry_not_a_stop(self):
+        await self.tools.invoke("look", {})
+        r = await self.tools.invoke("click", {"x": 500, "y": 40, "count": 1, "reason": "x"})
         self.assertTrue(r["is_error"])
-        self.assertTrue(self.tools.cancel.is_set())  # not a tool here at all: invalid, so it stops
+        self.assertIn("outside the screenshot", r["content"][0]["text"])
+        self.assertFalse(self.tools.cancel.is_set())
+        self.assertEqual(self.done, [])
 
 
 class NoWindow(unittest.IsolatedAsyncioTestCase):
@@ -104,6 +114,18 @@ class Keys(unittest.TestCase):
         for combo in APP_KEYS:
             name = combo.split("+")[-1]
             self.assertIsNotNone(ax.NAV_KEYS.get(name, ax.hotkeys.KEYS.get(name)), combo)
+
+
+class Coordinates(unittest.TestCase):
+    def test_screenshot_pixels_map_to_the_window_on_screen(self):
+        f = AppFrame("x", (200, 100), ("com.apple.textedit", 1, 7, (300, 50, 100, 50), 0), {}, "")
+        self.assertEqual(f.to_logical(0, 0), (300, 50))
+        self.assertEqual(f.to_logical(100, 50), (350, 75))  # a 2x screenshot: half the points
+
+    def test_no_screenshot_means_no_clicking_by_position(self):
+        f = AppFrame(None, (0, 0), TARGET, {}, "")
+        with self.assertRaises(RetryableActionError):
+            f.to_logical(1, 1)
 
 
 class Describe(unittest.TestCase):

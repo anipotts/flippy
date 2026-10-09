@@ -1086,6 +1086,15 @@ class Platform:
             ax.menu(pid, args["path"])
         elif name == "media":
             ax.media(args["action"])
+        elif name in ("click", "scroll", "drag"):
+            wid = frame.target[2]
+            x, y = frame.to_logical(args["x"], args["y"])
+            if name == "click":
+                ax.click(pid, wid, x, y, args["count"], cancel)
+            elif name == "scroll":
+                ax.scroll(pid, wid, x, y, args["direction"], args["lines"])
+            else:
+                ax.drag(pid, wid, x, y, *frame.to_logical(args["to_x"], args["to_y"]), cancel)
         else:
             raise ActionError("Unsupported desktop action.")
         time.sleep(0.25)  # let the app redraw before the next look
