@@ -995,11 +995,20 @@ class Platform:
                 # shortcuts, would otherwise see "a"), no stray modifiers, and the text for the field.
                 code = hotkeys.KEYS.get("space" if ch == " " else ch.lower(), 0)
                 flags = Quartz.kCGEventFlagMaskShift if ch.isupper() else 0
-                for down in (True, False):
-                    ev = Quartz.CGEventCreateKeyboardEvent(None, code, down)
+                try:
+                    ev = Quartz.CGEventCreateKeyboardEvent(None, code, True)
                     Quartz.CGEventSetFlags(ev, flags)
                     Quartz.CGEventKeyboardSetUnicodeString(ev, len(ch.encode("utf-16-le")) // 2, ch)
                     Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+                finally:
+                    try:
+                        ev = Quartz.CGEventCreateKeyboardEvent(None, code, False)
+                        Quartz.CGEventSetFlags(ev, flags)
+                        Quartz.CGEventKeyboardSetUnicodeString(ev, len(ch.encode("utf-16-le")) // 2, ch)
+                        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+                    except Exception:
+                        from ..actions import InputCleanupError
+                        raise InputCleanupError("Input release could not be confirmed. Restart Flippy before acting again.") from None
                 if on_key:
                     on_key(ch)
                 time.sleep(random.uniform(0.045, 0.11) + (0.12 if ch in " ,." else 0))
