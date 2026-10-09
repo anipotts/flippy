@@ -40,8 +40,8 @@ def controller(queue):
     tree = ast.parse((Path(__file__).parents[1] / 'flippy/daemon.py').read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'Flippy')
     names = ('_owns', '_run_request', '_action_main', '_capture_frame', '_unlink',
-             '_action_perform', '_on_answer', '_begin_request', '_schedule_fade')
-    ns = {'asyncio': asyncio, 'loop': queue, 'Request': Request, 'ActionError': ActionError,
+             '_action_perform', '_on_answer', '_begin_request', '_schedule_fade', '_action_approve')
+    ns = {'asyncio': asyncio, 'loop': queue, 'Request': Request, 'ActionError': ActionError, 'approval_text': lambda *args: 'proposal',
           'os': __import__('os'), 'prepare_frame': Mock(), 'settings': SimpleNamespace(get=lambda *args: 1920),
           '_friendly_error': Mock(return_value='sanitized')}
     for n in cls.body:
@@ -58,10 +58,10 @@ def controller(queue):
     adapter._cancel_fade = Mock()
     adapter._fail = Mock()
     adapter.box = SimpleNamespace(hide=Mock())
-    adapter.overlay = SimpleNamespace(clear=Mock())
+    adapter.overlay = SimpleNamespace(clear=Mock(), point=Mock(), queue_draw=Mock())
     adapter.ui = SimpleNamespace(screen_size=lambda: (100,100), hide_settle_ms=0,
                                  action_state=lambda: ('app',1,2,(0,0,100,100),(100,100)),
-                                 action_card=SimpleNamespace(hide=Mock()), hide_nudge=Mock())
+                                 action_card=SimpleNamespace(hide=Mock(), card=Mock()), hide_nudge=Mock())
     return adapter, ns
 
 
@@ -151,6 +151,15 @@ class TestLifecycle(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
         op.assert_not_called()
+
+    async def test_drag_outside_foreground_window_never_opens_card(self):
+        q=MainQueue(); f,_=controller(q)
+        frame=ScreenFrame('jpeg',(100,100),(100,100),('app',1,2,(20,20,40,40),(100,100)))
+        args={'x':30,'y':30,'to_x':80,'to_y':80,'modifiers':[],'reason':'move'}
+        task=asyncio.create_task(f._action_approve('drag',args,frame,f.request))
+        await self.spin(q)
+        with self.assertRaises(ActionError): await task
+        f.ui.action_card.card.assert_not_called()
 
     async def test_changed_pixels_never_reach_native_input(self):
         q=MainQueue(); f,_=controller(q)
