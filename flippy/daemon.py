@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 
-from . import loop, settings, themes, tips, updates, video, watch
+from . import loop, onboarding, settings, themes, tips, updates, video, watch
 from .brain import Brain, BrainError, prepare_image
 from .actions import ActionError, DesktopTools, Screenshot, approval_text
 from .point import image_to_logical, segments
@@ -46,13 +46,21 @@ def log(*a):
 EVENTS_PATH = os.path.join(RUNTIME_DIR, "flippy-events.jsonl")
 
 
+LISTENERS = []  # fn(name, data) for every UI event, on the main thread (the tour, flippy/onboarding.py)
+
+
 def event(name, **data):
-    """Timestamped UI events (wall clock). Used by scripts/edit_demo.py to drive the camera."""
+    """Timestamped UI events (wall clock). Used by scripts/edit_demo.py to drive the camera, and by the tour."""
     try:
         with open(EVENTS_PATH, "a") as f:
             f.write(json.dumps({"t": time.time(), "ev": name, **data}) + "\n")
     except OSError:
         pass
+    for fn in LISTENERS:
+        try:
+            fn(name, data)
+        except Exception as e:  # a listener never breaks the thing that happened
+            log(f"event listener: {e}")
 
 
 class Flippy:
@@ -94,6 +102,9 @@ class Flippy:
         self.sampling = False
         self._apply_help_settings()
         self.video = video.Review(self)
+        self.tour = onboarding.Tour(self)
+        LISTENERS.append(self.tour.on_event)
+        loop.timeout_add(3000, self.tour.maybe_start)  # once setup's done, the first time
         self._run(self.brain.start(), lambda r, e: log("claude session ready" if not e else f"session start failed: {e}"))
 
         try:
@@ -122,6 +133,8 @@ class Flippy:
             self.open_box()
         elif cmd == "draw":
             self.start_draw()
+        elif cmd == "tour" or cmd.startswith("tour "):  # the first-run tour (flippy/onboarding.py)
+            return self.tour.command(cmd)
         elif cmd == "video" or cmd.startswith("video "):  # video review (flippy/video.py)
             if not hasattr(self.ui, "video_window"):
                 return NOT_HERE

@@ -40,6 +40,9 @@ DEFAULTS = {
         "apps": "",             # comma-separated app ids to watch (macOS bundle ids)
         "muted": "",            # apps where you chose "don't ask"
     },
+    "onboarding": {
+        "done": False,          # the first-run tour (flippy/onboarding.py) was finished or dismissed
+    },
     "updates": {
         "check": True,          # look for a new GitHub Release once a day and offer to install it
     },

@@ -545,7 +545,8 @@ MENU = [("Ask about the screen", "ask", "ask"), ("Circle and ask", "draw", "draw
         ("Help when I'm stuck", "help-toggle", None), ("Tips while I work", "tips-toggle", None),
         ("Watch this app", "watch-front", None), ("Set a goal…", "goal-front", None), None,
         ("Preview the look", "preview", None), ("Settings…", "settings", None), ("New session", "reset", None),
-        None, ("Check for updates…", "update", None), ("Setup…", "setup", None), ("Quit Flippy", "quit", None)]
+        None, ("Check for updates…", "update", None), ("Setup…", "setup", None), ("Take the tour", "tour", None),
+        ("Quit Flippy", "quit", None)]
 
 
 # --------------------------------------------------------------------------- platform
@@ -733,6 +734,19 @@ class Platform:
             img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("cursorarrow.rays", "Flippy")
         img.setAccessibilityDescription_("Flippy")
         self.status.button().setImage_(img)
+
+    def key_label(self, name):
+        """For the tour's cards: "⇧⌘Space", "double-tap ⌘", or None if it's off."""
+        combo = settings.get("keys", name)
+        if combo == "off":
+            return None
+        if combo.startswith("double-"):
+            return f"double-tap {hotkeys.SYMBOLS.get(combo[len('double-'):], '?')}"
+        return hotkeys.pretty(combo)
+
+    def setup_pending(self):
+        from .setup_window import needs_setup
+        return needs_setup() or self.setup_win is not None
 
     def _label_menu(self):
         for key, (item, title) in self.menu_items.items():

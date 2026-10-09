@@ -335,6 +335,16 @@ class Platform:
         w, h, stride, mode, data = img
         return Image.frombuffer("RGBA" if mode in ("RGBA", "BGRA") else "RGBX", (w, h), data, "raw", mode, stride, 1)
 
+    def key_label(self, name):
+        """For the tour's cards: the COSMIC shortcut that runs it ("Super+Shift+Space"), or None if there isn't one."""
+        from .settings_window import flippy_shortcuts, pretty_accel
+        want = {"ask": ("", "ask"), "draw": ("draw",), "video": ("video",), "pause": ("pause-toggle",)}[name]
+        return next((pretty_accel(accel) for accel, args in flippy_shortcuts() if args in want), None)
+
+    def setup_pending(self):
+        from .setup_window import needs_setup
+        return needs_setup() or self.setup_win is not None
+
     def open_setup(self):
         from .setup_window import SetupWindow
         if self.setup_win is None:

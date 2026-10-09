@@ -42,8 +42,10 @@ Needs [Homebrew](https://brew.sh) (for cairo) and the Xcode Command Line Tools (
 
 1. **Logging in to Claude** with your Pro/Max account (it opens Terminal running Claude Code; type `/login`).
 2. **Screen Recording permission**, so Flippy can see your screen. macOS only applies it after a restart; the setup window has a button for that.
-3. **Hotkeys:** `⇧⌘Space` asks, `⌃⇧Space` circles, and double-tapping `⌘` pauses or resumes a walkthrough. Change them in Settings → Hotkeys.
+3. **Hotkeys:** `⇧⌘Space` asks, `⌃⇧Space` circles, `⌃⌥V` records a video edit to check, and double-tapping `⌘` pauses or resumes a walkthrough. Change them in Settings → Hotkeys.
 4. Optionally, **open at login**.
+
+Then a one-minute tour shows you each thing (ask, pause, skip and speed, follow along, circle, video review) and waits for you to try it, ending in Settings. Replay it from the menu (**Take the tour**) or with `flippy-ask tour`.
 
 Reopen the setup any time from the menu bar icon → Setup…
 

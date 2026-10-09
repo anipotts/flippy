@@ -23,7 +23,7 @@ MENU = [("Ask about the screen", "ask"), ("Circle and ask", "draw"), ("Check a v
         ("Help when I'm stuck", "help-toggle"), ("Tips while I work", "tips-toggle"),
         ("Watch this app", "watch-front"), ("Set a goal…", "goal-front"), None,
         ("Preview the look", "preview"), ("Settings…", "settings"), ("New session", "reset"),
-        None, ("Check for updates…", "update"), ("Setup…", "setup"), ("Quit Flippy", "quit")]
+        None, ("Check for updates…", "update"), ("Setup…", "setup"), ("Take the tour", "tour"), ("Quit Flippy", "quit")]
 
 
 def _pixmaps(style=None):
