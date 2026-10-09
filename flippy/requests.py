@@ -10,6 +10,7 @@ class Request:
     canceled: threading.Event = field(default_factory=threading.Event)
     future: object = None
     pending: bool = True
+    drained: threading.Event = field(default_factory=threading.Event)
     timers: set = field(default_factory=set)
 
     def owns(self, current):
@@ -21,7 +22,10 @@ class Request:
             return False
         self.canceled.set()
         for timer in tuple(self.timers):
-            remove_timer(timer)
+            try:
+                remove_timer(timer)
+            except Exception:
+                pass  # continue canceling the transport even if a native timer already expired
         self.timers.clear()
         if self.future is not None and self.pending:
             self.future.cancel()
