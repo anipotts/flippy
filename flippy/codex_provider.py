@@ -22,11 +22,13 @@ RUNTIME_UNAVAILABLE = "Codex is signed in, but its isolated runtime could not st
 
 # These are real capability switches in the 0.153.4 configuration schema.
 # environments=[] additionally removes exec_command, apply_patch and view_image.
+# Not code_mode_host: on Codex 0.159 it's what hands Flippy's dynamic tools (look, press, menu...) to the model, and
+# with it off /act never saw a tool. code_mode / code_mode_only (the model running code itself) stay off.
 DISABLED_FEATURES = (
     "shell_tool", "shell_snapshot", "shell_snapshot_v2", "apps", "connectors",
     "plugins", "remote_plugin", "codex_hooks", "hooks", "plugin_hooks",
     "browser_use", "browser_use_external", "computer_use", "in_app_browser",
-    "image_generation", "imagegenext", "js_repl", "code_mode", "code_mode_host",
+    "image_generation", "imagegenext", "js_repl", "code_mode",
     "code_mode_only", "multi_agent", "multi_agent_v2", "collab", "memories",
     "memory_tool", "goals", "request_permissions", "request_permissions_tool",
     "tool_suggest", "tool_search", "remote_control", "skill_search", "view_image",
@@ -519,7 +521,10 @@ class CodexProvider:
 
     async def act(self, question, desktop):
         from .actions import PROMPT
-        return await self._run(PROMPT, [{"type": "text", "text": question}], desktop=desktop)
+        # The task's own instructions (the background tools' prompt), like Brain.act; the old coordinate-tool prompt
+        # told Codex to take a "screenshot" with a tool it doesn't have, so it answered without acting.
+        return await self._run(getattr(desktop, "prompt", PROMPT), [{"type": "text", "text": question}],
+                               desktop=desktop)
 
     async def write_tips(self, app_name, goal, n, skip):
         question = f"App: {app_name}\nWhat they want to do: {goal}\n"

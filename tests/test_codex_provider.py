@@ -160,6 +160,12 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_toml_key("computer-use"), "computer-use")
         self.assertEqual(_toml_key("my server.v2"), '"my server.v2"')
 
+    def test_tools_reach_the_model_but_it_cant_run_code(self):
+        # Codex 0.159 hands dynamic tools to the model through code_mode_host: off, /act never saw a tool
+        self.assertNotIn("features.code_mode_host", SAFE_CONFIG)
+        for off in ("code_mode", "code_mode_only", "shell_tool", "apps", "connectors", "plugins", "computer_use"):
+            self.assertIs(SAFE_CONFIG[f"features.{off}"], False, off)
+
     def test_the_api_endpoint_is_not_pinned(self):
         # pinning it sends ChatGPT-login requests to the API endpoint on Codex 0.159, which refuses them (401)
         self.assertNotIn("openai_base_url", SAFE_CONFIG)
