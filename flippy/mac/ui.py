@@ -837,11 +837,19 @@ class Platform:
         for n in (1, 2) if double else (1,):
             if check:
                 check()  # moving the pointer must not turn a canceled proposal into a click
-            for kind in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
-                ev = Quartz.CGEventCreateMouseEvent(None, kind, pt, Quartz.kCGMouseButtonLeft)
+            try:
+                ev = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDown, pt, Quartz.kCGMouseButtonLeft)
                 Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventClickState, n)
                 Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
                 time.sleep(0.03)
+            finally:
+                try:
+                    ev = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseUp, pt, Quartz.kCGMouseButtonLeft)
+                    Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventClickState, n)
+                    Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+                except Exception:
+                    from ..actions import InputCleanupError
+                    raise InputCleanupError("Input release could not be confirmed. Restart Flippy before acting again.") from None
         return "ok"
 
     def key_idle_s(self):
