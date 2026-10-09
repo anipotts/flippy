@@ -58,6 +58,11 @@ def prepare_image(path: str, long_edge: int = 1920) -> tuple[str, tuple[int, int
     return base64.b64encode(buf.getvalue()).decode(), target, orig
 
 
+# Claude Code saves every session to ~/.claude/projects/, screenshots included. Flippy's sessions live only in
+# memory: follow-ups still work, nothing is written to disk, and they stay out of your Claude Code history.
+NO_TRANSCRIPTS = {"no-session-persistence": None}
+
+
 class Brain:
     def __init__(self):
         # Never bill the API: the SDK picks up ANTHROPIC_API_KEY if it's set.
@@ -74,6 +79,7 @@ class Brain:
             model=ENV_MODEL,
             effort=ENV_EFFORT or "low",
             cwd=os.path.expanduser("~"),
+            extra_args=dict(NO_TRANSCRIPTS),
         )
         self.client: ClaudeSDKClient | None = None
         self.dirty = False  # options changed; next question starts a fresh session
@@ -104,7 +110,8 @@ class Brain:
         """One text-only call, outside the conversation: n tips for app_name. skip: tips they already have."""
         opts = ClaudeAgentOptions(system_prompt=TIPS_PROMPT, tools=[], allowed_tools=[], mcp_servers={},
                                   strict_mcp_config=True, setting_sources=[], max_turns=1,
-                                  model=self.options.model, effort="low", cwd=os.path.expanduser("~"))
+                                  model=self.options.model, effort="low", cwd=os.path.expanduser("~"),
+                                  extra_args=dict(NO_TRANSCRIPTS))
         ask = f"App: {app_name}\n"
         if goal:
             ask += f"What they want to do: {goal}\n"
