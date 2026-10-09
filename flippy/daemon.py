@@ -521,7 +521,7 @@ class Flippy:
         if name == "use_app":
             self.action_app = await asyncio.to_thread(self.ui.app_open, args["name"], cancel)
             return
-        await asyncio.to_thread(self.ui.app_act, name, args, shot, cancel)
+        return await asyncio.to_thread(self.ui.app_act, name, args, shot, cancel)
 
     async def _action_main(self, fn, req=None):
         running = asyncio.get_running_loop()

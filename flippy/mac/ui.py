@@ -1065,7 +1065,7 @@ class Platform:
     def app_act(self, name, args, frame, cancel):
         """press / set_text / focus / type / key / menu in the frame's app. Runs on the task's worker thread."""
         from . import ax
-        from ..actions import ActionError
+        from ..actions import ActionError, RetryableActionError
         pid = frame.target[1]
         if ax.running_app(pid) is None:
             raise ActionError("The app quit. Start a new /act request.")
@@ -1086,6 +1086,13 @@ class Platform:
             ax.menu(pid, args["path"])
         elif name == "media":
             ax.media(args["action"])
+        elif name == "app_action":
+            from . import scripts
+            app = scripts.app_for(args["action"])
+            target = ax.running_app(pid)
+            if app and (target is None or str(target.localizedName()) != app):
+                raise RetryableActionError(f"{args['action']} works on {app}; use_app {app} first.")
+            return scripts.run(args["action"], args["args"])
         elif name in ("click", "scroll", "drag") and args.get("real_pointer"):
             x, y = frame.to_logical(args["x"], args["y"])
             if name == "click":

@@ -165,12 +165,15 @@ class DesktopTools:
                     if self.cancel.is_set():
                         raise ActionError("Task stopped.")
                     self.snapshot = None
-                    await self.perform(name, args, shot, self.cancel)
+                    report = await self.perform(name, args, shot, self.cancel)
                     self.actions += 1
+                else:
+                    report = None
                 if self.cancel.is_set():
                     raise ActionError("Task stopped.")
                 self.snapshot = await self.capture()
-                return {"content": self.snapshot.content()}
+                said = [{"type": "text", "text": f"{name} result: {report}"}] if isinstance(report, str) else []
+                return {"content": said + self.snapshot.content()}
             except asyncio.CancelledError:
                 self.stop()
                 raise
@@ -219,6 +222,12 @@ class DesktopTools:
         elif name == "media":
             if args["action"] not in ("play_pause", "next", "previous"):
                 raise ActionError("Unsupported media key.")
+        elif name == "app_action":
+            values = args["args"]
+            if (not isinstance(args["action"], str) or not 1 <= len(args["action"]) <= 60 or not isinstance(values, dict)
+                    or len(values) > 4 or any(not isinstance(k, str) or not isinstance(v, str) or len(v) > self.max_text
+                                              or "\0" in v for k, v in values.items())):
+                raise ActionError("Invalid app action.")
         elif name == "use_app":
             if not isinstance(args["name"], str) or not 1 <= len(args["name"]) <= 80 or "\0" in args["name"]:
                 raise ActionError("Invalid app name.")
@@ -350,6 +359,16 @@ BACKGROUND_CATALOG = {
     "drag": {"description": "Drag from one spot to another in the last look's screenshot (within the window).",
              "schema": _schema({"x": _COORD, "y": _COORD, "to_x": _COORD, "to_y": _COORD,
                                 "real_pointer": _REAL_POINTER})},
+    "app_action": {"description": "A one-step scripted job in the target app, in the background (no window or pointer). "
+                                  "Actions: spotify.play_pause, spotify.next, spotify.previous, spotify.shuffle_on, "
+                                  "spotify.shuffle_off, spotify.play_uri {uri}, spotify.open_search {query}, "
+                                  "spotify.now_playing, music.play_song {query} (the user's library), "
+                                  "music.play_pause, music.next, notes.new_note {title, body}, "
+                                  "mail.new_draft {to, subject, body} (opens a draft; never sends), "
+                                  "safari.open_url {url}. The app must be the target (use_app first).",
+                   "schema": _schema({"action": {"type": "string", "minLength": 1, "maxLength": 60},
+                                      "args": {"type": "object", "additionalProperties": {"type": "string"},
+                                               "maxProperties": 4}})},
     "media": {"description": "The keyboard's media keys (play_pause, next, previous). They control whatever is "
                              "playing, Spotify, Music or a video, without a window.",
               "schema": _schema({"action": {"type": "string", "enum": ["play_pause", "next", "previous"]}})},
@@ -361,6 +380,13 @@ BACKGROUND_CATALOG = {
 BACKGROUND_PROMPT = """\
 You are Flippy, doing a task for the user in one of their Mac apps. You work in the background: the user keeps
 using their computer while you work, so you never move their pointer or type into the app they're in.
+Your tools, in the order to prefer them (all but the last work in the background, so the user keeps their Mac):
+1. The app's controls from look: press, set_text, focus, menu, type, key.
+2. app_action: a scripted one-step job when one fits (a new note with text, Spotify playback or a Spotify URI, a
+   song from the Music library, a Mail draft, opening a URL in Safari).
+3. click / scroll / drag at a position with real_pointer false, for things that aren't in the controls list.
+4. Last resort: the same with real_pointer true (Flippy waits for the user to pause and briefly takes the pointer).
+   Only after the background ways didn't work.
 Start with look. It shows the target app's window and a numbered list of its controls (buttons, fields, rows...)
 with what you can do to each, plus its menus and their items. An app with no window, or a minimized one, is not a
 dead end: use its menus (Spotify's Playback > Next), media for playback, or a menu that opens a window. Act on controls by their number: press, set_text, focus, then type
@@ -411,6 +437,7 @@ class AppFrame:
                 "menu": "choose " + " > ".join(args.get("path") or []),
                 "use_app": f"switch to {args.get('name')}",
                 "media": f"press the {str(args.get('action')).replace('_', '/')} media key",
+                "app_action": f"run {args.get('action')} in the app",
                 "click": ("double-click" if args.get("count") == 2 else "click") + " the marked spot"
                          + (" with your pointer, when you pause" if args.get("real_pointer") else ""),
                 "scroll": f"scroll {args.get('direction')} at the marked spot", "drag": "drag along the marked line"
