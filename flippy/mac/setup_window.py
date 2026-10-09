@@ -16,12 +16,14 @@ from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 from .. import loop, settings
 from ..profile import current
 from . import hotkeys
+from .permission_buddy import app_icon, reveal_app
 from .widgets import Form, button, checkbox, label, popup
 
 APP = os.environ.get("FLIPPY_APP")  # set by Flippy.app's launcher; None when run from a terminal
 AGENT_LABEL = current().bundle_id
 AGENT = os.path.expanduser(f"~/Library/LaunchAgents/{AGENT_LABEL}.plist")
 SCREEN_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+ACCESSIBILITY_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 WIDTH = 560
 
 
@@ -116,7 +118,7 @@ class SetupWindow:
         f = Form(WIDTH)
         self.keep.append(f)
         f.group("Welcome to Flippy", "Ask about anything on your screen and Flippy points at it. "
-                                     "Two quick steps and you're set.")
+                                     "Connect your subscription, then check macOS permissions.")
 
         f.y += 6
         f.row("1. Connect your subscription", "Use Claude Code or Codex / ChatGPT. If both are connected, choose one below.",
@@ -126,10 +128,21 @@ class SetupWindow:
         f.row("Use", "Auto selects the only connected subscription. Changing provider starts a fresh conversation.",
               popup(settings.options("provider", "mode"), settings.get("provider", "mode"),
                     lambda value: settings.set("provider", "mode", value), self.keep))
+        f.group("Your app")
+        if APP and os.path.isdir(APP):
+            f.row(os.path.basename(APP), os.path.abspath(APP), app_icon(APP))
+            f.add(label("Drag this icon where Settings accepts apps. Otherwise use + and choose this app.",
+                        11, color=NSColor.secondaryLabelColor(), wrap_width=WIDTH - 48))
+            f.buttons(button("Show in Finder", lambda: reveal_app(APP), self.keep))
+        else:
+            f.add(label("Install Flippy as an app to enable its permission helper.", 11))
         f.y += 6
-        f.row("2. Allow screen recording", "Flippy sends a screenshot with each question so Claude can see what "
+        f.row("2. Allow screen recording", "Flippy sends a screenshot with each question so your model can see what "
                                            "you mean. macOS applies it after Flippy restarts.",
               button("Allow…", ask_screen, self.keep), mark=self._mark("screen"))
+        f.row("3. Allow Accessibility", "Required for hotkeys and approved desktop actions.",
+              button("Open…", lambda: subprocess.Popen(["open", ACCESSIBILITY_PANE]), self.keep),
+              mark=self._mark("accessibility"))
         f.buttons(button("Restart Flippy", restart, self.keep))
 
         f.group("Hotkeys")
@@ -139,7 +152,7 @@ class SetupWindow:
 
         f.group("Options")
         login = checkbox("Open Flippy at login", login_item_on(), set_login_item, self.keep)
-        login.setEnabled_(bool(APP))
+        login.setEnabled_(bool(APP) and not current().demo)
         f.add(login)
         if not APP:
             f.add(label("Available once Flippy is installed as an app (./install.sh).", 11,
@@ -173,7 +186,7 @@ class SetupWindow:
 
     def _refresh(self):
         from ..providers import CONNECTION_STATUS
-        for key, ok in (("claude", claude_logged_in()), ("codex", CONNECTION_STATUS["codex"] is True), ("screen", screen_ok())):
+        for key, ok in (("claude", claude_logged_in()), ("codex", CONNECTION_STATUS["codex"] is True), ("screen", screen_ok()), ("accessibility", hotkeys.accessibility_trusted())):
             mark = self.marks[key]
             mark.setStringValue_("✓" if ok else "○")
             mark.setTextColor_(NSColor.systemGreenColor() if ok else NSColor.tertiaryLabelColor())
