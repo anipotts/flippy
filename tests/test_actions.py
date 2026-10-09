@@ -132,6 +132,15 @@ class TestTools(unittest.IsolatedAsyncioTestCase):
             await task
         self.assertTrue(self.tools.cancel.is_set())
 
+    async def test_cleanup_failure_is_retained_for_controller(self):
+        from flippy.actions import InputCleanupError
+        await self.tools.invoke("screenshot", {})
+        self.desktop.error = InputCleanupError("Release failed.")
+        result = await self.tools.invoke("key", {"combo": "return", "reason": "press"})
+        self.assertTrue(result["is_error"])
+        self.assertTrue(self.tools.cleanup_failed)
+        self.assertTrue(self.tools.cancel.is_set())
+
     async def test_bounded_scroll_and_drag(self):
         await self.tools.invoke("screenshot", {})
         for name, args in (("scroll", {"x": 30, "y": 40, "direction": "left", "lines": 10, "reason": "pan"}),
