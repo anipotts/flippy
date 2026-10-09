@@ -18,7 +18,7 @@ from .. import loop, settings
 from ..profile import current
 from . import hotkeys
 from .permission_buddy import app_icon, reveal_app
-from .widgets import button, popup, target
+from .widgets import popup, target
 from . import setup_style as style
 
 APP = os.environ.get("FLIPPY_APP")  # set by Flippy.app's launcher; None when run from a terminal
@@ -141,6 +141,7 @@ class SetupWindow:
         style.text(b, "Auto picks the only connected subscription.", 24, 240, 265, 10, muted=True)
         self.provider_choice = popup(settings.options("provider", "mode"), settings.get("provider", "mode"),
                                      self._choose_provider, self.keep, width=230)
+        style.outline_popup(self.provider_choice)
         self.provider_choice.setAccessibilityLabel_("Subscription to use")
         style.place(b, self.provider_choice, 306, 221, 230, 28)
         style.text(b, "ChatGPT isn't ready yet. Runtime and subscription-only usage checks are still pending.",
@@ -148,7 +149,7 @@ class SetupWindow:
         style.rule(b, 294, WIDTH - 48)
 
         style.section(b, 2, "Permissions", "Let me see your screen and lend a hand.", 306, WIDTH)
-        card = style.panel(WIDTH - 48, 62, style.SURFACE, 8)
+        card = style.card(WIDTH - 48, 62)
         style.place(b, card, 24, 348)
         if installed:
             buddy = app_icon(APP)
@@ -160,7 +161,7 @@ class SetupWindow:
             display_path = "~" + path[len(home):] if path.startswith(home + os.sep) else path
             path_label = style.text(card, display_path, 66, 32, 235, 10, muted=True)
             path_label.setToolTip_(path)
-            self.finder_button = button("Show in Finder", lambda: reveal_app(APP), self.keep)
+            self.finder_button = style.button("Show in Finder", lambda: reveal_app(APP), self.keep)
             style.place(card, self.finder_button, 368, 18, 132, 26)
             card.setToolTip_("Drag this Flippy icon into Settings, or choose this exact app with +.")
         else:
@@ -174,7 +175,7 @@ class SetupWindow:
                    24, 515, WIDTH - 48, 10, muted=True)
         style.rule(b, 536, WIDTH - 48)
         style.text(b, "Restart Flippy after enabling permissions.", 24, 550, 360, 11, muted=True)
-        self.restart_button = button("Restart", restart, self.keep)
+        self.restart_button = style.button("Restart", restart, self.keep)
         style.place(b, self.restart_button, 454, 542, 82, 28)
         style.rule(b, 581, WIDTH - 48)
 
@@ -182,7 +183,7 @@ class SetupWindow:
         self.shortcut_view = style.panel(320, 32)
         style.place(b, self.shortcut_view, 62, 635)
         self._shortcut = None
-        self.edit_button = button("Edit…", open_settings, self.keep)
+        self.edit_button = style.button("Edit…", open_settings, self.keep)
         style.place(b, self.edit_button, 454, 635, 82, 28)
         self.edit_button.setAccessibilityLabel_("Edit Flippy shortcuts")
 
@@ -212,7 +213,7 @@ class SetupWindow:
         style.text(root, "Launch at login", 70, body_height + 13, 240, 11)
         style.rule(root, body_height + 40, WIDTH, x=0)
         style.text(root, "You stay in control.", 24, body_height + 58, 360, 11, muted=True)
-        self.done_button = button("Done", lambda: self.win.close(), self.keep, primary=True)
+        self.done_button = style.button("Done", lambda: self.win.close(), self.keep, primary=True)
         style.place(root, self.done_button, 454, body_height + 49, 82, 28)
         self.controls = [self.provider_buttons['claude'], self.provider_buttons['codex'], self.provider_choice]
         if installed:
@@ -243,7 +244,7 @@ class SetupWindow:
         self.poll_id = loop.timeout_add(1000, lambda: self._refresh() or True)
 
     def _provider_card(self, key, title, subtitle, asset, x, y, caption, callback):
-        card = style.panel(250, 66, style.SURFACE, 8)
+        card = style.card(250, 66)
         style.place(self.body, card, x, y)
         image = NSImage.alloc().initWithContentsOfFile_(os.path.join(os.path.dirname(__file__), "assets", asset))
         logo = NSImageView.alloc().initWithFrame_(NSMakeRect(14, 20, 30, 30))
@@ -252,7 +253,7 @@ class SetupWindow:
         style.place(card, logo, 14, 18)
         style.text(card, title, 54, 13, 106, 12, bold=True)
         self.marks[key] = style.text(card, subtitle, 54, 32, 114, 10, muted=True)
-        action = button(caption, callback, self.keep, primary=key == "claude")
+        action = style.button(caption, callback, self.keep, primary=key == "claude")
         if key == "claude":
             action.setKeyEquivalent_("")
         action.setAccessibilityLabel_("Connect " + title)
@@ -266,7 +267,7 @@ class SetupWindow:
         style.place(self.body, style.symbol(icon_name, title), 55, y + 7, 24, 24)
         style.text(self.body, title, 94, y, 290, 12, bold=True)
         style.text(self.body, subtitle, 94, y + 19, 300, 10, muted=True)
-        action = button("Open Settings", callback, self.keep)
+        action = style.button("Open Settings", callback, self.keep)
         action.setAccessibilityLabel_("Open " + title + " settings")
         style.place(self.body, action, 432, y + 5, 104, 26)
         setattr(self, key + "_button", action)
