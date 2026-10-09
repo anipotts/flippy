@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 
-from . import loop, onboarding, settings, themes, tips, updates, video, watch
+from . import act_memory, loop, onboarding, settings, themes, tips, updates, video, watch
 from .brain import BrainError
 from .providers import Brain, ProviderChoiceRequired
 from .codex_provider import CodexError
@@ -25,7 +25,7 @@ from .requests import Request
 from .usage_guard import PlanLimitReached
 from .profile import current, Instance
 from .actions import (BACKGROUND_CATALOG, BACKGROUND_PROMPT, ActionError, AppFrame, ApprovalPolicy, DesktopTools,
-                      Screenshot, approval_text)
+                      Screenshot, app_id, approval_text)
 from .point import image_to_logical, segments
 from .playback import Playback, Options
 from .diagnostics import Diagnostics
@@ -494,7 +494,7 @@ class Flippy:
                              lambda name, args, shot, cancel: self._app_perform(name, args, shot, cancel, req),
                              max_actions=limits.max_actions, max_text=limits.max_text,
                              approval_mode=self.action_policy.mode,
-                             catalog=BACKGROUND_CATALOG, prompt=BACKGROUND_PROMPT)
+                             catalog=BACKGROUND_CATALOG, prompt=BACKGROUND_PROMPT + act_memory.brief())
         tools.max_turns = limits.max_turns
         self.action_tools = tools
         async def run():
@@ -516,6 +516,8 @@ class Flippy:
         if frame.target[1] != self.action_app[2]:  # the app reopened under a new process: follow it
             log(f"act: {self.action_app[1]} is now process {frame.target[1]}")
             self.action_app = (frame.target[0], self.action_app[1], frame.target[1])
+        if self.action_tools and app_id(frame.target):
+            self.action_tools.app_names[app_id(frame.target)] = self.action_app[1]
         return frame
 
     async def _app_perform(self, name, args, shot, cancel, req):
@@ -676,6 +678,10 @@ class Flippy:
         event("action_result", request_id=req.identity, count=tools.actions,
               outcome="stopped" if stopped else "completed", reason_code=reason)
         self.action_tools = self.action_future = None
+        try:  # what worked in which app, for the next task (flippy/act_memory.py)
+            act_memory.record(tools.journal, tools.notes, tools.app_names, finished=not stopped)
+        except Exception as err:
+            log(f"act: couldn't save what worked ({type(err).__name__})")
         self.ui.action_card.hide()
         if stopped:
             messages = {

@@ -20,7 +20,7 @@ def controller(tools):
     ns={'event':event,'os':os,'json':json,'__file__':str(path),'CodexError':CodexError,'PlanLimitReached':PlanLimitReached,
         'PROFILE':SimpleNamespace(demo=True,name='demo'),
         'updates':SimpleNamespace(current_version=lambda:'fixture'),
-        'settings':SimpleNamespace(get=lambda *args:10)}
+        'settings':SimpleNamespace(get=lambda *args:10),'act_memory':Mock(),'log':Mock()}
     for node in cls.body:
         if isinstance(node,ast.FunctionDef) and node.name in ('_action_done','command'):
             exec(compile(ast.Module(body=[node],type_ignores=[]),'<action results>','exec'),ns)
