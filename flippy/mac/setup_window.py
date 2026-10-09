@@ -141,8 +141,7 @@ class SetupWindow:
         style.outline_popup(self.provider_choice)
         self.provider_choice.setAccessibilityLabel_("Subscription to use")
         style.place(b, self.provider_choice, 306, 221, 230, 28)
-        style.text(b, "ChatGPT isn't ready yet. Runtime and subscription-only usage checks are still pending.",
-                   24, 265, WIDTH - 48, 10, muted=True)
+        self.provider_note = style.text(b, "", 24, 265, WIDTH - 48, 10, muted=True)  # see _refresh
         style.rule(b, 294, WIDTH - 48)
 
         style.section(b, 2, "Permissions", "Let me see your screen and lend a hand.", 306, WIDTH)
@@ -274,6 +273,22 @@ class SetupWindow:
         style.place(self.body, action, 432, y + 5, 104, 26)
         setattr(self, key + "_button", action)
 
+    def _provider_prompt(self, claude, codex):
+        """With both connected and Use on Automatic, nothing is picked and setup can't finish: ask for one."""
+        mode = settings.get("provider", "mode")
+        needs_pick = mode == "auto" and claude and codex
+        missing = mode != "auto" and not {"claude": claude, "codex": codex}[mode]
+        if needs_pick:
+            note = "Both are connected. Pick Claude or ChatGPT under Use to finish setup."
+        elif missing:
+            note = ("Claude" if mode == "claude" else "ChatGPT") + " isn't connected yet. Connect it above, or pick the other."
+        else:
+            note = "You can switch any time in Settings → Models."
+        self.provider_note.setStringValue_(note)
+        self.provider_note.setTextColor_(style.color(style.TEXT if needs_pick or missing else style.MUTED))
+        self.provider_choice.layer().setBorderColor_(style.color(style.TEXT if needs_pick else style.OUTLINE).CGColor())
+        self.provider_choice.layer().setBorderWidth_(2 if needs_pick else 1)
+
     def _choose_provider(self, value):
         settings.set("provider", "mode", value)
         self._refresh()
@@ -293,6 +308,7 @@ class SetupWindow:
             mark.setAccessibilityLabel_(key.replace('_', ' ') + (" permission enabled" if ok else " permission not enabled"))
         self.provider_choice.selectItemAtIndex_(
             self.provider_choice.target().values.index(settings.get("provider", "mode")))
+        self._provider_prompt(claude, codex)
         combo = settings.get('keys', 'ask')
         if combo != self._shortcut:
             for view in list(self.shortcut_view.subviews()):
