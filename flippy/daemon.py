@@ -17,7 +17,8 @@ import threading
 import time
 
 from . import loop, onboarding, settings, themes, tips, updates, video, watch
-from .providers import Brain
+from .providers import Brain, ProviderChoiceRequired
+from .codex_provider import CodexError
 from .brain import BrainError
 from .frames import prepare_frame
 from .requests import Request
@@ -86,6 +87,7 @@ class Flippy:
         self.busy = False
         self.action_tools = None
         self.action_future = None
+        self.allowed_apps = set(settings.get("act", "allowed_apps"))
         self.tutorial = False    # the current answer is a tutorial: its ":click" steps wait for their click
         self.fade_id = 0
         self.fading = False
@@ -253,6 +255,7 @@ class Flippy:
             self.box.hide()
             return
         self._cancel_fade()  # keep the last answer up while typing a follow-up
+        self._stop_playback()
         self._show_box()
 
     def _show_box(self):
@@ -514,19 +517,29 @@ class Flippy:
 
     async def _action_approve(self, name, args, shot, req):
         policy = self.action_policy
+        scopeable = True
+        if name in ("click", "scroll"):
+            bounds = shot.target[3] if shot.target and len(shot.target) >= 5 else None
+            x, y = shot.to_logical(args["x"], args["y"])
+            scopeable = bool(bounds and bounds[0] <= x < bounds[0] + bounds[2]
+                             and bounds[1] <= y < bounds[1] + bounds[3])
+        elif name == "key" and args.get("combo") == "cmd+space":
+            scopeable = False  # OS navigation has no known destination app yet.
+        per_app = scopeable and policy.mode != "every_input" and not policy.sensitive(shot.target)
         if name == "drag":
             bounds = shot.target[3] if shot.target and len(shot.target) >= 5 else None
             endpoints = (shot.to_logical(args["x"], args["y"]), shot.to_logical(args["to_x"], args["to_y"]))
             if not bounds or any(not (bounds[0] <= x < bounds[0] + bounds[2]
                                       and bounds[1] <= y < bounds[1] + bounds[3]) for x, y in endpoints):
                 raise ActionError("Both drag endpoints must be inside the foreground window.")
-        if not policy.needs_approval(shot.target, remembered=settings.get("act", "allowed_apps")):
+        if scopeable and not policy.needs_approval(shot.target, remembered=settings.get("act", "allowed_apps")):
             return self._owns(req)
         running = asyncio.get_running_loop()
         future = running.create_future()
         def chosen(allowed, remember=False):
             if allowed and self._owns(req):
-                policy.grant(shot.target)
+                if per_app:
+                    policy.grant(shot.target)
                 if remember:
                     app = shot.target[0]
                     try:
@@ -552,7 +565,6 @@ class Flippy:
                     self.overlay.strokes = [[(x, y), end]]
                     self.overlay.queue_draw()
                 self.overlay.point(x, y, label)
-            per_app = policy.mode != "every_input" and not policy.sensitive(shot.target)
             app = shot.target[0] if shot.target else "this app"
             buttons = [("Stop", lambda: chosen(False)), ("Allow once", lambda: chosen(True))]
             if per_app:
@@ -626,7 +638,8 @@ class Flippy:
                 "permission": "Check macOS Screen Recording and Accessibility permissions.",
                 "operation_failed": "The operation failed or timed out.",
             }
-            self._fail("Desktop task stopped: " + messages[reason] + " Check the screen before continuing.")
+            message = error.safe_message if isinstance(error, CodexError) else messages[reason]
+            self._fail("Desktop task stopped: " + message + " Check the screen before continuing.")
         else:
             self.overlay.show_text(result)
             self._schedule_fade(settings.get("timing", "max_show_seconds"))
@@ -1140,6 +1153,11 @@ class Flippy:
         elif section == "act" and key == "mode":
             if self.action_tools:
                 self.dismiss()
+        elif section == "act" and key == "allowed_apps":
+            previous = getattr(self, "allowed_apps", set())
+            self.allowed_apps = set(value)
+            if previous - self.allowed_apps and self.action_tools:
+                self.dismiss()
         elif section == "look" and key == "theme":
             self._apply_theme()
         elif section == "timing" and key == "speed":
@@ -1299,9 +1317,10 @@ def wants_tutorial(question):
 
 
 def _friendly_error(err):
-    from .providers import ProviderChoiceRequired
     if isinstance(err, ProviderChoiceRequired):
         return str(err)
+    if isinstance(err, CodexError) and getattr(err, "safe_message", None):
+        return err.safe_message
     s = str(err) or type(err).__name__
     low = s.lower()
     if isinstance(err, (asyncio.TimeoutError, TimeoutError)):

@@ -275,7 +275,7 @@ class SettingsWindow(Adw.PreferencesWindow):
             row.set_text(settings.get("codex", "model"))
 
     def _actions(self):
-        page = Adw.PreferencesPage(title="Actions", icon_name="input-mouse-symbolic")
+        page = Adw.PreferencesPage(title="Automation", icon_name="input-mouse-symbolic")
         group = Adw.PreferencesGroup(title="Desktop tasks", description="Applies to /act desktop input on macOS. Questions and walkthroughs stay tool-free.")
         group.add(combo_row("Approval", None, "act", "mode", settings.options("act", "mode")))
         group.add(Adw.ActionRow(title="Ask once per app", subtitle="Approve an app when a task first needs it; approvals are remembered."))

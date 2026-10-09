@@ -46,9 +46,6 @@ class BrainError(Exception):
     pass
 
 
-NO_TRANSCRIPTS = {"no-session-persistence": None}
-
-
 # Claude Code saves every session to ~/.claude/projects/, screenshots included. Flippy's sessions live only in
 # memory: follow-ups still work, nothing is written to disk, and they stay out of your Claude Code history.
 NO_TRANSCRIPTS = {"no-session-persistence": None}
@@ -86,6 +83,8 @@ class Brain:
         if (self.options.model, self.options.effort) != (model, effort):
             self.options.model, self.options.effort = model, effort
             self.dirty = self.client is not None
+            self.history.clear()
+            self.replay_context = False
 
     async def start(self):
         async with self._lock:
@@ -104,6 +103,8 @@ class Brain:
     async def stop(self):
         async with self._lock:
             await self._stop()
+            self.history.clear()
+            self.replay_context = False
 
     async def _stop(self):
         if self.client:

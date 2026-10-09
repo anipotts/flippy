@@ -50,6 +50,7 @@ class Brain:
         self.selected = None
         self.dirty = False
         self._lock = asyncio.Lock()
+        self._revision = 0
 
     @property
     def last_model(self):
@@ -61,12 +62,16 @@ class Brain:
         self.providers["codex"].configure(None if codex_model == "default" else codex_model,
                                           settings.get("codex", "effort"))
         self.dirty = True
+        self._revision += 1
 
     async def _select(self):
         mode = settings.get("provider", "mode")
         if mode != "auto":
             CONNECTION_STATUS[mode] = (await claude_available() if mode == "claude"
                                         else await self.providers["codex"].available())
+            if CONNECTION_STATUS[mode] is not True:
+                raise ProviderChoiceRequired("Connect " + ("Claude Code" if mode == "claude" else "Codex / ChatGPT")
+                                             + " with your subscription in Setup. API-key connections are refused.")
             return mode
         claude, codex = await asyncio.gather(claude_available(), self.providers["codex"].available())
         CONNECTION_STATUS.update(claude=claude, codex=codex)
@@ -82,12 +87,21 @@ class Brain:
 
     async def start(self):
         async with self._lock:
-            if not self.selected or self.dirty:
-                if self.selected:
-                    await self.providers[self.selected].stop()
-                self.selected = await self._select()
-                self.dirty = False
-            await self.providers[self.selected].start()
+            while True:
+                revision = self._revision
+                if not self.selected or self.dirty:
+                    if self.selected:
+                        await self.providers[self.selected].stop()
+                    self.selected = None
+                    candidate = await self._select()
+                    if revision != self._revision:
+                        continue
+                    self.selected = candidate
+                    self.dirty = False
+                await self.providers[self.selected].start()
+                if revision == self._revision:
+                    return
+                self.dirty = True
 
     async def stop(self):
         async with self._lock:

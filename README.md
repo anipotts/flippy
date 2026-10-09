@@ -89,11 +89,11 @@ For draw mode, press the draw hotkey (`⌃⇧Space` / `Super+Alt`), drag to circ
 
 Put the app you want to use in front, open Flippy's question box, and type `/act <task>`, for example `/act type hello into this empty note`. Or run `flippy-ask act <task>`.
 
-Settings → Actions controls approval:
+Settings → Automation controls approval:
 
 | Mode | Behavior |
 |---|---|
-| **Ask once per app** (`per_app`, default) | Ask when a task first needs an unapproved app. **Allow app** remembers its bundle ID. Remove it in Settings → Actions → Remembered apps to make the next task ask again. |
+| **Ask once per app** (`per_app`, default) | Ask when a task first needs an unapproved app. **Allow app** remembers its bundle ID. Remove it in Settings → Automation → Remembered apps to make the next task ask again. |
 | **Act automatically** (`auto`) | Ordinary apps receive input without an approval card. |
 | **Ask before every input** (`every_input`) | Show the exact click, text entry, shortcut, scroll or drag and its reason. **Allow once** permits only that input. Non-ASCII/control characters are escaped; overlong proposals are refused. |
 
@@ -122,7 +122,7 @@ The separate `~/Applications/Flippy Demo.app` uses `dev.flippy.demo`, `~/.config
 
 For acceptance, `scripts/action_fixture.py` provides a disposable native window, and `tests/fixtures/desktop.html` provides a deterministic browser page. Test approval/refusal, focus and pixel changes, typing/drag cancellation and released input. Automated tests do not prove live macOS permissions or input. Release decisions are tracked in [issue #2](https://github.com/kap-il/flippy/issues/2).
 
-For a first check, choose **Ask before every input** in Settings → Actions and use a disposable empty TextEdit note: allow typing, verify the text, then repeat and choose **Stop**. Also try dismissing during approval and switching apps before allowing. The automated tests use fake inputs and a real in-memory MCP transport; they never operate your desktop.
+For a first check, choose **Ask before every input** in Settings → Automation and use a disposable empty TextEdit note: allow typing, verify the text, then repeat and choose **Stop**. Also try dismissing during approval and switching apps before allowing. The automated tests use fake inputs and a real in-memory MCP transport; they never operate your desktop.
 
 Everything is also scriptable through `flippy-ask`:
 
@@ -182,7 +182,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `codex.model` | `default` or an account-supported model slug; live Codex inference remains under acceptance gates |
 | `codex.effort` | `low`, `medium` (default), `high`, `xhigh`; the selected model must support the value |
 | `act.mode` | `per_app` (default), `auto`, `every_input`; see desktop task approvals above |
-| `act.allowed_apps` | TOML string array of remembered macOS bundle IDs, e.g. `["com.apple.TextEdit"]`; remove an app in Settings → Actions |
+| `act.allowed_apps` | TOML string array of remembered macOS bundle IDs, e.g. `["com.apple.TextEdit"]`; remove an app in Settings → Automation |
 | `claude.model` | `default`, `opus`, `sonnet`, `haiku` |
 | `claude.effort` | `low`, `medium`, `high`, `max` |
 | `claude.image` | screenshot long edge: `1366`, `1920`, `0` (full) |

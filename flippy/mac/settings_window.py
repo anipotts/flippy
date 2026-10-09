@@ -119,7 +119,7 @@ class SettingsWindow:
         self.win.center()
         tabs = NSTabView.alloc().initWithFrame_(NSMakeRect(0, 0, WIDTH, HEIGHT))
         for title, form in (("Appearance", self._appearance(on_preview)), ("Models", self._claude(on_reset)),
-                            ("Actions", self._actions()),
+                            ("Automation", self._actions()),
                             ("Timing", self._timing(on_preview)), ("Hotkeys", self._hotkeys())):
             item = NSTabViewItem.alloc().initWithIdentifier_(title)
             item.setLabel_(title)
