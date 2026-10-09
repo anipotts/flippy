@@ -317,7 +317,11 @@ def box_style(theme):
     st = {"bg": _rgba(24 / 255, 24 / 255, 28 / 255, 0.94), "border": _rgba(90 / 255, 160 / 255, 1, 0.55),
           "border_w": 1, "radius": 14, "fg": _hex("f2f2f2"), "font": sys_font, "field_bg": None,
           "field_border": None, "field_radius": 0, "hint": _rgba(1, 1, 1, 0.5), "hint_font": (None, 12)}
-    if theme.key == "cosmic":
+    if theme.key == "mono":
+        st.update(bg=_rgba(0, 0, 0, 0.96), border=_rgba(*theme.outline), radius=0, fg=_rgba(*theme.fg),
+                  field_bg=_rgba(0, 0, 0, 1), field_border=_rgba(*theme.outline, 0.7), field_radius=0,
+                  hint=_rgba(*theme.fg, 0.55))
+    elif theme.key == "cosmic":
         st.update(bg=_rgba(*theme.bg, 0.96), border=_rgba(*theme.accent, 0.7), radius=theme.radius,
                   fg=_rgba(*theme.fg), hint=_rgba(*theme.fg, 0.5))
     elif theme.key == "terminal":

@@ -185,7 +185,7 @@ class TestSettings(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             settings.load()
         self.assertNotIn("private-invalid-value", output.getvalue())
-        self.assertEqual(settings.get("look", "theme"), "midnight")
+        self.assertEqual(settings.get("look", "theme"), "mono")
         self.assertEqual(settings.get("look", "text_size"), 15)
         self.assertEqual(settings.get("look", "card_opacity"), .8)
         self.assertEqual(settings.get("timing", "speed"), 1.)
@@ -195,7 +195,7 @@ class TestSettings(unittest.TestCase):
             Path(self.path).write_text(content)
             with contextlib.redirect_stdout(io.StringIO()):
                 settings.load()
-            self.assertEqual(settings.get("look", "theme"), "midnight")
+            self.assertEqual(settings.get("look", "theme"), "mono")
 
     def test_legacy_settings_and_custom_pointers_remain_supported(self):
         Path(self.path).write_text('[look]\ntheme = "glass"\nglass_shine = "none"\n[claude]\nmodel = "sonnet"\neffort = "high"\nimage = 1366\n')

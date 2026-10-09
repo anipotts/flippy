@@ -28,7 +28,7 @@ DEFAULTS = {
         "image": 1920,          # screenshot long edge sent to Claude: 1366 | 1920 | 0 (full)
     },
     "look": {
-        "theme": "midnight",    # see flippy/themes.py
+        "theme": "mono",        # see flippy/themes.py
         "pointer": "theme",     # theme | hand | ring | arrow | dot | glass | glasshand
         "pointer_size": 1.0,    # multiplier
         "text_size": 15,        # px, answer text
@@ -98,7 +98,7 @@ _OPTIONS = {
     ('look', 'glass_color'): [('smoke', 'Smoke'), ('blue', 'Blue'), ('purple', 'Purple'), ('pink', 'Pink'), ('red', 'Red'), ('orange', 'Orange'), ('green', 'Green'), ('teal', 'Teal')],
     ('keys', 'pause'): [('double-cmd', '⌘ ⌘  (double-tap)'), ('double-option', '⌥ ⌥  (double-tap)'), ('double-ctrl', '⌃ ⌃  (double-tap)'), ('double-shift', '⇧ ⇧  (double-tap)'), ('off', 'Off')],
     ('help', 'mode'): [('off', 'Off'), ('quiet', "Offer a hand when I'm stuck"), ('tips', 'That, plus tips while I work')],
-    ('look', 'theme'): [('midnight', 'Midnight'), ('y2k', 'Y2K'), ('mediaplayer', 'Mediaplayer'), ('glass', 'Glass'), ('terminal', 'Terminal'), ('cosmic', 'Cosmic')],
+    ('look', 'theme'): [('mono', 'Mono'), ('midnight', 'Midnight'), ('y2k', 'Y2K'), ('mediaplayer', 'Mediaplayer'), ('glass', 'Glass'), ('terminal', 'Terminal'), ('cosmic', 'Cosmic')],
 }
 _BOUNDS = {
     ('look', 'pointer_size'): (0.5, 2.0, 0.1, 1),
