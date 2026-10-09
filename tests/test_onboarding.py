@@ -49,7 +49,7 @@ class FakeFlippy:
 class TestTour(unittest.TestCase):
     def setUp(self):
         self.saved = settings.get("onboarding", "done")
-        patcher = mock.patch.object(settings, "save")  # never write the real config file
+        patcher = mock.patch.object(settings, "_save")  # atomic setter's persistence boundary
         patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(lambda: settings.set("onboarding", "done", self.saved))

@@ -1,0 +1,57 @@
+name: checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'ani/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: unit (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      # All inference clients are mocked; no credentials or model requests.
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        if: runner.os == 'macOS'
+        with:
+          python-version: '3.12'
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install cairo pkg-config
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements-mac.txt 'claude-agent-sdk==0.2.165'
+          .venv/bin/python -m pip check
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv python3-pil python3-cairo python3-gi python3-dbus gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-pango-1.0
+          /usr/bin/python3 -m venv --system-site-packages .venv
+          .venv/bin/python -m pip install -r requirements-linux.txt 'claude-agent-sdk==0.2.165'
+          .venv/bin/python -m pip check
+      - name: Shared and platform-adapter unit tests
+        run: .venv/bin/python -m unittest discover -s tests -v
+      - name: Syntax and whitespace
+        run: |
+          .venv/bin/python -m compileall -q flippy tests
+          .venv/bin/python -m py_compile bin/flippy-ask
+          for script in install.sh bin/flippy-daemon scripts/*.sh; do bash -n "$script"; done
+          git diff --check

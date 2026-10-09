@@ -1,4 +1,5 @@
 .venv/
+.venv
 __pycache__/
 *.pyc
 .gstack/
@@ -16,6 +17,11 @@ scripts/*
 !scripts/install_linux.sh
 !scripts/release.sh
 !scripts/package.sh
+!scripts/build_mac.sh
+!scripts/dev.sh
+!scripts/doctor.py
+!scripts/action_fixture.py
+!scripts/wait_stopped.py
 *.mp4
 *.mov
 *.webm

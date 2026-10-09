@@ -15,6 +15,7 @@ import os
 import json
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -442,7 +443,7 @@ class InputBox:
         entry.cell().setScrollable_(True)
         entry.setDelegate_(self.delegate)
         field_box.addSubview_(entry)
-        hint = NSTextField.labelWithString_("Enter to ask · Esc to close · /new fresh session · /settings")
+        hint = NSTextField.labelWithString_("Enter to ask · /act <task> to act · Esc to close · /new · /settings")
         hint.setFont_(hint_font)
         hint.setTextColor_(st["hint"])
         if st.get("hint_shadow"):  # white hint on light frost: a soft shadow keeps it readable
@@ -560,6 +561,7 @@ class Platform:
         self.settings_win = None
         self.setup_win = None
         self.nudge = Nudge()
+        self.action_card = Nudge()  # separate from tips and update cards
         self.double_tap = hotkeys.DoubleTap()
         self.command = lambda cmd: "not ready"
 
@@ -837,22 +839,33 @@ class Platform:
                 json.dump({"stopped": stopped}, f)
         self.recorder = None
 
-    def click(self, x, y, double=False):
+    def click(self, x, y, double=False, check=None):
         """Post a real left click at (x, y) on the main display (logical px, top-left origin)."""
         if not Quartz.CGPreflightPostEventAccess():
             Quartz.CGRequestPostEventAccess()  # the system prompt, the first time
             return ("Flippy needs the Accessibility permission to click: System Settings > Privacy & Security > "
                     "Accessibility, turn on Flippy, then restart it")
+        self._check_physical_input(mouse=True)
         pt = Quartz.CGPointMake(x, y)
         move = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, pt, Quartz.kCGMouseButtonLeft)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, move)
         time.sleep(0.05)
         for n in (1, 2) if double else (1,):
-            for kind in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
-                ev = Quartz.CGEventCreateMouseEvent(None, kind, pt, Quartz.kCGMouseButtonLeft)
+            if check:
+                check()  # moving the pointer must not turn a canceled proposal into a click
+            try:
+                ev = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDown, pt, Quartz.kCGMouseButtonLeft)
                 Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventClickState, n)
                 Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
                 time.sleep(0.03)
+            finally:
+                try:
+                    ev = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseUp, pt, Quartz.kCGMouseButtonLeft)
+                    Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventClickState, n)
+                    Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+                except Exception:
+                    from ..actions import InputCleanupError
+                    raise InputCleanupError("Input release could not be confirmed. Restart Flippy before acting again.") from None
         return "ok"
 
     def key_idle_s(self):
@@ -893,29 +906,105 @@ class Platform:
     def move(self, x, y):
         return self._can_post() or self._mouse(Quartz.kCGEventMouseMoved, x, y) or "ok"
 
+    def _gesture(self, points, drag, modifiers=(), check=None):
+        """Synchronous worker body; completion acknowledges release of owned input."""
+        if drag and Quartz.CGEventSourceButtonState(Quartz.kCGEventSourceStateCombinedSessionState, Quartz.kCGMouseButtonLeft):
+            raise RuntimeError("Release the physical mouse button before dragging.")
+        down = False
+        owned = []
+        position = points[0][:2]
+        flags = 0
+        try:
+            for mod in modifiers:
+                if check:
+                    check()
+                code = self.MOD_KEYS[mod]
+                if Quartz.CGEventSourceKeyState(Quartz.kCGEventSourceStateCombinedSessionState, code):
+                    raise RuntimeError("Release physical modifiers before dragging.")
+                owned.append(mod)
+                flags |= self.FLAGS[mod]
+                self._modifier(mod, flags)
+            for i, (x, y, dt) in enumerate(points):
+                if check:
+                    check()
+                position = x, y
+                if drag and i == 0:
+                    self._mouse(Quartz.kCGEventMouseMoved, x, y)
+                    time.sleep(0.025)
+                    if check:
+                        check()
+                    down = True  # release even if posting reports a failure after delivery
+                    self._gesture_mouse(Quartz.kCGEventLeftMouseDown, x, y, flags)
+                else:
+                    self._gesture_mouse(Quartz.kCGEventLeftMouseDragged if down else Quartz.kCGEventMouseMoved,
+                                        x, y, flags)
+                if dt:
+                    time.sleep(max(dt, 0.004))
+            return "ok"
+        finally:
+            release_error = None
+            if down:
+                try:
+                    self._gesture_mouse(Quartz.kCGEventLeftMouseUp, *position, flags)
+                except Exception as err:
+                    release_error = err
+            for mod in reversed(owned):
+                flags &= ~self.FLAGS[mod]
+                try:
+                    self._modifier(mod, flags)
+                except Exception as err:
+                    release_error = release_error or err
+            if release_error:
+                from ..actions import InputCleanupError
+                raise InputCleanupError("Input release could not be confirmed. Restart Flippy before acting again.") from None
+
+    @staticmethod
+    def _gesture_mouse(kind, x, y, flags):
+        ev = Quartz.CGEventCreateMouseEvent(None, kind, Quartz.CGPointMake(x, y), Quartz.kCGMouseButtonLeft)
+        Quartz.CGEventSetFlags(ev, flags)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+
+    def _modifier(self, mod, flags):
+        ev = Quartz.CGEventCreateKeyboardEvent(None, self.MOD_KEYS[mod], bool(flags & self.FLAGS[mod]))
+        Quartz.CGEventSetFlags(ev, flags)
+        Quartz.CGEventSetType(ev, Quartz.kCGEventFlagsChanged)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+
     def path(self, points, drag):
-        """points: [(x, y, seconds until the next point)]; drag: hold the button the whole way."""
+        """Compatibility wrapper for asynchronous scripted demo paths."""
         err = self._can_post()
         if err:
             return err
-
-        def run():
-            down = False
-            for i, (x, y, dt) in enumerate(points):
-                if drag and i == 0:
-                    self._mouse(Quartz.kCGEventMouseMoved, x, y)
-                    time.sleep(0.05)
-                    self._mouse(Quartz.kCGEventLeftMouseDown, x, y)
-                    down = True
-                else:
-                    self._mouse(Quartz.kCGEventLeftMouseDragged if down else Quartz.kCGEventMouseMoved, x, y)
-                time.sleep(max(dt, 0.004))
-            if down:
-                self._mouse(Quartz.kCGEventLeftMouseUp, *points[-1][:2])
-        threading.Thread(target=run, daemon=True).start()
+        if not points:
+            return "empty path"
+        threading.Thread(target=self._gesture, args=(points, drag), daemon=True).start()
         return "ok"
 
-    def type_text(self, text, on_key=None):
+    def drag(self, x, y, to_x, to_y, modifiers=(), check=None):
+        err = self._can_post()
+        if err:
+            return err
+        points = [(x + (to_x - x) * i / 24, y + (to_y - y) * i / 24,
+                   0.6 / 24 if i < 24 else 0) for i in range(25)]
+        return self._gesture(points, True, modifiers, check)
+
+    def scroll(self, x, y, direction, lines, check=None):
+        err = self._can_post()
+        if err:
+            return err
+        if check:
+            check()
+        self._mouse(Quartz.kCGEventMouseMoved, x, y)
+        time.sleep(0.025)
+        if check:
+            check()
+        vertical = lines if direction == "up" else -lines if direction == "down" else 0
+        horizontal = lines if direction == "left" else -lines if direction == "right" else 0
+        ev = Quartz.CGEventCreateScrollWheelEvent(None, Quartz.kCGScrollEventUnitLine, 2, vertical, horizontal)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+        return "ok"
+
+    def type_text(self, text, on_key=None, wait=False, check=None):
         """Real keystrokes, at a human-ish pace. on_key(ch) runs as each one is posted (on a worker thread)."""
         err = self._can_post()
         if err:
@@ -924,26 +1013,268 @@ class Platform:
         def run():
             import random
             for ch in text:
+                if check:
+                    check()  # agent input can stop between characters or if focus changes
                 # The real key code where there is one (apps that read key codes, like GarageBand's
                 # shortcuts, would otherwise see "a"), no stray modifiers, and the text for the field.
                 code = hotkeys.KEYS.get("space" if ch == " " else ch.lower(), 0)
                 flags = Quartz.kCGEventFlagMaskShift if ch.isupper() else 0
-                for down in (True, False):
-                    ev = Quartz.CGEventCreateKeyboardEvent(None, code, down)
+                self._check_physical_input(code=code)
+                try:
+                    ev = Quartz.CGEventCreateKeyboardEvent(None, code, True)
                     Quartz.CGEventSetFlags(ev, flags)
                     Quartz.CGEventKeyboardSetUnicodeString(ev, len(ch.encode("utf-16-le")) // 2, ch)
                     Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+                finally:
+                    try:
+                        ev = Quartz.CGEventCreateKeyboardEvent(None, code, False)
+                        Quartz.CGEventSetFlags(ev, flags)
+                        Quartz.CGEventKeyboardSetUnicodeString(ev, len(ch.encode("utf-16-le")) // 2, ch)
+                        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+                    except Exception:
+                        from ..actions import InputCleanupError
+                        raise InputCleanupError("Input release could not be confirmed. Restart Flippy before acting again.") from None
                 if on_key:
                     on_key(ch)
                 time.sleep(random.uniform(0.045, 0.11) + (0.12 if ch in " ,." else 0))
+            return "ok"
+        if wait:
+            return run()  # called on the agent's worker, never the Cocoa run loop
         threading.Thread(target=run, daemon=True).start()
         return "ok"
+
+    # --- background tasks (flippy/mac/ax.py): one app's window and controls; your pointer and keyboard stay yours
+    def app_preflight(self):
+        from . import ax
+        from ..actions import ActionError
+        if not ax.trusted() or not Quartz.CGPreflightPostEventAccess():
+            raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+
+    def app_front(self):
+        from . import ax
+        return ax.front_app()
+
+    def app_open(self, name, cancel):
+        from . import ax
+        return ax.open_app(name, cancel)
+
+    def app_look(self, bundle, name, pid):
+        from . import ax
+        return ax.look(bundle, name, pid)
+
+    def app_act(self, name, args, frame, cancel):
+        """press / set_text / focus / type / key / menu in the frame's app. Runs on the task's worker thread."""
+        from . import ax
+        from ..actions import ActionError
+        pid = frame.target[1]
+        if ax.running_app(pid) is None:
+            raise ActionError("The app quit. Start a new /act request.")
+        if cancel.is_set():
+            raise ActionError("Task canceled.")
+        el = frame.elements[args["element"]] if "element" in args else None
+        if name == "press":
+            ax.press(el[0], el[3])
+        elif name == "set_text":
+            ax.set_text(el[0], args["text"])
+        elif name == "focus":
+            ax.focus(el[0], pid)
+        elif name == "type":
+            ax.type_text(pid, args["text"], cancel)
+        elif name == "key":
+            ax.key(pid, args["combo"], self.FLAGS)
+        elif name == "menu":
+            ax.menu(pid, args["path"])
+        elif name == "media":
+            ax.media(args["action"])
+        elif name in ("click", "scroll", "drag") and args.get("real_pointer"):
+            x, y = frame.to_logical(args["x"], args["y"])
+            if name == "click":
+                act = lambda: self.click(x, y, double=args["count"] == 2)  # noqa: E731
+            elif name == "scroll":
+                act = lambda: self.scroll(x, y, args["direction"], args["lines"])  # noqa: E731
+            else:
+                act = lambda: self.drag(x, y, *frame.to_logical(args["to_x"], args["to_y"]))  # noqa: E731
+            self._borrow_pointer(pid, x, y, act, cancel)
+        elif name in ("click", "scroll", "drag"):
+            wid = frame.target[2]
+            x, y = frame.to_logical(args["x"], args["y"])
+            if name == "click":
+                ax.click(pid, wid, x, y, args["count"], cancel)
+            elif name == "scroll":
+                ax.scroll(pid, wid, x, y, args["direction"], args["lines"])
+            else:
+                ax.drag(pid, wid, x, y, *frame.to_logical(args["to_x"], args["to_y"]), cancel)
+        else:
+            raise ActionError("Unsupported desktop action.")
+        time.sleep(0.25)  # let the app redraw before the next look
+
+    BORROW_IDLE_S = 1.0     # the pointer is borrowed only after this long without the user's input...
+    BORROW_WAIT_S = 45.0    # ...waiting at most this long for such a pause
+
+    def _borrow_pointer(self, pid, x, y, act, cancel):
+        """For apps that ignore background clicks: wait until the user pauses, bring the app up, do the real
+        click/scroll/drag, then put the pointer back and the app they were in back in front. A fraction of a second."""
+        from . import ax
+        from ..actions import ActionError, RetryableActionError
+        hid = Quartz.kCGEventSourceStateHIDSystemState
+        idle = lambda: Quartz.CGEventSourceSecondsSinceLastEventType(hid, Quartz.kCGAnyInputEventType)  # noqa: E731
+        deadline = time.monotonic() + self.BORROW_WAIT_S
+        while idle() < self.BORROW_IDLE_S:
+            if cancel.is_set():
+                raise ActionError("Task canceled.")
+            if time.monotonic() > deadline:
+                raise RetryableActionError("The user kept working, so Flippy didn't take the pointer. Try again later "
+                                           "in the task, or use the app's controls, menus or keys.")
+            time.sleep(0.1)
+        target = ax.running_app(pid)
+        if target is None:
+            raise ActionError("The app quit. Start a new /act request.")
+        before = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+        home = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
+        try:
+            target.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)
+            win = ax._window(pid)
+            if win is not None:
+                ax.AX.AXUIElementPerformAction(win, "AXRaise")
+            for _ in range(30):  # up to 1.5 s for it to come in front
+                if AppKit.NSWorkspace.sharedWorkspace().frontmostApplication().processIdentifier() == pid:
+                    break
+                time.sleep(0.05)
+            if self._window_owner_at(x, y) != pid:
+                raise RetryableActionError("Something else is on top of that spot, so Flippy didn't click it. "
+                                           "Look again.")
+            if idle() < 0.3:  # they picked the mouse back up while the app was coming forward
+                raise RetryableActionError("The user started working again, so Flippy gave the pointer back. "
+                                           "Try again later in the task.")
+            result = act()
+            if result not in (None, "ok"):
+                raise ActionError(str(result))
+            time.sleep(0.15)
+        finally:
+            Quartz.CGWarpMouseCursorPosition(home)            # the pointer back where it was
+            Quartz.CGAssociateMouseAndMouseCursorPosition(True)
+            if before is not None and before.processIdentifier() != pid:
+                before.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)  # and their app
+
+    @staticmethod
+    def _window_owner_at(x, y):
+        """pid of the frontmost normal window under that screen point."""
+        info = Quartz.CGWindowListCopyWindowInfo(
+            Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements, Quartz.kCGNullWindowID)
+        for win in info or []:
+            b = win.get("kCGWindowBounds") or {}
+            if win.get("kCGWindowLayer", 0) == 0 and b.get("X", 0) <= x < b.get("X", 0) + b.get("Width", 0) \
+                    and b.get("Y", 0) <= y < b.get("Y", 0) + b.get("Height", 0):
+                return win.get("kCGWindowOwnerPID")
+        return None
+
+    def action_preflight(self):
+        """Check task eligibility before inference without inspecting foreground focus."""
+        from ..actions import ActionError
+        if len(NSScreen.screens()) != 1:
+            raise ActionError("Desktop tasks require one display. Disconnect extra displays before /act.")
+        if not Quartz.CGPreflightPostEventAccess():
+            raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+
+    def action_state(self):
+        """Identity and geometry of the foreground target. One display, like the tutor."""
+        from ..actions import ActionError
+        screens = NSScreen.screens()
+        if len(screens) != 1:
+            raise ActionError("Desktop tasks currently require a single display.")
+        app, _, pid = sensors.frontmost()
+        if pid is None or pid == os.getpid():
+            raise ActionError("Put the app you want to use in front, then start /act again.")
+        window = sensors.front_window(pid)
+        bounds = next((bounds for wid, bounds in sensors.windows(pid) if wid == window), None)
+        if window is None or bounds is None:
+            raise ActionError("Could not identify the foreground window. Start a new /act request.")
+        try:
+            display = int(screens[0].deviceDescription()["NSScreenNumber"])
+        except (KeyError, TypeError, ValueError):
+            raise ActionError("Could not identify the display. Start a new /act request.") from None
+        return app, pid, window, bounds, (display, self.screen_size())
+
+    def action_input(self, name, args, shot, cancel):
+        """An approved action. Recheck focus after approval and throughout typing."""
+        from ..actions import ActionError
+
+        def check():
+            if cancel.is_set():
+                raise ActionError("Task canceled.")
+            if self.action_state() != shot.target:
+                raise ActionError("The foreground window or display changed. Start a new /act request.")
+        check()
+        if not Quartz.CGPreflightPostEventAccess():
+            raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+        if name == "click":
+            x = args["x"] * shot.logical_size[0] / shot.size[0]
+            y = args["y"] * shot.logical_size[1] / shot.size[1]
+            result = self.click(x, y, check=check)
+        elif name == "type":
+            result = self.type_text(args["text"], wait=True, check=check)
+        elif name == "key":
+            result = self.key(args["combo"], check=check)
+        elif name == "scroll":
+            x = args["x"] * shot.logical_size[0] / shot.size[0]
+            y = args["y"] * shot.logical_size[1] / shot.size[1]
+            result = self.scroll(x, y, args["direction"], args["lines"], check=check)
+        elif name == "drag":
+            start = shot.to_logical(args["x"], args["y"])
+            end = shot.to_logical(args["to_x"], args["to_y"])
+            bounds = shot.target[3] if len(shot.target) >= 5 else None
+            if not bounds or any(not (bounds[0] <= px < bounds[0] + bounds[2]
+                                      and bounds[1] <= py < bounds[1] + bounds[3]) for px, py in (start, end)):
+                raise ActionError("Both drag endpoints must be inside the foreground window.")
+            def identity_check():
+                if cancel.is_set():
+                    raise ActionError("Task canceled.")
+                state = self.action_state()
+                if state[:3] != shot.target[:3] or state[-1] != shot.target[-1]:
+                    raise ActionError("The foreground window or display changed.")
+            result = self.drag(args["x"] * shot.logical_size[0] / shot.size[0],
+                               args["y"] * shot.logical_size[1] / shot.size[1],
+                               args["to_x"] * shot.logical_size[0] / shot.size[0],
+                               args["to_y"] * shot.logical_size[1] / shot.size[1],
+                               args["modifiers"], check=identity_check)
+        else:
+            raise ActionError("Unsupported desktop action.")
+        if result != "ok":
+            raise ActionError("Desktop input failed. Check Accessibility permission.")
 
     FLAGS = {"cmd": Quartz.kCGEventFlagMaskCommand, "shift": Quartz.kCGEventFlagMaskShift,
              "option": Quartz.kCGEventFlagMaskAlternate, "ctrl": Quartz.kCGEventFlagMaskControl}
     MOD_KEYS = {"cmd": 55, "shift": 56, "option": 58, "ctrl": 59}
 
-    def key(self, combo):
+    HELD_GRACE_S = 0.4  # a key or click that just ended (yours, or Flippy's own last input) can still read as down
+
+    def _check_physical_input(self, code=None, mouse=False):
+        """Never pair synthetic release with input the user already holds. Waits briefly for input that is
+        just ending, so the click on "Allow" or Flippy's previous keystroke doesn't count as held."""
+        state = Quartz.kCGEventSourceStateCombinedSessionState
+        codes = set(self.MOD_KEYS.values())
+        if code is not None:
+            codes.add(code)
+        deadline = time.monotonic() + self.HELD_GRACE_S
+        while True:
+            held_mouse = bool(mouse and Quartz.CGEventSourceButtonState(state, Quartz.kCGMouseButtonLeft))
+            held_keys = sorted(k for k in codes if Quartz.CGEventSourceKeyState(state, k))
+            if not held_mouse and not held_keys:
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.02)
+        print(f"flippy: act: input still held after {self.HELD_GRACE_S}s (mouse={held_mouse}, key codes {held_keys})",
+              flush=True)
+        from ..actions import InputHeldError
+        raise InputHeldError("Let go of the keyboard and mouse while Flippy acts.")
+
+    def app_name(self, bundle_id, pid):
+        """The app's display name for approval cards ("Notes"), or None."""
+        app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid) if type(pid) is int else None
+        return str(app.localizedName()) if app is not None and app.localizedName() else None
+
+    def key(self, combo, check=None):
         """A shortcut like cmd+shift+space, escape or return, pressed for real."""
         err = self._can_post()
         if err:
@@ -956,11 +1287,24 @@ class Platform:
         flags = 0
         for m in parts[:-1]:
             flags |= self.FLAGS.get({"opt": "option", "alt": "option", "control": "ctrl"}.get(m, m), 0)
-        for down in (True, False):
-            ev = Quartz.CGEventCreateKeyboardEvent(None, code, down)
+        if check:
+            check()
+        self._check_physical_input(code=code)
+        try:
+            ev = Quartz.CGEventCreateKeyboardEvent(None, code, True)
             Quartz.CGEventSetFlags(ev, flags)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
             time.sleep(0.03)
+            if check:
+                check()
+        finally:
+            try:
+                ev = Quartz.CGEventCreateKeyboardEvent(None, code, False)
+                Quartz.CGEventSetFlags(ev, flags)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+            except Exception:
+                from ..actions import InputCleanupError
+                raise InputCleanupError("Input release could not be confirmed. Restart Flippy before acting again.") from None
         return "ok"
 
     def tap(self, mod, times):
@@ -988,14 +1332,34 @@ class Platform:
         """Start a fresh Flippy and quit this one. full_install: rerun ./install.sh first (the app launcher changed)."""
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         app = os.environ.get("FLIPPY_APP")
-        if full_install:
-            cmd = f"sleep 1; '{root}/install.sh' >> ~/Library/Logs/flippy.log 2>&1"
-        elif app:
-            cmd = f"sleep 1; open '{app}'"
-        else:
-            cmd = f"sleep 1; '{root}/bin/flippy-ask' start"
-        subprocess.Popen(["/bin/sh", "-c", cmd], start_new_session=True)
-        self.quit()
+        from ..profile import current
+        if full_install and current().demo:
+            return "Rebuild Flippy Demo with scripts/dev.sh build."
+        command = ([root + "/install.sh"] if full_install else
+                   ["/usr/bin/open", "-n", app] if app else [root + "/bin/flippy-ask", "start"])
+        # Wait for this daemon's cleanup, rather than reopening a still-running instance.
+        runner = '''import socket, subprocess, sys, time
+deadline = time.monotonic() + 30
+while True:
+    try:
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(1)
+            s.connect(sys.argv[1])
+    except (FileNotFoundError, ConnectionRefusedError):
+        break
+    if time.monotonic() >= deadline:
+        raise SystemExit("restart stopped: previous instance is still cleaning up")
+    time.sleep(.1)
+subprocess.run(sys.argv[2:], check=False)
+'''
+        with open(current().log, "ab") as output:
+            subprocess.Popen([sys.executable, "-c", runner, current().socket, *command], stdout=output, stderr=output,
+                             start_new_session=True)
+        self.flippy.quit()
+
+    def permission_state(self):
+        return {"screen_recording": bool(CGPreflightScreenCaptureAccess()),
+                "accessibility": bool(hotkeys.accessibility_trusted())}
 
     def show_update(self, rel, install, later):
         notes = next((ln.strip("-*# ").strip() for ln in rel["notes"].splitlines() if ln.strip("-*# ").strip()),
@@ -1042,4 +1406,4 @@ def run(make_app):
     flippy = make_app(platform)
     platform.flippy = flippy
     platform.start(flippy.command)
-    AppHelper.runEventLoop(installInterrupt=True)
+    AppHelper.runEventLoop(installInterrupt=False)  # controller owns graceful SIGINT cleanup

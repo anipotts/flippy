@@ -17,11 +17,17 @@ import threading
 import time
 
 from . import loop, onboarding, settings, themes, tips, updates, video, watch
-from .brain import Brain, BrainError, prepare_image
+from .brain import Brain, BrainError
+from .frames import prepare_frame
+from .requests import Request
+from .profile import current, Instance
+from .actions import (BACKGROUND_CATALOG, BACKGROUND_PROMPT, ActionError, AppFrame, ApprovalPolicy, DesktopTools,
+                      Screenshot, approval_text)
 from .point import image_to_logical, segments
 
-RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()  # macOS: the per-user $TMPDIR
-SOCK_PATH = os.path.join(RUNTIME_DIR, "flippy.sock")
+PROFILE = current()
+RUNTIME_DIR = PROFILE.runtime_dir
+SOCK_PATH = PROFILE.socket
 ASK_TIMEOUT_S = 90
 IDLE_RESET_S = 15 * 60      # fresh Claude session after this much idle (keeps context/usage small)
 STEP_TYPE_CPS = 90          # walkthrough step text types in at this many chars/s, then holds:
@@ -42,7 +48,7 @@ def log(*a):
     print(time.strftime("%H:%M:%S"), *a, file=sys.stderr, flush=True)
 
 
-EVENTS_PATH = os.path.join(RUNTIME_DIR, "flippy-events.jsonl")
+EVENTS_PATH = PROFILE.events
 
 
 LISTENERS = []  # fn(name, data) for every UI event, on the main thread (the tour, flippy/onboarding.py)
@@ -64,6 +70,7 @@ def event(name, **data):
 
 class Flippy:
     def __init__(self, ui):
+        self.instance = Instance(PROFILE).acquire()
         self.ui = ui
         self.overlay = ui.overlay
         self.overlay.on_draw_done = self._draw_done
@@ -71,12 +78,23 @@ class Flippy:
         self.overlay.on_control = self.control
         self.box = ui.input_box(self.submit, self.dismiss)
         self.marked = False      # next question is about what the user drew
-        self.gen = 0             # bumps per question; stale stream callbacks check it
+        self.gen = 0
+        self.request = None
+        self.allowed_apps = set(settings.get("act", "allowed_apps"))
+        self.input_disabled = False
+        self.input_worker = None
+        self.quitting = False
+        self.followup_token = None
+        loop.timeout_add(250, lambda: not self.quitting)
+        self.background_futures = set()
+        self.fade_animation_id = 0
         self.play = None         # playback state of the reply being shown (see _play_tick)
         self.play_id = 0
         self.draw_timeout_id = 0
         self.shooter = ui.screenshotter
         self.busy = False
+        self.action_tools = None
+        self.action_future = None
         self.tutorial = False    # the current answer is a tutorial: its ":click" steps wait for their click
         self.fade_id = 0
         self.fading = False
@@ -101,30 +119,53 @@ class Flippy:
         self.video = video.Review(self)
         self.tour = onboarding.Tour(self)
         LISTENERS.append(self.tour.on_event)
-        loop.timeout_add(3000, self.tour.maybe_start)  # once setup's done, the first time
+        loop.timeout_add(3000, self._maybe_start_tour)
         self._run(self.brain.start(), lambda r, e: log("claude session ready" if not e else f"session start failed: {e}"))
 
-        try:
-            os.unlink(SOCK_PATH)
-        except FileNotFoundError:
-            pass
         ui.listen(SOCK_PATH, self.command)
         os.chmod(SOCK_PATH, 0o600)
+        self.instance.listening()
         log(f"listening on {SOCK_PATH}")
 
     # --- plumbing ---
+    def _maybe_start_tour(self):
+        if self.quitting:
+            return False
+        if self.busy or self.box.visible or self.overlay.drawing or self.overlay.showing:
+            return True
+        return self.tour.maybe_start()
+
     def _run(self, coro, cb, timeout=None):
         if timeout:
             coro = asyncio.wait_for(coro, timeout)
         fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        self.background_futures.add(fut)
 
         def done(f):
-            err = f.exception()
+            self.background_futures.discard(f)
+            if self.quitting:
+                return
+            err = asyncio.CancelledError() if f.cancelled() else f.exception()
             loop.idle_add(lambda: cb(None if err else f.result(), err) and False)
         fut.add_done_callback(done)
+        return fut
 
     def command(self, cmd):
-        log("cmd:", cmd)
+        if PROFILE.demo and (cmd == "update" or cmd.startswith("update ")):
+            return "Updates are disabled in Flippy Demo; rebuild the demo instead."
+        if cmd == "doctor":
+            return json.dumps({"profile": PROFILE.name, "version": updates.current_version(),
+                               "root": os.path.realpath(os.path.dirname(os.path.dirname(__file__))),
+                               "pid": os.getpid(), "app": os.environ.get("FLIPPY_APP"),
+                               "busy": self.busy, "input_disabled": self.input_disabled,
+                               "last_action": getattr(self, "last_action", None),
+                               "permissions": self.ui.permission_state() if hasattr(self.ui, "permission_state") else {}})
+        if cmd.startswith("quit-owned "):
+            if os.path.realpath(cmd[11:]) != os.path.realpath(os.path.dirname(os.path.dirname(__file__))):
+                return "refused: daemon belongs to another checkout"
+            self.quit()
+            return "ok"
+        log("cmd:", "act <task>" if cmd == "act" or cmd.startswith("act ") else cmd)
         if cmd == "ask":
             self.open_box()
         elif cmd == "draw":
@@ -167,7 +208,7 @@ class Flippy:
         elif cmd == "reset":
             self.reset_session()
         elif cmd == "quit":
-            self.ui.quit()
+            self.quit()
         elif cmd == "pause-toggle":  # pause/resume the walkthrough on screen (the double-tap shortcut)
             self.pause_toggle()
         elif cmd == "update":  # check for a new release now (offers it, or says you're up to date)
@@ -245,6 +286,8 @@ class Flippy:
             self.toggle_watch_app(cmd.split(maxsplit=1)[1])
         elif cmd.startswith("q "):  # ask without the box (scripting/testing)
             self.submit(cmd[2:].strip())
+        elif cmd == "act" or cmd.startswith("act "):
+            return self.act(cmd[4:].strip())
         else:
             return f"unknown command: {cmd}"
         return "ok"
@@ -252,6 +295,15 @@ class Flippy:
     # --- flow ---
     def open_box(self):
         if self.busy:
+            if self.action_tools:
+                self.dismiss()  # the ask hotkey also stops an action task
+                return
+            if self.request and self.request.mode == "tutor":
+                self.request.cancel(loop.source_remove)
+                self._stop_playback()
+                self._cancel_fade()
+                self.overlay.clear()
+                self._show_box()
             return
         if self.overlay.drawing:
             self.cancel_draw()
@@ -259,6 +311,7 @@ class Flippy:
             self.box.hide()
             return
         self._cancel_fade()  # keep the last answer up while typing a follow-up
+        self._stop_playback()
         self._show_box()
 
     def _show_box(self):
@@ -267,7 +320,31 @@ class Flippy:
 
     def submit(self, question, tutorial=None):
         """tutorial: steps they have to do wait for their click (":click"). None = decide from the question."""
-        if not question or self.busy:
+        if not question:
+            return
+        if self.busy:
+            owner = self.request
+            if not owner or owner.mode != "tutor":
+                return
+            owner.cancel(loop.source_remove)
+            self._stop_playback()
+            self.box.hide()
+            token = object()
+            self.followup_token = token
+            def ready():
+                if self.quitting or self.request is not owner or self.followup_token is not token:
+                    return False
+                if not owner.drained.is_set() or self.busy:
+                    return True
+                self.submit(question, tutorial)
+                return False
+            loop.timeout_add(25, ready)
+            return
+        if question == "/act" or question.startswith("/act "):
+            status = self.act(question[4:].strip())
+            if self.action_tools is None:
+                self.box.hide()
+                self._fail(status)
             return
         if question in ("/new", "/reset"):
             self.box.hide()
@@ -279,84 +356,419 @@ class Flippy:
             return
         self.tutorial = wants_tutorial(question) if tutorial is None else tutorial
         event("ask", question=question, tutorial=self.tutorial)
-        self.busy = True
-        self.gen += 1
-        self._stop_playback()
-        self._cancel_fade()
+        req = self._begin_request("tutor")
         self.box.hide()
-        if self.marked:
-            # the marks stay on screen so they're in the screenshot
+        keep_marks = self.marked
+        if keep_marks:
             question = ("[I drew a red mark on the screen around what I'm asking about. It's my "
                         "annotation, not part of the app.]\n" + question)
         question += ("\n\n(tutorial: mark the steps I have to do myself with :click)" if self.tutorial else
                      "\n\n(not a tutorial: just answer and point, no :click)")
-        self.overlay.clear(keep_marks=self.marked)
         self.marked = False
-        loop.timeout_add(self.ui.hide_settle_ms, self._shoot, question)
+        self._run_request(req, self._ask(question, req, keep_marks=keep_marks), self._on_answer, ASK_TIMEOUT_S)
 
-    def _shoot(self, question):
-        self.shooter.take(lambda path, err: self._on_shot(question, path, err))
-        return False
+    def _begin_request(self, mode):
+        review = getattr(self, "video", None)
+        if review and review.recording and mode != "video-record":
+            review.cancel()
+        previous = getattr(self, "request", None)
+        if previous:
+            previous.cancel(loop.source_remove)
+        self._stop_playback()
+        self._cancel_fade()
+        self.gen += 1
+        req = Request(self.gen, mode)
+        self.request = req
+        self.busy = True
+        return req
 
-    def _on_shot(self, question, path, err):
-        if err:
-            self._fail(f"couldn't take a screenshot: {err}")
-            return
-        self.overlay.show_text("thinking…", phase="thinking")
-        event("thinking")
-        if self.brain.dirty:
-            log("model/effort changed, starting a fresh session")
-            coro = self._fresh_then_ask(question, path, self.gen)
-        elif self.last_ask and time.monotonic() - self.last_ask > IDLE_RESET_S:
-            log("idle too long, starting a fresh session")
-            coro = self._fresh_then_ask(question, path, self.gen)
-        else:
-            coro = self._ask(question, path, self.gen)
-        self.last_ask = time.monotonic()
-        self._run(coro, self._on_answer, timeout=ASK_TIMEOUT_S)
+    def _owns(self, req):
+        return req.owns(getattr(self, "request", None)) and not getattr(self, "quitting", False)
 
-    async def _fresh_then_ask(self, question, path, gen):
-        await self.brain.reset()
-        return await self._ask(question, path, gen)
-
-    async def _ask(self, question, path, gen):
-        try:
-            b64, img_size, shot_size = await asyncio.to_thread(prepare_image, path, settings.get("claude", "image"))
-        finally:
+    def _run_request(self, req, coro, cb, timeout=None):
+        """Only the coroutine's finally can acknowledge cancellation cleanup."""
+        from types import SimpleNamespace
+        tasks = []
+        def cancel():
+            def stop():
+                if tasks:
+                    tasks[0].cancel()
+            self.loop.call_soon_threadsafe(stop)
+        req.future = SimpleNamespace(cancel=cancel)
+        async def run():
+            result = error = None
+            tasks.append(asyncio.current_task())
             try:
-                os.unlink(path)  # portal drops screenshots in /tmp; don't leave them around
+                if req.canceled.is_set():
+                    coro.close()
+                    raise asyncio.CancelledError()
+                result = await asyncio.wait_for(coro, timeout) if timeout else await coro
+            except BaseException as err:
+                error = err
+            finally:
+                req.drained.set()
+                def done():
+                    req.pending = False
+                    if self.request is req:
+                        self.busy = False
+                        if self._owns(req):
+                            cb(result, error, req)
+                        elif req.mode == "action":
+                            self.action_tools = self.action_future = None
+                    return False
+                loop.idle_add(done)
+        future = asyncio.run_coroutine_threadsafe(run(), self.loop)
+        return future
+
+    @staticmethod
+    def _unlink(path):
+        if path:
+            try:
+                os.unlink(path)
             except OSError:
                 pass
-        loop.idle_add(lambda: self._start_playback(gen, img_size, shot_size) and False)
-        raw = await self.brain.ask(question, b64, img_size,
-                                   on_text=lambda d: loop.idle_add(lambda: self._stream_text(gen, d) and False))
-        return raw, gen
 
-    def _on_answer(self, result, err):
-        self.busy = False
+    async def _capture_frame_once(self, req, keep_marks=False, targeted=False):
+        running = asyncio.get_running_loop()
+        future = running.create_future()
+        def deliver(path, error, target, logical):
+            if future.done() or not self._owns(req):
+                self._unlink(path)
+                if not future.done():
+                    future.cancel()
+            elif error or not path:
+                self._unlink(path)
+                future.set_exception(ActionError("Could not capture the screen. Check Screen Recording permission."))
+            else:
+                future.set_result((path, target, logical))
+        def begin():
+            self.overlay.clear(keep_marks=keep_marks)
+            self.box.hide()
+            if targeted:
+                self.ui.action_card.hide()
+                self.ui.hide_nudge()
+            target = self.ui.action_state() if targeted else None
+            logical = self.ui.screen_size()
+            timer_box = []
+            def take():
+                if timer_box:
+                    req.timers.discard(timer_box[0])
+                if not future.done() and self._owns(req):
+                    try:
+                        self.shooter.take(lambda path, err: running.call_soon_threadsafe(deliver, path, err, target, logical))
+                    except Exception:
+                        running.call_soon_threadsafe(deliver, None, True, target, logical)
+                elif not future.done():
+                    running.call_soon_threadsafe(future.cancel)
+                return False
+            timer = loop.timeout_add(self.ui.hide_settle_ms, take)
+            timer_box.append(timer)
+            req.timers.add(timer)
+        path = None
+        try:
+            await self._action_main(begin, req)
+            path, target, logical = await future
+            worker = asyncio.create_task(asyncio.to_thread(prepare_frame, path, settings.get("claude", "image"),
+                                                           logical_size=logical, target=target))
+            try:
+                frame = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                await asyncio.shield(worker)
+                raise
+            if not self._owns(req):
+                raise asyncio.CancelledError()
+            if targeted and await self._action_main(self.ui.action_state, req) != target:
+                raise ActionError("The foreground window or display changed. Start a new /act request.")
+            return frame
+        finally:
+            if path is None and future.done() and not future.cancelled() and future.exception() is None:
+                path = future.result()[0]
+            future.cancel()
+            self._unlink(path)
+
+    def _acting(self, req, operation=None):
+        if self._owns(req):
+            stop = self.ui.key_label("ask") if hasattr(self.ui, "key_label") else "ask hotkey"
+            self.overlay.show_text(f"Flippy is acting{': ' + operation if operation else ''} · {stop} to stop")
+
+    async def _capture_frame(self, req, keep_marks=False, targeted=False):
+        # Opening an app can change its window during capture. Retry capture only,
+        # never an input, and never reuse coordinates from an unsettled frame.
+        for attempt in range(4 if targeted else 1):
+            try:
+                frame = await self._capture_frame_once(req, keep_marks, targeted)
+                if targeted:
+                    await self._action_main(lambda: self._acting(req), req)
+                return frame
+            except ActionError as error:
+                if not targeted or "foreground" not in str(error).lower() or attempt == 3:
+                    raise
+                if not self._owns(req):
+                    raise asyncio.CancelledError()
+                await asyncio.sleep(.7)
+
+
+    # --- explicit desktop tasks; ordinary asks never receive tools ---
+    def act(self, question):
+        if not question:
+            return "usage: act <task>"
+        if self.busy or self.video.recording:
+            return "Flippy is busy; dismiss the current task first"
+        if self.input_disabled:
+            return "Input cleanup could not be confirmed. Restart Flippy before acting again."
+        if not hasattr(self.ui, "app_look"):
+            return "desktop tasks are available on macOS only for now"
+        try:
+            self.ui.app_preflight()
+            self.action_app = self.ui.app_front()  # the app you were in: the task starts there
+        except ActionError as error:
+            return str(error)
+        req = self._begin_request("action")
+        self.action_policy = ApprovalPolicy(settings.get("act", "mode"))
+        limits = settings.ACT_LIMITS[self.action_policy.mode]
+        self.box.hide()
+        # Background: the task works on one app's window and controls (flippy/mac/ax.py), never the real pointer
+        # or keyboard, so you keep using your Mac. (The pointer-driving path below, _capture_frame and
+        # _action_perform, is kept for the borrow-the-mouse-while-you're-idle fallback.)
+        tools = DesktopTools(lambda: self._app_look(req),
+                             lambda name, args, shot: self._action_approve(name, args, shot, req),
+                             lambda name, args, shot, cancel: self._app_perform(name, args, shot, cancel, req),
+                             max_actions=limits.max_actions, max_text=limits.max_text,
+                             approval_mode=self.action_policy.mode,
+                             catalog=BACKGROUND_CATALOG, prompt=BACKGROUND_PROMPT)
+        tools.max_turns = limits.max_turns
+        self.action_tools = tools
+        async def run():
+            try:
+                return await self.brain.act(question, tools)
+            finally:
+                if tools.cleanup_failed:
+                    self.input_disabled = True
+                tools.stop()
+        self.action_future = self._run_request(req, run(),
+            lambda r, e, owner: self._action_done(tools, owner, r, e), limits.timeout_seconds)
+        self._acting(req)
+        return "desktop task started; " + self.action_policy.mode + " approval mode"
+
+    async def _app_look(self, req):
+        if not self._owns(req):
+            raise ActionError("Task stopped.")
+        return AppFrame(*await asyncio.to_thread(self.ui.app_look, *self.action_app))
+
+    async def _app_perform(self, name, args, shot, cancel, req):
+        what = "needs the pointer for a moment, waiting for you to pause" if args.get("real_pointer") else \
+            name.replace("_", " ")
+        await self._action_main(lambda: self._acting(req, what), req)
+        if name == "use_app":
+            self.action_app = await asyncio.to_thread(self.ui.app_open, args["name"], cancel)
+            return
+        await asyncio.to_thread(self.ui.app_act, name, args, shot, cancel)
+
+    async def _action_main(self, fn, req=None):
+        running = asyncio.get_running_loop()
+        future = running.create_future()
+        def finish(value, error):
+            if not future.done():
+                future.set_exception(error) if error else future.set_result(value)
+        def run():
+            if future.done():
+                return False
+            if req is not None and not self._owns(req):
+                running.call_soon_threadsafe(future.cancel)
+                return False
+            try:
+                value, error = fn(), None
+            except Exception as err:
+                value, error = None, err
+            running.call_soon_threadsafe(finish, value, error)
+            return False
+        loop.idle_add(run)
+        return await future
+
+    async def _action_approve(self, name, args, shot, req):
+        policy = self.action_policy
+        scopeable = True
+        if name in ("click", "scroll"):
+            bounds = shot.target[3] if shot.target and len(shot.target) >= 5 else None
+            x, y = shot.to_logical(args["x"], args["y"])
+            scopeable = bool(bounds and bounds[0] <= x < bounds[0] + bounds[2]
+                             and bounds[1] <= y < bounds[1] + bounds[3])
+        elif name == "key" and args.get("combo") == "cmd+space":
+            scopeable = False  # OS navigation has no known destination app yet.
+        per_app = scopeable and policy.mode != "every_input" and not policy.sensitive(shot.target)
+        if name == "drag":
+            bounds = shot.target[3] if shot.target and len(shot.target) >= 5 else None
+            endpoints = (shot.to_logical(args["x"], args["y"]), shot.to_logical(args["to_x"], args["to_y"]))
+            if not bounds or any(not (bounds[0] <= x < bounds[0] + bounds[2]
+                                      and bounds[1] <= y < bounds[1] + bounds[3]) for x, y in endpoints):
+                raise ActionError("Both drag endpoints must be inside the foreground window.")
+        if scopeable and not policy.needs_approval(shot.target, remembered=settings.get("act", "allowed_apps")):
+            return self._owns(req)
+        running = asyncio.get_running_loop()
+        future = running.create_future()
+        def chosen(allowed, remember=False):
+            if allowed and self._owns(req):
+                if per_app:
+                    policy.grant(shot.target)
+                if remember:
+                    app = shot.target[0]
+                    try:
+                        settings.set("act", "allowed_apps", sorted(set(settings.get("act", "allowed_apps")) | {app}))
+                    except (OSError, ValueError):
+                        self.overlay.show_text("Allowed for this task; could not save the remembered app.", error=True)
+            def finish():
+                if not future.done():
+                    future.set_result(bool(allowed) and self._owns(req))
+            running.call_soon_threadsafe(finish)
+        def show():
+            if name in ("click", "scroll", "drag"):
+                x, y = shot.to_logical(args["x"], args["y"])
+                label = "proposed " + name
+                if name == "drag":
+                    end = shot.to_logical(args["to_x"], args["to_y"])
+                    bounds = shot.target[3] if shot.target and len(shot.target) >= 5 else None
+                    if not bounds or any(not (bounds[0] <= px < bounds[0] + bounds[2]
+                                              and bounds[1] <= py < bounds[1] + bounds[3])
+                                         for px, py in ((x, y), end)):
+                        raise ActionError("Both drag endpoints must be inside the foreground window.")
+                    label += f" to ({end[0]:.0f}, {end[1]:.0f})"
+                    self.overlay.strokes = [[(x, y), end]]
+                    self.overlay.queue_draw()
+                self.overlay.point(x, y, label)
+            app = shot.target[0] if shot.target else "this app"
+            if shot.target and hasattr(self.ui, "app_name"):
+                app = self.ui.app_name(*shot.target[:2]) or app  # "Notes", not com.apple.Notes
+            buttons = [("Stop", lambda: chosen(False)), ("Allow once", lambda: chosen(True))]
+            if per_app:
+                buttons = [("Stop", lambda: chosen(False)), (f"Allow {app}", lambda: chosen(True)),
+                           (f"Always allow {app}", lambda: chosen(True, True))]
+            self.ui.action_card.card(f"Allow Flippy to use {app} for this task?" if per_app else "Allow Flippy to act?",
+                "Subsequent inputs in this app run until the task finishes or you stop it." if per_app else
+                (shot.describe(name, args) if hasattr(shot, "describe") else approval_text(name, args)), buttons,
+                on_timeout=lambda: chosen(False), timeout_s=60, width=480)
+        try:
+            await self._action_main(show, req)
+            return await future
+        finally:
+            future.cancel()
+            loop.idle_add(lambda: self.request is req and self.ui.action_card.hide() and False)
+
+    async def _action_perform(self, name, args, shot, cancel, req):
+        fresh = await self._capture_frame(req, targeted=True)
+        if fresh.target != shot.target:
+            raise ActionError("The foreground window or display changed. Take a new screenshot before acting.")
+        # Clicks check the spot they aim at. Typing and shortcuts only compare the whole window when this exact
+        # input was approved on a card: between steps the app is expected to change (Notes just made the note),
+        # and the same-app/window check above still stops input that would land somewhere else.
+        policy = getattr(self, "action_policy", None)
+        exact = policy is None or policy.mode == "every_input" or policy.sensitive(shot.target)
+        if (name in ("click", "scroll", "drag") or exact) and shot.substantial_change(fresh, name, args):
+            raise ActionError("The screen changed before Flippy could act. Start a new /act request.")
+        await self._action_main(lambda: self._acting(req, name), req)
+        worker = asyncio.create_task(asyncio.to_thread(self.ui.action_input, name, args, fresh, cancel))
+        self.input_worker = worker
+        try:
+            await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            cancel.set()
+            try:
+                await asyncio.wait_for(asyncio.shield(worker), 5)
+            except (Exception, asyncio.CancelledError):
+                self.input_disabled = True
+                raise ActionError("Input cleanup could not be confirmed. Restart Flippy before acting again.") from None
+            raise
+        finally:
+            if worker.done():
+                self.input_worker = None
+
+    def _action_done(self, tools, req, result, error):
+        if not self._owns(req) or self.action_tools is not tools:
+            return
+        failure = (tools.failure or "").lower()
+        stopped = bool(error or tools.failure)
+        reason = "operation_failed" if stopped else "none"
+        if getattr(tools, "failure_code", None):  # the refusal said what it was
+            reason = tools.failure_code
+        elif "screen changed" in failure:
+            reason = "pixels_changed"
+        elif "foreground" in failure:
+            reason = "target_changed"
+        elif "capture" in failure:
+            reason = "capture_failed"
+        elif "declined" in failure:
+            reason = "declined"
+        elif tools.cleanup_failed or "cleanup could not" in failure or "release could not" in failure:
+            reason = "cleanup_failed"
+        elif "accessibility" in failure or "permission" in failure:
+            reason = "permission"
+        # why it ended: reason codes and Flippy's own fixed refusal texts only, never the task or Claude's reply
+        globals().get("log", lambda *a: None)(f"act: ended after {tools.actions} input(s), {reason}"
+                                              + (f": {tools.failure}" if tools.failure else ""))
+        self.last_action = {"request_id": req.identity, "completed_inputs": tools.actions,
+                            "stopped": stopped, "cleanup_failed": tools.cleanup_failed,
+                            "reason_code": reason}
+        event("action_result", request_id=req.identity, count=tools.actions,
+              outcome="stopped" if stopped else "completed", reason_code=reason)
+        self.action_tools = self.action_future = None
+        self.ui.action_card.hide()
+        if stopped:
+            messages = {
+                "pixels_changed": "The screen changed before Flippy could act.",
+                "input_held": "A key or mouse button was held down, so Flippy didn't act. Keep your hands off the "
+                              "keyboard and mouse while it works.",
+                "target_changed": "The foreground window or display changed.",
+                "capture_failed": "Could not capture the screen.",
+                "declined": "Action declined.",
+                "cleanup_failed": "Input release could not be confirmed. Restart Flippy before acting again.",
+                "permission": "Check macOS Screen Recording and Accessibility permissions.",
+                "operation_failed": "The operation failed or timed out.",
+            }
+            message = messages[reason]
+            self._fail("Desktop task stopped: " + message + " Check the screen before continuing.")
+        else:
+            self.overlay.show_text(result)
+            self._schedule_fade(settings.get("timing", "max_show_seconds"))
+
+    async def _ask(self, question, req, keep_marks=False):
+        frame = await self._capture_frame(req, keep_marks=keep_marks)
+        await self._action_main(lambda: (self.overlay.show_text("thinking…", phase="thinking"), event("thinking")), req)
+        if self.brain.dirty or (self.last_ask and time.monotonic() - self.last_ask > IDLE_RESET_S):
+            await self.brain.reset()
+        self.last_ask = time.monotonic()
+        await self._action_main(lambda: self._start_playback(req.identity, frame.size, frame.original_size, frame=frame), req)
+        raw = await self.brain.ask(question, frame.jpeg, frame.size,
+            on_text=lambda delta: loop.idle_add(lambda: self._owns(req) and self._stream_text(req.identity, delta) and False))
+        return raw, req.identity
+
+    def _on_answer(self, result, err, owner):
+        if not self._owns(owner):
+            return
         if err:
             self._stop_playback()
             self._fail(_friendly_error(err))
-            if not isinstance(err, BrainError):
-                self._run(self.brain.reset(), lambda r, e: None)  # transport may be wedged
             return
         raw, gen = result
-        log(f"answer ({self.brain.last_model}, effort {self.brain.options.effort}): {raw!r}")
         if self.play and self.play["gen"] == gen:
-            self.play["raw"] = raw  # authoritative full text (deltas should already match)
+            self.play["raw"] = raw
             self.play["done"] = True
 
     # --- playback: show the reply step by step, moving the hand to each point ---
     # The player skins' controls (control()) can pause, step back/forward, seek and replay.
-    def _start_playback(self, gen, img_size, shot_size):
+    def _start_playback(self, gen, img_size, shot_size, frame=None):
         if gen != self.gen:
             return
         self._stop_playback()
-        self.play = {"gen": gen, "raw": "", "done": False, "img": img_size, "shot": shot_size,
+        self.play = {"gen": gen, "raw": "", "done": False, "img": img_size, "shot": shot_size, "frame": frame,
                      "step": 0, "shown": 0.0, "typed_at": None, "last": time.monotonic(), "pointed": False,
                      "pointed_step": -1, "paused": False, "finished": False,
                      "target": None, "waiting": False, "clicked_at": None, "acted": set()}
         self.play_id = loop.timeout_add(33, self._play_tick)
+
+    def _play_coords(self, point):
+        frame = self.play.get("frame")
+        if frame is not None:
+            return frame.to_logical(point.x, point.y, clamp=True)
+        return image_to_logical(point, self.play["img"], self.play["shot"], self._scale())
 
     def _stream_text(self, gen, delta):
         if self.play and self.play["gen"] == gen and not self.play["done"]:
@@ -401,7 +813,7 @@ class Flippy:
             pl["pointed_step"] = pl["step"]
             pl["target"] = None
             if seg.point:
-                x, y = image_to_logical(seg.point, pl["img"], pl["shot"], self._scale())
+                x, y = self._play_coords(seg.point)
                 self.overlay.point(x, y, seg.point.label)
                 pl["pointed"] = True
                 pl["target"] = (x, y)
@@ -527,7 +939,7 @@ class Flippy:
         pl = self.play
         for seg in segs:
             if seg.point:
-                _, y = image_to_logical(seg.point, pl["img"], pl["shot"], self._scale())
+                _, y = self._play_coords(seg.point)
                 return y < self.ui.screen_size()[1] / 2
         return False
 
@@ -637,24 +1049,76 @@ class Flippy:
         self._schedule_fade(settings.get("timing", "show_seconds"))
 
     def reset_session(self):
-        self.overlay.show_text("starting a fresh session…")
-
-        def done(_r, e):
-            if e:
-                self._fail(f"reset failed: {e}")
-            else:
-                self.overlay.show_text("fresh session ready")
-                self._schedule_fade(2)
-        self._run(self.brain.reset(), done)
+        previous = self.request
+        self.dismiss()
+        async def reset():
+            if previous and previous.pending:
+                await asyncio.to_thread(previous.drained.wait)
+            await self.brain.reset()
+        def begin():
+            req = self._begin_request("reset")
+            self.overlay.show_text("starting a fresh session…")
+            def done(_result, error, owner):
+                if error:
+                    self._fail("Could not reset the session.")
+                else:
+                    self.overlay.show_text("fresh session ready")
+                    self._schedule_fade(2)
+            self._run_request(req, reset(), done)
+            return False
+        if previous and previous.pending:
+            def ready():
+                if self.quitting:
+                    return False
+                if not previous.drained.is_set():
+                    return True
+                begin()
+                return False
+            loop.timeout_add(25, ready)
+        else:
+            begin()
 
     def dismiss(self):
+        self.followup_token = None
+        req = getattr(self, "request", None)
+        if self.action_tools:
+            self.action_tools.stop()
+            self.ui.action_card.hide()
+        if req:
+            req.cancel(loop.source_remove)
+        self.gen += 1
         self.box.hide()
         self._stop_playback()
+        self._cancel_fade()
         self.marked = False
+        if self.video.recording:
+            self.video.cancel()
         if self.overlay.drawing:
             self.cancel_draw()
-        elif self.overlay.showing:
-            self._fade_out()
+        else:
+            self.overlay.clear()
+
+    def quit(self):
+        if self.quitting:
+            return
+        self.quitting = True
+        self.dismiss()
+        self.video.cancel()
+        for future in tuple(self.background_futures):
+            future.cancel()
+        req = self.request
+        async def stop():
+            if req and req.pending:
+                await asyncio.to_thread(req.drained.wait)
+            worker = self.input_worker
+            if worker is not None:
+                try:
+                    await asyncio.shield(worker)
+                except Exception:
+                    pass  # worker finished; its cleanup-failure lockout remains visible
+            await self.brain.stop()
+            loop.idle_add(lambda: self.ui.quit() and False)
+        asyncio.run_coroutine_threadsafe(stop(), self.loop)
 
     # --- help mode: offer a hand when they seem stuck (flippy/watch.py) ---
     def _apply_help_settings(self):
@@ -812,6 +1276,8 @@ class Flippy:
                 self._schedule_fade(3)
             return
         log(f"update: {rel['version']} is out (have {updates.current_version()})")
+        if self.action_tools:
+            return  # don't cover an action approval with the unrelated update card
         if hasattr(self.ui, "show_update"):
             self.ui.show_update(rel, install=lambda: self.install_update(rel),
                                 later=lambda: updates.later(rel["version"]))
@@ -896,22 +1362,28 @@ class Flippy:
         try:
             path, raw = arg.split(maxsplit=1)
             section, key = path.split(".")
-            default = settings.DEFAULTS[section][key]
-            if isinstance(default, bool):
-                value = raw.lower() in ("1", "true", "on", "yes")
-            else:
-                value = type(default)(float(raw)) if isinstance(default, (int, float)) else raw
-            if not settings._valid(section, key, value):
-                return f"invalid value for {path}; choices: {settings.CHOICES.get((section, key), type(default).__name__)}"
+            value = settings.parse_value(path, raw)
             settings.set(section, key, value)
             return "ok"
         except (ValueError, KeyError):
-            return "usage: set <section.key> <value>  (see ~/.config/flippy/config.toml)"
+            return "invalid setting; usage: set <section.key> <value>"
+        except OSError:
+            return "could not save settings"
 
     def _on_setting(self, section, key, value):
-        log(f"setting {section}.{key} = {value!r}")
+        log("setting changed")
         if section == "claude" and key in ("model", "effort"):
+            if self.request and self.request.pending:
+                self.dismiss()
             self._apply_claude_settings()
+        elif section == "act" and key == "mode":
+            if self.action_tools:
+                self.dismiss()
+        elif section == "act" and key == "allowed_apps":
+            previous = getattr(self, "allowed_apps", set())
+            self.allowed_apps = set(value)
+            if previous - self.allowed_apps and self.action_tools:
+                self.dismiss()
         elif section == "look" and key == "theme":
             self._apply_theme()
         elif section == "timing" and key == "speed":
@@ -1068,43 +1540,59 @@ class Flippy:
     # --- fading ---
     def _schedule_fade(self, seconds):
         self._cancel_fade()
-        self.fade_id = loop.timeout_add(int(seconds * 1000), self._fade_timer)
+        owner, gen = getattr(self, "request", None), self.gen
+        timer_box = []
+        def fade():
+            if owner and timer_box:
+                owner.timers.discard(timer_box[0])
+            if self.gen == gen and getattr(self, "request", None) is owner and self.fade_id == timer_box[0]:
+                self.fade_id = 0
+                self._fade_out()
+            return False
+        self.fade_id = loop.timeout_add(int(seconds * 1000), fade)
+        timer_box.append(self.fade_id)
+        if owner:
+            owner.timers.add(self.fade_id)
 
     def _fade_timer(self):
-        self.fade_id = 0  # this source is finishing; don't source_remove it in _fade_out
+        self.fade_id = 0
         self._fade_out()
         return False
 
     def _cancel_fade(self):
-        if self.fade_id:
-            loop.source_remove(self.fade_id)
-            self.fade_id = 0
+        for key in ("fade_id", "fade_animation_id"):
+            timer = getattr(self, key, 0)
+            if timer:
+                loop.source_remove(timer)
+                setattr(self, key, 0)
+        self.fading = False
         self.overlay.set_opacity(1.0)
 
     def _fade_out(self):
-        if self.fade_id:  # called directly (dismiss) with a timed fade pending: drop it, or it
-            loop.source_remove(self.fade_id)  # fires later and fades out the *next* answer
-        self.fade_id = 0
-        if self.fading:
-            return
+        self._cancel_fade()
         self.fading = True
-        start = time.monotonic()
-
+        start, gen, owner = time.monotonic(), self.gen, getattr(self, "request", None)
         def step():
-            if self.busy or self.box.visible:  # something new started; abort the fade
+            if self.gen != gen or getattr(self, "request", None) is not owner:
+                return False
+            if self.busy or self.box.visible:
                 self.fading = False
+                self.fade_animation_id = 0
                 self.overlay.set_opacity(1.0)
                 return False
-            a = 1 - (time.monotonic() - start) / 0.4
-            if a <= 0:
+            opacity = 1 - (time.monotonic() - start) / 0.4
+            if opacity <= 0:
                 self.fading = False
+                self.fade_animation_id = 0
                 self._stop_playback()
                 self.overlay.clear()
                 event("cleared")
                 return False
-            self.overlay.set_opacity(a)
+            self.overlay.set_opacity(opacity)
             return True
-        loop.timeout_add(16, step)
+        self.fade_animation_id = loop.timeout_add(16, step)
+        if owner:
+            owner.timers.add(self.fade_animation_id)
 
     def _scale(self):
         return self.ui.scale()
@@ -1147,7 +1635,12 @@ def main():
         from .mac import ui
     else:
         from .linux import ui
-    ui.run(Flippy)
+    def create(native_ui):
+        app = Flippy(native_ui)
+        from .runtime import install_shutdown_handlers
+        install_shutdown_handlers(app.quit, loop.idle_add)
+        return app
+    ui.run(create)
 
 
 if __name__ == "__main__":

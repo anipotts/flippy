@@ -600,7 +600,11 @@ class Cosmic(Midnight):
     key, name = "cosmic", "Follow macOS" if sys.platform == "darwin" else "Follow COSMIC"
 
     def __init__(self):
-        self.refresh()
+        # Importing controller/tests must not initialize NSApplication. The
+        # controller refreshes this theme after the native UI has started.
+        self.dark = True
+        self.accent = self.border = self.head = (0.39, 0.82, 0.87)
+        self.bg, self.fg, self.radius = (0.11,) * 3, (0.95,) * 3, 16
 
     def refresh(self):
         if sys.platform == "darwin":  # same idea on macOS: the system accent color and light/dark mode

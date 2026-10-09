@@ -14,7 +14,8 @@ import re
 
 import cairo
 
-DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "flippy", "pointers")
+from .profile import current
+DIR = os.path.join(current().config_dir, "pointers")
 INDEX = os.path.join(DIR, "index.json")
 PREFIX = "custom:"
 IMAGE_PX = 64          # long edge of a smooth (non-pixel) pointer at size 1.0

@@ -38,34 +38,11 @@ say "Installing Python packages (the first run downloads Claude Code, ~200 MB)"
 PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
     "$ROOT/.venv/bin/pip" install -q --upgrade -r "$ROOT/requirements-mac.txt"
 
-# 3. Flippy.app: a small launcher that starts bin/flippy-daemon, so permissions belong to Flippy.
+# 3. Reuse the same build-only helper as the isolated demo.
 say "Building $APP"
-"$ROOT/bin/flippy-ask" quit >/dev/null 2>&1 || true
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-STAGE="$TMP/Flippy.app/Contents"
-mkdir -p "$STAGE/MacOS" "$STAGE/Resources"
-swiftc -O -o "$STAGE/MacOS/Flippy" "$ROOT/packaging/macos/Launcher.swift"
-"$ROOT/.venv/bin/python" "$ROOT/packaging/macos/make_icon.py" "$STAGE/Resources/Flippy.icns"
-"$ROOT/.venv/bin/python" - "$STAGE/Info.plist" "$ROOT" <<'PY'
-import os, plistlib, sys
-out, root = sys.argv[1], sys.argv[2]
-version = open(os.path.join(root, "VERSION")).read().strip()
-with open(out, "wb") as f:
-    plistlib.dump({
-        "CFBundleName": "Flippy", "CFBundleDisplayName": "Flippy", "CFBundleIdentifier": "dev.flippy.app",
-        "CFBundleExecutable": "Flippy", "CFBundleIconFile": "Flippy", "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": version, "CFBundleVersion": version, "LSMinimumSystemVersion": "13.0",
-        "LSUIElement": True,  # menu bar app: no Dock icon
-        "NSHighResolutionCapable": True,
-        "NSScreenCaptureUsageDescription": "Flippy sends a screenshot with each question so Claude can see what you mean.",
-        "FlippyRoot": root,
-    }, f)
-PY
-codesign --force --sign - "$TMP/Flippy.app" 2>/dev/null  # ad-hoc: a stable identity for the permission
-mkdir -p "$APP_DIR"
-rm -rf "$APP"
-mv "$TMP/Flippy.app" "$APP"
+FLIPPY_PROFILE=default "$ROOT/bin/flippy-ask" stop-owned >/dev/null
+FLIPPY_PROFILE=default "$ROOT/.venv/bin/python" "$ROOT/scripts/wait_stopped.py"
+"$ROOT/scripts/build_mac.sh" "$APP" default
 
 # 4. flippy-ask on PATH (scripting, and `flippy-ask setup` / `settings`).
 mkdir -p "$BIN_DIR"

@@ -1,13 +1,12 @@
-"""Claude via the Agent SDK on the Pro/Max subscription. Answer-only: no tools."""
-import base64
-import io
+"""Claude via the Agent SDK on the Pro/Max subscription. Tutor answers and opt-in desktop tasks."""
+import asyncio
 import os
+from dataclasses import replace
 
-from PIL import Image
 from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, StreamEvent,
                               TextBlock, query)
 
-from .point import pick_target_size
+from .frames import prepare_image
 
 # The pointing instructions are adapted from Clicky (MIT: see THIRD_PARTY_NOTICES.md).
 SYSTEM_PROMPT = """\
@@ -47,17 +46,6 @@ class BrainError(Exception):
     pass
 
 
-def prepare_image(path: str, long_edge: int = 1920) -> tuple[str, tuple[int, int], tuple[int, int]]:
-    """Downscale a screenshot (long_edge 0 = full size). Returns (base64 jpeg, image size, original size)."""
-    with Image.open(path) as im:
-        orig = im.size
-        target = pick_target_size(*orig, long_edge or max(orig))
-        small = im.convert("RGB").resize(target, Image.LANCZOS)
-    buf = io.BytesIO()
-    small.save(buf, format="JPEG", quality=85)
-    return base64.b64encode(buf.getvalue()).decode(), target, orig
-
-
 # Claude Code saves every session to ~/.claude/projects/, screenshots included. Flippy's sessions live only in
 # memory: follow-ups still work, nothing is written to disk, and they stay out of your Claude Code history.
 NO_TRANSCRIPTS = {"no-session-persistence": None}
@@ -84,6 +72,10 @@ class Brain:
         self.client: ClaudeSDKClient | None = None
         self.dirty = False  # options changed; next question starts a fresh session
         self.last_model = None
+        self._lock = asyncio.Lock()
+        self.history = []
+        self.replay_context = False
+        self.partial = ""
 
     def configure(self, model: str | None, effort: str):
         """None model = the account's default. Applies on the next (fresh) session."""
@@ -91,20 +83,74 @@ class Brain:
         if (self.options.model, self.options.effort) != (model, effort):
             self.options.model, self.options.effort = model, effort
             self.dirty = self.client is not None
+            self.history.clear()
+            self.replay_context = False
 
     async def start(self):
-        self.client = ClaudeSDKClient(options=self.options)
-        await self.client.connect()
-        self.dirty = False
+        async with self._lock:
+            if self.client is None:
+                await self._start()
+
+    async def _start(self):
+        client = ClaudeSDKClient(options=self.options)
+        try:
+            await client.connect()
+        except BaseException:
+            await client.disconnect()
+            raise
+        self.client, self.dirty = client, False
 
     async def stop(self):
+        async with self._lock:
+            await self._stop()
+            self.history.clear()
+            self.replay_context = False
+
+    async def _stop(self):
         if self.client:
-            await self.client.disconnect()
-            self.client = None
+            client, self.client = self.client, None
+            await client.disconnect()
 
     async def reset(self):
-        await self.stop()
-        await self.start()
+        async with self._lock:
+            await self._stop()
+            self.history.clear()
+            self.replay_context = False
+            await self._start()
+
+    async def act(self, question, desktop):
+        """An isolated tool session using the tutor's existing model/auth settings.
+
+        No API client or key is introduced. Tutor and tip sessions remain tool-free.
+        The local handlers enforce approval even though MCP tools are allowed here.
+        """
+        from .actions import PROMPT, TOOL_CATALOG
+        names = list(desktop.catalog()) if hasattr(desktop, "catalog") else list(TOOL_CATALOG)
+        opts = replace(self.options, system_prompt=getattr(desktop, "prompt", PROMPT),
+                       max_turns=getattr(desktop, "max_turns", 16),
+                       include_partial_messages=False, mcp_servers={"desktop": desktop.server()},
+                       allowed_tools=[f"mcp__desktop__{name}" for name in names])
+        async with ClaudeSDKClient(options=opts) as client:
+            await client.query(question)
+            text = ""
+            completed = False
+            async for msg in client.receive_response():
+                if isinstance(msg, AssistantMessage):
+                    self.last_model = msg.model
+                    if getattr(msg, "error", None):
+                        raise BrainError(str(msg.error))
+                    # Only the last assistant message is the task's final answer.
+                    text = "".join(b.text for b in msg.content if isinstance(b, TextBlock))
+                elif isinstance(msg, ResultMessage):
+                    if msg.is_error or msg.subtype != "success":
+                        raise BrainError(msg.result or "Desktop task did not finish.")
+                    text = msg.result or text
+                    completed = True
+            if desktop.cancel.is_set():
+                return f"Task stopped: {desktop.failure or 'canceled'}. Check the screen before continuing."
+            if not completed:
+                raise BrainError("Desktop task ended without a completed response.")
+            return text.strip() or "Task finished without a final answer; check the screen."
 
     async def write_tips(self, app_name: str, goal: str, n: int, skip: list[str]) -> list[dict]:
         """One text-only call, outside the conversation: n tips for app_name. skip: tips they already have."""
@@ -118,43 +164,89 @@ class Brain:
         if skip:
             ask += "They already have these (don't repeat them):\n" + "\n".join(f"- {t}" for t in skip[-60:]) + "\n"
         ask += f"Write {n} tips."
-        parts = []
+        parts, completed = [], False
         async for msg in query(prompt=ask, options=opts):
             if isinstance(msg, AssistantMessage):
                 if getattr(msg, "error", None):
                     raise BrainError(str(msg.error))
                 parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
-            elif isinstance(msg, ResultMessage) and msg.is_error:
-                raise BrainError(msg.result or msg.subtype or "unknown error")
+            elif isinstance(msg, ResultMessage):
+                if msg.is_error or msg.subtype != "success":
+                    raise BrainError(msg.result or msg.subtype or "unknown error")
+                completed = True
+        if not completed:
+            raise BrainError("Tip generation ended without a completed response.")
         return parse_tips("".join(parts))
 
-    async def ask(self, question: str, b64_jpeg: str, img_size: tuple[int, int], on_text=None) -> str:
-        """Returns the full reply. on_text(delta) is called with text chunks as they stream in."""
-        if self.client is None:
-            await self.start()
+    async def ask(self, question: str, b64_jpeg: str, img_size: tuple[int, int],
+                  on_text=None, extra_images=()) -> str:
+        """One serialized tutor/video turn; cancellation discards its transport."""
         w, h = img_size
-        content = [
+        content = []
+        for label, jpeg in extra_images:
+            content.extend([{"type": "text", "text": label},
+                            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": jpeg}}])
+        content.extend([
             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64_jpeg}},
-            {"type": "text", "text": f"(screenshot is {w}x{h} pixels)\n\n{question}"},
-        ]
+            {"type": "text", "text": f"(current screenshot is {w}x{h} pixels)\n\n{question}"},
+        ])
+        async with self._lock:
+            if self.dirty:
+                await self._stop()
+            if self.client is None:
+                await self._start()
+            if self.replay_context and self.history:
+                context = "\n".join(f"User: {q}\nFlippy: {a}" for q, a in self.history)
+                content.insert(0, {"type": "text", "text": "Earlier conversation, retained in memory after interruption:\n" + context})
+                self.replay_context = False
+            self.partial = ""
+            try:
+                reply = await self._reply(content, on_text)
+                self._remember(question, reply)
+                return reply
+            except BaseException as error:
+                if isinstance(error, asyncio.CancelledError):
+                    self._remember(question, self.partial + " [Reply interrupted by user.]")
+                    self.replay_context = True
+                # Reset cannot race this turn. Do not leave partial context alive.
+                cleanup = asyncio.create_task(self._stop())
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    await cleanup
+                raise
 
+    def _remember(self, question, reply):
+        self.history.append((question[:6000], reply[:12000]))
+        while len(self.history) > 12 or sum(len(q) + len(a) for q, a in self.history) > 24000:
+            self.history.pop(0)
+
+    async def _reply(self, content, on_text):
         async def messages():
             yield {"type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None}
 
         await self.client.query(messages())
-        parts: list[str] = []
+        parts = []
+        completed = False
         async for msg in self.client.receive_response():
             if isinstance(msg, StreamEvent):
                 ev = msg.event
-                if on_text and ev.get("type") == "content_block_delta" and ev.get("delta", {}).get("type") == "text_delta":
-                    on_text(ev["delta"]["text"])
+                if ev.get("type") == "content_block_delta" and ev.get("delta", {}).get("type") == "text_delta":
+                    delta = ev["delta"]["text"]
+                    self.partial = (self.partial + delta)[-12000:]
+                    if on_text:
+                        on_text(delta)
             elif isinstance(msg, AssistantMessage):
                 self.last_model = msg.model
                 if getattr(msg, "error", None):
                     raise BrainError(str(msg.error))
                 parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
-            elif isinstance(msg, ResultMessage) and msg.is_error:
-                raise BrainError(msg.result or msg.subtype or "unknown error")
+            elif isinstance(msg, ResultMessage):
+                if msg.is_error or msg.subtype != "success":
+                    raise BrainError("The response did not complete.")
+                completed = True
+        if not completed:
+            raise BrainError("The response ended before completion.")
         text = "".join(parts).strip()
         if not text:
             raise BrainError("empty reply")

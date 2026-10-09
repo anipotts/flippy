@@ -19,18 +19,15 @@ from .cairoview import cairo_view
 from .system import appearance
 from .widgets import Form, button, checkbox, label, popup, set_popup, slider
 
-MODELS = [("default", "Account default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")]
-EFFORTS = [("low", "Low (fastest)"), ("medium", "Medium"), ("high", "High"), ("max", "Max (slowest)")]
-IMAGES = [(1366, "1366 px (lightest on usage)"), (1920, "1920 px (balanced)"), (0, "Full resolution (sharpest)")]
-POINTERS = [("theme", "Theme default"), ("hand", "Pixel hand"), ("arrow", "Pixel arrow"), ("ring", "Ring"), ("dot", "Dot"),
-            ("glass", "Liquid glass lens"), ("glasshand", "Liquid glass hand")]
-PACES = [("slow", "Slow"), ("normal", "Normal"), ("fast", "Fast")]
-CONTROLS = [("all", "On every theme"), ("players", "Only Media Player and Y2K")]
-SHINES = [("wmp", "WMP gloss"), ("none", "Plain glass")]
-TINT_COLORS = [("smoke", "Smoke"), ("blue", "Blue"), ("purple", "Purple"), ("pink", "Pink"), ("red", "Red"),
-               ("orange", "Orange"), ("green", "Green"), ("teal", "Teal")]
-PAUSE_KEYS = [("double-cmd", "⌘ ⌘  (double-tap)"), ("double-option", "⌥ ⌥  (double-tap)"),
-              ("double-ctrl", "⌃ ⌃  (double-tap)"), ("double-shift", "⇧ ⇧  (double-tap)"), ("off", "Off")]
+MODELS = settings.options('claude', 'model')
+EFFORTS = settings.options('claude', 'effort')
+IMAGES = settings.options('claude', 'image')
+POINTERS = settings.options('look', 'pointer')
+PACES = settings.options('timing', 'step_pace')
+CONTROLS = settings.options('look', 'controls')
+SHINES = settings.options('look', 'player_shine')
+TINT_COLORS = settings.options('look', 'glass_color')
+PAUSE_KEYS = settings.options('keys', 'pause')
 WIDTH, HEIGHT = 640, 720
 THUMB_W, THUMB_H = 280, 150
 
@@ -122,6 +119,7 @@ class SettingsWindow:
         self.win.center()
         tabs = NSTabView.alloc().initWithFrame_(NSMakeRect(0, 0, WIDTH, HEIGHT))
         for title, form in (("Appearance", self._appearance(on_preview)), ("Claude", self._claude(on_reset)),
+                            ("Automation", self._actions()),
                             ("Timing", self._timing(on_preview)), ("Hotkeys", self._hotkeys())):
             item = NSTabViewItem.alloc().initWithIdentifier_(title)
             item.setLabel_(title)
@@ -153,6 +151,8 @@ class SettingsWindow:
         if section == "look":
             for t in self.thumbs:
                 t.setNeedsDisplay_(True)
+        if section == "act" and key == "allowed_apps":
+            self._refresh_allowed_apps()
         if section == "keys":
             for r in self.recorders:
                 r.stop()
@@ -198,9 +198,10 @@ class SettingsWindow:
     def _setting_popup(self, form, section, key, options, width=220):
         return popup(options, settings.get(section, key), lambda v: settings.set(section, key, v), form.keep, width)
 
-    def _setting_slider(self, form, section, key, lo, hi, step, digits=0):
-        return slider(lo, hi, step, settings.get(section, key), lambda v: settings.set(section, key, v),
-                      form.keep, digits)
+    def _setting_slider(self, form, section, key):
+        spec = settings.SETTINGS[section, key]
+        return slider(spec.minimum, spec.maximum, spec.step, settings.get(section, key), lambda v: settings.set(section, key, v),
+                      form.keep, spec.digits)
 
     def _appearance(self, on_preview):
         f = Form(WIDTH - 40)
@@ -229,11 +230,11 @@ class SettingsWindow:
                   button("Draw…", lambda: pointer_editor.PixelEditor(self._pointer_saved).present(), f.keep),
                   self.edit_btn, self.del_btn)
         self._refresh_pointers()
-        f.row("Pointer size", None, self._setting_slider(f, "look", "pointer_size", 0.5, 2.0, 0.1, digits=1))
-        f.row("Text size", "Answer text, in px", self._setting_slider(f, "look", "text_size", 11, 24, 1))
-        f.row("Panel opacity", None, self._setting_slider(f, "look", "card_opacity", 0.5, 1.0, 0.02, digits=2))
+        f.row("Pointer size", None, self._setting_slider(f, "look", "pointer_size"))
+        f.row("Text size", "Answer text, in px", self._setting_slider(f, "look", "text_size"))
+        f.row("Panel opacity", None, self._setting_slider(f, "look", "card_opacity"))
         f.row("Glass tint", "How tinted Liquid Glass is (Glass, Media Player, the ask box)",
-              self._setting_slider(f, "look", "glass_tint", 0.0, 1.0, 0.05, digits=2))
+              self._setting_slider(f, "look", "glass_tint"))
         f.row("Tint color", None, self._setting_popup(f, "look", "glass_color", TINT_COLORS))
         f.row("Playback controls", "Clickable play/pause/step buttons on the answer panel",
               self._setting_popup(f, "look", "controls", CONTROLS))
@@ -259,19 +260,51 @@ class SettingsWindow:
         f.row("Check now", None, button("Check", lambda: self.command("update"), f.keep))
         return f
 
+
+
+    def _actions(self):
+        f = Form(WIDTH - 40)
+        self.keep.append(f)
+        f.group("Desktop tasks", "Applies only to /act. Questions and walkthroughs remain tool-free.")
+        f.row("Approval", None, self._setting_popup(f, "act", "mode", settings.options("act", "mode")))
+        f.row("Ask once per app", "Approve an app when a task first needs it; remembered apps can be removed below.")
+        f.row("Act automatically", "Allows desktop input without an approval card. Stop the task to halt further input.")
+        f.row("Ask before every input", "Shows each proposed click, text entry, key, scroll or drag for approval.")
+        strict, automatic = settings.ACT_LIMITS["every_input"], settings.ACT_LIMITS["auto"]
+        f.row("Task bounds", f"Every input: {strict.max_actions} inputs, {strict.timeout_seconds // 60} minutes. "
+                            f"Other modes: {automatic.max_actions} inputs, {automatic.timeout_seconds // 60} minutes.")
+        f.group("Remembered apps", "Removing an app makes the next task ask again in Ask once per app mode.")
+        self.allowed_popup = popup([(None, "None yet")], None, lambda _v: None, f.keep, width=300)
+        f.row("App", None, self.allowed_popup)
+        self.remove_allowed_button = button("Remove selected app", self._remove_allowed_app, f.keep)
+        f.buttons(self.remove_allowed_button)
+        self._refresh_allowed_apps()
+        return f
+
+    def _refresh_allowed_apps(self):
+        apps = settings.get("act", "allowed_apps")
+        set_popup(self.allowed_popup, [(app, app) for app in apps] or [(None, "None yet")], apps[0] if apps else None)
+        self.remove_allowed_button.setEnabled_(bool(apps))
+
+    def _remove_allowed_app(self):
+        apps = self.allowed_popup.target().values
+        index = self.allowed_popup.indexOfSelectedItem()
+        if 0 <= index < len(apps) and apps[index] is not None:
+            settings.remove_allowed_app(apps[index])
+
     def _timing(self, on_preview):
         f = Form(WIDTH - 40)
         self.keep.append(f)
         f.group("Answers")
-        f.row("Stay up for", "Seconds after the answer finishes", self._setting_slider(f, "timing", "show_seconds", 3, 60, 1))
+        f.row("Stay up for", "Seconds after the answer finishes", self._setting_slider(f, "timing", "show_seconds"))
         f.row("Longest stay", "Cap for long answers, in seconds",
-              self._setting_slider(f, "timing", "max_show_seconds", 5, 120, 1))
+              self._setting_slider(f, "timing", "max_show_seconds"))
         f.group("Walkthroughs")
         f.row("Step pace", "How long each pointed step stays", self._setting_popup(f, "timing", "step_pace", PACES))
         f.row("Playback speed", "Also on the Media Player/Y2K players' slider",
-              self._setting_slider(f, "timing", "speed", 0.5, 2.0, 0.05, digits=2))
+              self._setting_slider(f, "timing", "speed"))
         f.row("Glide time", "Seconds for the pointer to travel between steps",
-              self._setting_slider(f, "timing", "glide_seconds", 0.2, 2.0, 0.1, digits=1))
+              self._setting_slider(f, "timing", "glide_seconds"))
         f.row("Wait for my clicks", "Tutorials pause on steps you have to do until you click the thing",
               checkbox("", settings.get("timing", "wait_for_clicks"),
                        lambda on: settings.set("timing", "wait_for_clicks", on), f.keep))
@@ -291,7 +324,7 @@ class SettingsWindow:
               self._setting_popup(f, "keys", "pause", PAUSE_KEYS, width=170))
         f.group("Automation", "Lets scripts click and type with flippy-ask click / type / key (used for recording demos). "
                               "Off by default: when on, any program running as you can make Flippy click. "
-                              "Claude's answers never click. Also needs the Accessibility permission.")
+                              "This is separate from /act approvals. Also needs the Accessibility permission.")
         f.row("Let scripts click and type", None, checkbox("", settings.get("automation", "clicks"),
                                                   lambda on: settings.set("automation", "clicks", on), f.keep))
         f.group("In the question box")

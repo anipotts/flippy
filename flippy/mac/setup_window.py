@@ -14,11 +14,12 @@ from Foundation import NSMakeRect, NSObject
 from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 
 from .. import loop, settings
+from ..profile import current
 from . import hotkeys
 from .widgets import Form, button, checkbox, label
 
 APP = os.environ.get("FLIPPY_APP")  # set by Flippy.app's launcher; None when run from a terminal
-AGENT_LABEL = "dev.flippy.app"
+AGENT_LABEL = current().bundle_id
 AGENT = os.path.expanduser(f"~/Library/LaunchAgents/{AGENT_LABEL}.plist")
 SCREEN_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
 WIDTH = 560
@@ -30,7 +31,7 @@ def claude_logged_in():
     if os.path.exists(os.path.expanduser("~/.claude/.credentials.json")):
         return True
     r = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials"],
-                       capture_output=True)
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return r.returncode == 0
 
 
@@ -69,11 +70,15 @@ def restart():
 
 
 def login_item_on():
+    if current().demo:
+        return False
     return os.path.exists(AGENT)
 
 
 def set_login_item(on):
     """A LaunchAgent that opens Flippy.app at login (no extra permission needed)."""
+    if current().demo:
+        return  # the development profile never installs or removes login items
     if not on:
         subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{AGENT_LABEL}"], capture_output=True)
         try:
@@ -160,4 +165,3 @@ class SetupWindow:
     def present(self):
         NSApp.activateIgnoringOtherApps_(True)
         self.win.makeKeyAndOrderFront_(None)
-
