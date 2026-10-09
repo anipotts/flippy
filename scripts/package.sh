@@ -12,8 +12,8 @@ VERSION="$(git show "$REVISION:VERSION")"
 [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}([a-zA-Z0-9.-]*)?$ ]] || { echo "invalid VERSION" >&2; exit 1; }
 OUT="$ROOT/dist"
 mkdir -p "$OUT"
-COMMON=(':!tests' ':!scripts/release.sh' ':!scripts/package.sh' ':!.gitignore')
-MAC_ONLY=('flippy/mac' 'packaging/macos' 'scripts/install_mac.sh' 'requirements-mac.txt')
+COMMON=(':!tests' ':!scripts/release.sh' ':!scripts/package.sh' ':!.gitignore' ':!.codex' ':!script' ':!scripts/dev.sh' ':!scripts/doctor.py' ':!scripts/action_fixture.py')
+MAC_ONLY=('flippy/mac' 'packaging/macos' 'scripts/install_mac.sh' 'scripts/build_mac.sh' 'requirements-mac.txt')
 LINUX_ONLY=('flippy/linux' 'scripts/install_linux.sh' 'requirements-linux.txt' 'docs/linux-port.md')
 
 build() {  # build <platform> <paths of the other platform...>
@@ -32,6 +32,8 @@ build() {  # build <platform> <paths of the other platform...>
     if [ "$plat" = macos ]; then
         test -f "$tmp/$name/packaging/macos/Launcher.swift"
         test -f "$tmp/$name/requirements-mac.txt"
+        test -f "$tmp/$name/scripts/build_mac.sh"
+        test -f "$tmp/$name/scripts/wait_stopped.py"
         test ! -d "$tmp/$name/flippy/linux"
     else
         test -f "$tmp/$name/requirements-linux.txt"

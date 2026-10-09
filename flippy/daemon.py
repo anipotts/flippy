@@ -20,53 +20,48 @@ from . import loop, onboarding, settings, themes, tips, updates, video, watch
 from .brain import Brain, BrainError
 from .frames import prepare_frame
 from .requests import Request
+from .profile import current, Instance
 from .actions import ActionError, DesktopTools, Screenshot, approval_text
-from .point import image_to_logical, segments
+from .point import image_to_logical
+from .playback import Playback, Options
+from .diagnostics import Diagnostics
+from . import demos
 
-RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()  # macOS: the per-user $TMPDIR
-SOCK_PATH = os.path.join(RUNTIME_DIR, "flippy.sock")
+PROFILE = current()
+RUNTIME_DIR = PROFILE.runtime_dir
+SOCK_PATH = PROFILE.socket
 ASK_TIMEOUT_S = 90
 IDLE_RESET_S = 15 * 60      # fresh Claude session after this much idle (keeps context/usage small)
-STEP_TYPE_CPS = 90          # walkthrough step text types in at this many chars/s, then holds:
-STEP_HOLD = {"slow": (3.5, 0.07), "normal": (2.2, 0.045), "fast": (1.2, 0.025)}  # (min s, s per char)
-READ_S_PER_CHAR = 0.04      # extra time the final answer stays up per character
 DRAW_TIMEOUT_S = 60         # leave draw mode (and give the mouse back) if nothing happens
 NOT_HERE = "not available on this platform yet (see docs/linux-port.md)"
 TIPS_RETRY_S = 300          # after a failed tip deck write, wait this long before trying again
-CLICK_RADIUS = 55           # a click this close (logical px) to a :click step's target counts as doing it
-CLICK_SETTLE_S = 0.5        # after their click, let the app react before moving on
-TYPE_STEP_RE = re.compile(r"\b(type|enter)\b", re.I)   # a step that has them type something after the click
-TYPE_IDLE_S = 1.2           # ...look again once they've typed and paused this long
-TYPE_WAIT_S = 25.0          # ...or after this long anyway
 # Other knobs (model, effort, theme, pointer, timing) live in flippy/settings.py.
 
 
-def log(*a):
-    print(time.strftime("%H:%M:%S"), *a, file=sys.stderr, flush=True)
+EVENTS_PATH = PROFILE.events
+diagnostics = Diagnostics(EVENTS_PATH)
+LISTENERS = []  # raw in-memory UI events remain available to the onboarding tour
 
 
-EVENTS_PATH = os.path.join(RUNTIME_DIR, "flippy-events.jsonl")
-
-
-LISTENERS = []  # fn(name, data) for every UI event, on the main thread (the tour, flippy/onboarding.py)
+def log(*args):
+    first = str(args[0]) if args else ""
+    category = next((c for c in ("error", "control", "tutorial", "update", "claude", "session", "listening", "help", "draw", "tip")
+                     if first.lower().startswith(c)), "diagnostic")
+    print(time.strftime("%H:%M:%S"), category, file=sys.stderr, flush=True)
 
 
 def event(name, **data):
-    """Timestamped UI events (wall clock). Used by scripts/edit_demo.py to drive the camera, and by the tour."""
-    try:
-        with open(EVENTS_PATH, "a") as f:
-            f.write(json.dumps({"t": time.time(), "ev": name, **data}) + "\n")
-    except OSError:
-        pass
-    for fn in LISTENERS:
+    diagnostics.event(name, **data)
+    for fn in tuple(LISTENERS):
         try:
             fn(name, data)
-        except Exception as e:  # a listener never breaks the thing that happened
-            log(f"event listener: {e}")
+        except Exception:
+            log("event listener failed")
 
 
 class Flippy:
     def __init__(self, ui):
+        self.instance = Instance(PROFILE).acquire()
         self.ui = ui
         self.overlay = ui.overlay
         self.overlay.on_draw_done = self._draw_done
@@ -77,7 +72,10 @@ class Flippy:
         self.gen = 0
         self.request = None
         self.input_disabled = False
+        self.input_worker = None
         self.quitting = False
+        # Give Python's OS signal handlers a bounded main-thread wakeup while idle.
+        loop.timeout_add(250, lambda: not self.quitting)
         self.background_futures = set()
         self.fade_animation_id = 0
         self.play = None         # playback state of the reply being shown (see _play_tick)
@@ -111,18 +109,22 @@ class Flippy:
         self.video = video.Review(self)
         self.tour = onboarding.Tour(self)
         LISTENERS.append(self.tour.on_event)
-        loop.timeout_add(3000, self.tour.maybe_start)  # once setup's done, the first time
+        loop.timeout_add(3000, self._maybe_start_tour)
         self._run(self.brain.start(), lambda r, e: log("claude session ready" if not e else f"session start failed: {e}"))
 
-        try:
-            os.unlink(SOCK_PATH)
-        except FileNotFoundError:
-            pass
         ui.listen(SOCK_PATH, self.command)
         os.chmod(SOCK_PATH, 0o600)
+        self.instance.listening()
         log(f"listening on {SOCK_PATH}")
 
     # --- plumbing ---
+    def _maybe_start_tour(self):
+        if self.quitting:
+            return False
+        if self.busy or self.box.visible or self.overlay.drawing or self.overlay.showing:
+            return True
+        return self.tour.maybe_start()
+
     def _run(self, coro, cb, timeout=None):
         if timeout:
             coro = asyncio.wait_for(coro, timeout)
@@ -139,7 +141,25 @@ class Flippy:
         return fut
 
     def command(self, cmd):
-        log("cmd:", "act <task>" if cmd == "act" or cmd.startswith("act ") else cmd)
+        if PROFILE.demo and (cmd == "update" or cmd.startswith("update ")):
+            return "Updates are disabled in Flippy Demo; rebuild the demo instead."
+        if cmd == "doctor":
+            return json.dumps({"profile": PROFILE.name, "version": updates.current_version(),
+                               "root": os.path.realpath(os.path.dirname(os.path.dirname(__file__))),
+                               "pid": os.getpid(), "app": os.environ.get("FLIPPY_APP"),
+                               "busy": self.busy, "input_disabled": self.input_disabled,
+                               "permissions": self.ui.permission_state() if hasattr(self.ui, "permission_state") else {}})
+        if cmd.startswith("quit-owned "):
+            if os.path.realpath(cmd[11:]) != os.path.realpath(os.path.dirname(os.path.dirname(__file__))):
+                return "refused: daemon belongs to another checkout"
+            self.quit()
+            return "ok"
+        if not cmd.strip():
+            return "unknown command"
+        diagnostics.command(cmd)
+        handled, result = demos.dispatch(self, cmd, event, log)
+        if handled:
+            return result
         if cmd == "ask":
             self.open_box()
         elif cmd == "draw":
@@ -150,28 +170,10 @@ class Flippy:
             if not hasattr(self.ui, "video_window"):
                 return NOT_HERE
             return self.video.command(cmd)
-        elif cmd.startswith("demo-type "):  # scripted demo: type into the box like a person
-            self.demo_type(cmd[len("demo-type "):])
-        elif cmd.startswith("demo-draw "):  # scripted demo: circle (cx, cy, rx, ry) in logical px, then ask
-            parts = cmd.split(maxsplit=5)
-            self.demo_draw(*map(float, parts[1:5]), then_ask=parts[5] if len(parts) > 5 else None)
-        elif cmd.startswith("demo-pointer"):  # scripted demo: draw a pointer in the editor, save, preview it
-            self.demo_pointer(cmd[len("demo-pointer"):].strip() or "Sunset")
         elif cmd == "settings":
             self.open_settings()
         elif cmd == "setup" and hasattr(self.ui, "open_setup"):  # macOS first-run window
             self.ui.open_setup()
-        elif cmd == "preview":
-            self.preview()
-        elif cmd.startswith("demo-point "):  # demo-point <x> <y> <label>|<text>: one pointed step, logical px
-            x, y, rest = cmd.split(maxsplit=3)[1:]
-            label, _, text = rest.partition("|")
-            self.demo_point(float(x), float(y), label, text or label)
-        elif cmd == "demo-tutorial":  # a fake tutorial whose first step waits for you to click the Apple menu
-            self.preview(tutorial=True)
-        elif cmd.startswith("demo-user-click "):  # demo-user-click <x> <y>: as if they clicked there (tests)
-            x, y = map(float, cmd.split()[1:3])
-            self._on_user_click(x, y)
         elif cmd.startswith("control "):  # same as clicking a player button: control <name> [0-1 for seek/speed]
             parts = cmd.split()
             self.control(parts[1], float(parts[2]) if len(parts) > 2 else 0.0)
@@ -197,28 +199,6 @@ class Flippy:
             return "pong"
         elif cmd.startswith("help-mode "):  # help-mode off|quiet
             return self.set_command("help.mode " + cmd.split(maxsplit=1)[1])
-        elif cmd.startswith("demo-nudge"):  # the "need a hand?" card: demo-nudge [stalled|circles|dialog] [app name]
-            parts = cmd.split(maxsplit=2)
-            reason = parts[1] if len(parts) > 1 else "stalled"
-            offer = watch.Offer("demo", parts[2] if len(parts) > 2 else "Ableton Live", reason)
-            if not hasattr(self.ui, "show_nudge"):
-                return NOT_HERE
-            self.ui.show_nudge(offer, lambda: self._nudge_help(offer), lambda: log("nudge: not now"),
-                               lambda: log("nudge: mute"))
-        elif cmd.startswith("shot "):  # shot <path.png>: screenshot through Flippy's permission (demo scripts)
-            if not hasattr(self.ui, "screenshot_to"):
-                return NOT_HERE
-            self.ui.screenshot_to(cmd[5:].strip())
-        elif cmd.startswith("record "):  # record start <path.mov> | record stop
-            if not hasattr(self.ui, "start_recording"):
-                return NOT_HERE
-            parts = cmd.split(maxsplit=2)
-            if parts[1] == "start" and len(parts) == 3:
-                self.ui.start_recording(parts[2])
-                event("record_start", path=parts[2])
-            else:
-                self.ui.stop_recording()
-                event("record_stop")
         elif cmd.startswith("click "):  # click <x> <y> [double]: logical px, top-left origin (Settings: automation)
             return self.click_command(cmd[6:].split())
         elif cmd.split()[0] in ("move", "path", "type", "key", "tap"):  # more scripted input, same toggle
@@ -227,35 +207,11 @@ class Flippy:
             name = cmd.split()[1]
             event("hotkey", key=name, combo=settings.get("keys", name) if name in settings.DEFAULTS["keys"] else name)
             return self.command("pause-toggle" if name == "pause" else name)
-        elif cmd.startswith("mark "):  # mark <name>: a labelled moment in the event log (for editing recordings)
-            event("mark", name=cmd[5:].strip())
-        elif cmd == "demo-update":  # the update card, with sample notes
-            if not hasattr(self.ui, "show_update"):
-                return NOT_HERE
-            rel = {"version": "0.3", "name": "Flippy 0.3", "url": "https://github.com/kap-il/flippy/releases",
-                   "notes": "Tutorials that make the music under them."}
-            self.ui.show_update(rel, install=lambda: log("demo update: install"), later=lambda: None)
-        elif cmd.startswith("nudge "):  # nudge <button title>: press a button on the help card (demo scripts)
-            if not hasattr(self.ui, "press_nudge"):
-                return NOT_HERE
-            return "ok" if self.ui.press_nudge(cmd[6:].strip()) else "no such button"
         elif cmd.startswith("goal "):  # goal <app id> <what they want to do>: steers that app's tips
             parts = cmd.split(maxsplit=2)
             if len(parts) < 3:
                 return "usage: goal <app id> <what you want to do>"
             self.set_goal(parts[1], parts[2])
-        elif cmd.startswith("demo-tip"):  # demo-tip [app id]: that app's next real tip, else a sample one
-            if not hasattr(self.ui, "show_tip"):
-                return NOT_HERE
-            parts = cmd.split(maxsplit=1)
-            deck = tips.Deck.load(parts[1]) if len(parts) > 1 else None
-            tip = deck.next_tip() if deck else None
-            if tip:
-                self._show_tip(deck, tip)
-            else:
-                self._show_tip(tips.Deck("demo", "Ableton Live"), {"text": "Hold ⌘ while dragging a clip to duplicate "
-                                                                           "it instead of moving it.", "level": 1,
-                                                                   "state": "new"})
         elif cmd.startswith("watch-app "):  # watch-app <app id>: toggle help mode for that app
             self.toggle_watch_app(cmd.split(maxsplit=1)[1])
         elif cmd.startswith("q "):  # ask without the box (scripting/testing)
@@ -328,6 +284,7 @@ class Flippy:
         req = Request(self.gen, mode)
         self.request = req
         self.busy = True
+        event("request", request_id=req.identity, mode=mode, outcome="started")
         return req
 
     def _owns(self, req):
@@ -344,6 +301,7 @@ class Flippy:
             self.loop.call_soon_threadsafe(stop)
         req.future = SimpleNamespace(cancel=cancel)
         async def run():
+            started = time.monotonic()
             result = error = None
             tasks.append(asyncio.current_task())
             try:
@@ -355,6 +313,9 @@ class Flippy:
                 error = err
             finally:
                 req.drained.set()
+                event("request", request_id=req.identity, mode=req.mode,
+                      outcome="canceled" if req.canceled.is_set() else "failed" if error else "completed",
+                      duration_ms=round((time.monotonic() - started) * 1000))
                 def done():
                     req.pending = False
                     if self.request is req:
@@ -520,6 +481,7 @@ class Flippy:
         if fresh.target != shot.target or fresh.original_size != shot.original_size or fresh.fingerprint != shot.fingerprint:
             raise ActionError("The screen changed while approval was pending. Start a new /act request.")
         worker = asyncio.create_task(asyncio.to_thread(self.ui.action_input, name, args, fresh, cancel))
+        self.input_worker = worker
         try:
             await asyncio.shield(worker)
         except asyncio.CancelledError:
@@ -530,6 +492,9 @@ class Flippy:
                 self.input_disabled = True
                 raise ActionError("Input cleanup could not be confirmed. Restart Flippy before acting again.") from None
             raise
+        finally:
+            if worker.done():
+                self.input_worker = None
 
     def _action_done(self, tools, req, result, error):
         if not self._owns(req) or self.action_tools is not tools:
@@ -561,29 +526,36 @@ class Flippy:
             self._fail(_friendly_error(err))
             return
         raw, gen = result
-        if self.play and self.play["gen"] == gen:
-            self.play["raw"] = raw
-            self.play["done"] = True
+        event("answer", outcome="completed")
+        if self.play and self.play.gen == gen:
+            self.play.finish(raw)
 
     # --- playback: show the reply step by step, moving the hand to each point ---
     # The player skins' controls (control()) can pause, step back/forward, seek and replay.
-    def _start_playback(self, gen, img_size, shot_size):
+    def _play_options(self):
+        return Options(speed=settings.get("timing", "speed"), pace=settings.get("timing", "step_pace"),
+                       tutorial=self.tutorial, clicks_available=hasattr(self.ui, "watch_clicks"),
+                       wait_for_clicks=settings.get("timing", "wait_for_clicks"),
+                       typing_available=hasattr(self.ui, "key_idle_s"),
+                       pointer_size=settings.get("look", "pointer_size"),
+                       show_seconds=settings.get("timing", "show_seconds"),
+                       max_show_seconds=settings.get("timing", "max_show_seconds"))
+
+    def _start_playback(self, gen, img_size, shot_size, frame=None):
         if gen != self.gen:
             return
         self._stop_playback()
-        self.play = {"gen": gen, "raw": "", "done": False, "img": img_size, "shot": shot_size,
-                     "step": 0, "shown": 0.0, "typed_at": None, "last": time.monotonic(), "pointed": False,
-                     "pointed_step": -1, "paused": False, "finished": False,
-                     "target": None, "waiting": False, "clicked_at": None, "acted": set()}
-        self.play_id = loop.timeout_add(33, self._play_tick)
+        self.play = Playback(time.monotonic())
+        self.play.gen, self.play.img, self.play.shot, self.play.frame = gen, img_size, shot_size, frame
+        self._resume_ticking()
 
     def _stream_text(self, gen, delta):
-        if self.play and self.play["gen"] == gen and not self.play["done"]:
-            self.play["raw"] += delta
+        if self.play and self.play.gen == gen:
+            self.play.append(delta)
 
     def _stop_playback(self):
-        if self.play and self.play["waiting"]:
-            self._listen_for_click(False)
+        if self.play:
+            self._play_events(self.play.stop())
         if self.play_id:
             loop.source_remove(self.play_id)
             self.play_id = 0
@@ -591,13 +563,37 @@ class Flippy:
 
     def _resume_ticking(self):
         if self.play and not self.play_id:
-            self.play["last"] = time.monotonic()
+            self.play.last = time.monotonic()
             self.play_id = loop.timeout_add(33, self._play_tick)
 
-    @staticmethod
-    def _hold_s(seg):
-        hold_min, hold_per_char = STEP_HOLD.get(settings.get("timing", "step_pace"), STEP_HOLD["normal"])
-        return (hold_min + hold_per_char * len(seg.text)) / settings.get("timing", "speed")
+    def _play_coords(self, point):
+        pl = self.play
+        if pl.frame:
+            return pl.frame.to_logical(point.x, point.y, clamp=True)
+        return image_to_logical(point, pl.img, pl.shot, self._scale())
+
+    def _play_events(self, events):
+        for kind, payload in events:
+            if kind == "point":
+                (x, y), point, text = payload
+                self.overlay.point(x, y, point.label)
+                event("point", x=x, y=y, label=point.label, text=text)
+            elif kind == "watch_clicks":
+                self._listen_for_click(payload)
+            elif kind == "waiting":
+                (x, y), point = payload
+                event("waiting", x=x, y=y, label=point.label)
+            elif kind == "continue":
+                self._continue_tutorial()
+            elif kind in ("finish", "fade"):
+                if kind == "finish":
+                    event("answer_done")
+                if self.play and not self.play.paused:
+                    self._schedule_fade(payload)
+            elif kind == "cancel_fade":
+                self._cancel_fade()
+            elif kind == "empty":
+                self.overlay.show_text(payload, progress=1.0, finished=True, controls=True)
 
     def _play_tick(self):
         pl = self.play
@@ -605,169 +601,46 @@ class Flippy:
             self.play_id = 0
             return False
         now = time.monotonic()
-        dt, pl["last"] = now - pl["last"], now
-        segs = segments(pl["raw"], pl["done"])
-        if pl["done"] and not segs:
-            segs_text = pl["raw"].strip() or "(no answer)"
-            self.overlay.show_text(segs_text, progress=1.0, finished=True, controls=True)
-            return self._finish_playback(segs_text, segs)
-        if pl["step"] >= len(segs):
-            return True  # waiting for the next step to stream in
-        seg = segs[pl["step"]]
-        if not seg.complete:
-            return True  # wait until we know where this step points
-        if pl["pointed_step"] != pl["step"]:
-            pl["pointed_step"] = pl["step"]
-            pl["target"] = None
-            if seg.point:
-                x, y = image_to_logical(seg.point, pl["img"], pl["shot"], self._scale())
-                self.overlay.point(x, y, seg.point.label)
-                pl["pointed"] = True
-                pl["target"] = (x, y)
-                event("point", x=x, y=y, label=seg.point.label, text=seg.text)
-        if pl["paused"]:
-            if pl["typed_at"]:
-                pl["typed_at"] += dt  # freeze the hold timer
-            self._render_step(pl, segs, now)
-            return True
-        # type the step's text in, then hold it long enough to read
-        pl["shown"] = min(pl["shown"] + STEP_TYPE_CPS * settings.get("timing", "speed") * dt, len(seg.text))
-        self._render_step(pl, segs, now)
-        if pl["shown"] < len(seg.text):
-            return True
-        if pl["typed_at"] is None:
-            pl["typed_at"] = now
-        if self._gated(seg) and pl["step"] not in pl["acted"]:
-            # a step they have to do: hold here until they click the thing (flippy/point.py ":click")
-            if pl["clicked_at"] is None or now - pl["clicked_at"] < CLICK_SETTLE_S or self._still_typing(pl, seg, now):
-                if not pl["waiting"]:
-                    pl["waiting"] = True
-                    self._listen_for_click(True)
-                    event("waiting", x=pl["target"][0], y=pl["target"][1], label=seg.point.label)
-                    self._render_step(pl, segs, now)
-                return True
-            self._step_done(pl)
-            if pl["done"] and pl["step"] == len(segs) - 1:
-                self._continue_tutorial()
-                return False
-            if pl["step"] < len(segs) - 1:
-                pl["step"] += 1
-                pl["shown"] = 0.0
-                pl["typed_at"] = None
-            return True
-        if pl["done"] and pl["step"] == len(segs) - 1:
-            if self._tutorial_goes_on(pl, segs) and now - pl["typed_at"] >= self._hold_s(seg):
-                self._continue_tutorial()  # they did the last step; Claude just added a remark after it
-                return False
-            if not self._tutorial_goes_on(pl, segs):
-                return self._finish_playback(seg.text, segs)
-            return True
-        if now - pl["typed_at"] >= self._hold_s(seg):
-            pl["step"] += 1
-            pl["shown"] = 0.0
-            pl["typed_at"] = None
+        idle = self.ui.key_idle_s() if hasattr(self.ui, "key_idle_s") else None
+        events = pl.tick(now, self._play_options(), self._play_coords, idle)
+        self._play_events(events)
+        if self.play is not pl or pl.stopped:
+            return False
+        self._render_step(pl, None, now)
+        if pl.finished:
+            self.play_id = 0
+            return False
         return True
 
-    def _render_step(self, pl, segs, now):
-        known = [sg for sg in segs if sg.complete]
-        if not known:
-            return
-        step = min(pl["step"], len(known) - 1)
-        seg = known[step]
-        if pl["finished"]:
-            progress = 1.0 if step == len(known) - 1 else (step + 1) / len(known)
-        else:
-            frac = (pl["shown"] / max(len(seg.text), 1)) * 0.5
-            if pl["typed_at"]:
-                frac += min((now - pl["typed_at"]) / self._hold_s(seg), 1) * 0.5
-            progress = (step + frac) / len(known)
-        text = seg.text[:int(pl["shown"])] or " "
-        self.overlay.show_text(text,
-                               header=seg.point.label if seg.point else None,
-                               follow=pl["pointed"],
-                               at_bottom=self._card_at_bottom(segs),
-                               steps=[sg.point.label if sg.point else "…" for sg in known],
-                               step=step, progress=progress,
-                               typing=pl["shown"] < len(seg.text),
-                               paused=pl["paused"], finished=pl["finished"],
-                               speed=settings.get("timing", "speed"), controls=True)
-
-    # --- tutorials: steps marked :click wait for them to click the thing ---
-    def _gated(self, seg):
-        return bool(seg.point and seg.point.action and self.tutorial and settings.get("timing", "wait_for_clicks")
-                    and hasattr(self.ui, "watch_clicks"))
+    def _render_step(self, pl, _segs, now):
+        card = pl.card(now, self._play_options())
+        if card:
+            card["at_bottom"] = self._card_at_bottom(pl.known())
+            self.overlay.show_text(**card)
 
     def _listen_for_click(self, on):
         if hasattr(self.ui, "watch_clicks"):
             self.ui.watch_clicks(self._on_user_click) if on else self.ui.unwatch_clicks()
 
-    def _still_typing(self, pl, seg, now):
-        """A "click the box and type X" step: the click is only half of it. Wait until they typed and paused,
-        so the next screenshot shows what they typed (else it'd tell them to type it again)."""
-        if not (TYPE_STEP_RE.search(seg.text) and hasattr(self.ui, "key_idle_s")):
-            return False
-        since = now - pl["clicked_at"]
-        if since >= TYPE_WAIT_S:
-            return False
-        idle = self.ui.key_idle_s()
-        return idle >= since or idle < TYPE_IDLE_S   # nothing typed since the click yet, or still typing
-
     def _on_user_click(self, x, y):
-        pl = self.play
-        if pl and pl["waiting"] and pl["target"] and pl["clicked_at"] is None:
-            tx, ty = pl["target"]
-            if math.hypot(x - tx, y - ty) <= CLICK_RADIUS * settings.get("look", "pointer_size") ** 0.5:
-                pl["clicked_at"] = time.monotonic()
-                event("user_click", x=x, y=y)
-
-    def _tutorial_goes_on(self, pl, segs):
-        """In a tutorial, after they did the reply's last step-to-do, only remarks without a point followed:
-        the screen has probably changed, so look again instead of ending."""
-        if not (self.tutorial and pl["acted"]):
-            return False
-        last_pointed = max((i for i, sg in enumerate(segs) if sg.point), default=-1)
-        return max(pl["acted"]) >= last_pointed
-
-    def _step_done(self, pl):
-        pl["acted"].add(pl["step"])
-        pl["waiting"] = False
-        pl["clicked_at"] = None
-        self._listen_for_click(False)
+        if self.play and self.play.click(x, y, time.monotonic(), self._play_options()):
+            event("user_click", x=x, y=y)
 
     def _continue_tutorial(self):
-        """They did the last step we could see: take a fresh screenshot and ask for what's next."""
-        log("tutorial: they did it, asking for the next step")
         event("tutorial_continue")
         self._stop_playback()
         self.submit("Done, I did that. Continue the walkthrough from here.", tutorial=True)
 
     def _card_at_bottom(self, segs):
-        """Centered card (no pointer yet): keep it away from the first point."""
-        pl = self.play
         for seg in segs:
             if seg.point:
-                _, y = image_to_logical(seg.point, pl["img"], pl["shot"], self._scale())
+                _, y = self._play_coords(seg.point)
                 return y < self.ui.screen_size()[1] / 2
         return False
 
-    def _finish_playback(self, last_text, segs):
-        event("answer_done")
-        self.play_id = 0
-        pl = self.play
-        pl["finished"] = True  # keep the state around so the controls can step back / replay
-        if segs:
-            self._render_step(pl, segs, time.monotonic())
-        if not pl["paused"]:
-            show_s = settings.get("timing", "show_seconds")
-            self._schedule_fade(min(show_s + READ_S_PER_CHAR * len(last_text),
-                                    max(show_s, settings.get("timing", "max_show_seconds"))))
-        return False
-
-    # --- player controls (clicked on the Media Player/Y2K skins) ---
     def control(self, name, frac=0.0):
-        log("control:", name, f"{frac:.2f}" if name in ("seek", "speed") else "")
         event("control", control=name)
-        self.overlay.pressed = (name, time.monotonic())  # light the button up, also when scripted
+        self.overlay.pressed = (name, time.monotonic())
         if name in ("stop", "close", "min"):
             self.dismiss()
             return
@@ -779,70 +652,27 @@ class Flippy:
             cur = settings.get("timing", "speed")
             settings.set("timing", "speed", next((o for o in options if o > cur + 0.01), options[0]))
             return
-        pl = self.play
-        if not pl:
-            return
-        known = [sg for sg in segments(pl["raw"], pl["done"]) if sg.complete]
-        if not known:
-            return
-        step = min(pl["step"], len(known) - 1)
-        if name == "toggle":  # Glass orb: play/pause in one button
-            name = "play" if (pl["paused"] or pl["finished"]) else "pause"
-        if name == "pause":
-            self._set_paused(True)
-        elif name == "play":
-            if pl["paused"]:
-                self._set_paused(False)
-            elif pl["finished"]:
-                self._goto(0, retype=True)  # replay from the top
-        elif name == "prev":
-            self._goto(max(step - 1, 0))
-        elif name == "next" and pl["waiting"] and step == len(known) - 1 and pl["done"]:
-            self._step_done(pl)  # skipping the last step they could do: on to the next screenful
-            self._continue_tutorial()
-        elif name == "next" and step + 1 < len(known):
-            self._goto(step + 1)
-        elif name == "seek":
-            self._goto(min(int(frac * len(known)), len(known) - 1))
+        if self.play:
+            self._play_events(self.play.control(name, frac, time.monotonic(), self._play_options()))
+            if self.play and not self.play.stopped:
+                self._resume_ticking()
+                self._refresh_card()
 
     def pause_toggle(self):
-        """Pause or resume the answer playing on screen; nothing if there isn't one (or it already finished)."""
-        pl = self.play
-        if pl is None or pl["finished"]:
-            return
-        event("control", control="pause" if not pl["paused"] else "play")
-        self.overlay.pressed = ("pause" if not pl["paused"] else "play", time.monotonic())
-        self._set_paused(not pl["paused"])
+        if self.play and not self.play.finished:
+            self.control("play" if self.play.paused else "pause")
 
     def _set_paused(self, paused):
-        pl = self.play
-        pl["paused"] = paused
-        if paused:
-            self._cancel_fade()  # stay up while paused
-        elif pl["finished"]:
-            self._schedule_fade(settings.get("timing", "show_seconds"))
-        self._resume_ticking()
-        self._refresh_card()
+        self.control("pause" if paused else "play")
 
     def _goto(self, k, retype=False):
-        pl = self.play
-        if pl["waiting"]:
-            if k > pl["step"]:
-                self._step_done(pl)  # skipping ahead counts as done
-            else:
-                pl["waiting"], pl["clicked_at"] = False, None
-                self._listen_for_click(False)
-        known = [sg for sg in segments(pl["raw"], pl["done"]) if sg.complete]
-        pl["step"] = k
-        pl["shown"] = 0.0 if retype else float(len(known[k].text))  # stepping shows the text in full
-        pl["typed_at"] = None if retype else time.monotonic()
-        pl["finished"] = False
-        self._cancel_fade()
-        self._resume_ticking()
+        if self.play:
+            self._play_events(self.play._goto(k, time.monotonic(), retype))
+            self._resume_ticking()
 
     def _refresh_card(self):
         if self.play:
-            self._render_step(self.play, segments(self.play["raw"], self.play["done"]), time.monotonic())
+            self._render_step(self.play, None, time.monotonic())
         elif self.overlay.card:
             self.overlay.card.speed = settings.get("timing", "speed")
         self.overlay.queue_draw()
@@ -916,6 +746,12 @@ class Flippy:
         async def stop():
             if req and req.pending:
                 await asyncio.to_thread(req.drained.wait)
+            worker = self.input_worker
+            if worker is not None:
+                try:
+                    await asyncio.shield(worker)
+                except Exception:
+                    pass  # worker finished; its cleanup-failure lockout remains visible
             await self.brain.stop()
             loop.idle_add(lambda: self.ui.quit() and False)
         asyncio.run_coroutine_threadsafe(stop(), self.loop)
@@ -1162,20 +998,16 @@ class Flippy:
         try:
             path, raw = arg.split(maxsplit=1)
             section, key = path.split(".")
-            default = settings.DEFAULTS[section][key]
-            if isinstance(default, bool):
-                value = raw.lower() in ("1", "true", "on", "yes")
-            else:
-                value = type(default)(float(raw)) if isinstance(default, (int, float)) else raw
-            if not settings._valid(section, key, value):
-                return f"invalid value for {path}; choices: {settings.CHOICES.get((section, key), type(default).__name__)}"
+            value = settings.parse_value(path, raw)
             settings.set(section, key, value)
             return "ok"
         except (ValueError, KeyError):
-            return "usage: set <section.key> <value>  (see ~/.config/flippy/config.toml)"
+            return "invalid setting; usage: set <section.key> <value>"
+        except OSError:
+            return "could not save settings"
 
     def _on_setting(self, section, key, value):
-        log(f"setting {section}.{key} = {value!r}")
+        log("setting changed")
         if section == "claude" and key in ("model", "effort"):
             if self.request and self.request.pending:
                 self.dismiss()
@@ -1199,52 +1031,11 @@ class Flippy:
             theme.refresh()  # e.g. re-read COSMIC's colors
         self.ui.apply_theme(theme)
 
-    def demo_point(self, x, y, label, text):
-        """A one-step answer pointing at (x, y): same spot every time, so a theme/pointer montage lines up."""
-        if self.busy:
-            return
-        self.gen += 1
-        self._stop_playback()
-        self._cancel_fade()
-        self.overlay.clear()
-        self.tutorial = False
-        W, H = self.ui.screen_size()
-        sc = self._scale()
-        shot = (int(W * sc), int(H * sc))
-        self._start_playback(self.gen, shot, shot)
-        self.play["raw"], self.play["done"] = f"{text} [POINT:{int(x * sc)},{int(y * sc)}:{label}]", True
+    def demo_point(self, *args, **kwargs):
+        return demos.demo_point(self, *args, **kwargs)
 
-    def preview(self, tutorial=False):
-        """Fake 3-step walkthrough so theme/pointer/timing changes can be seen in place.
-        tutorial: the first step is a ":click" step that waits for them to click it."""
-        if self.busy:
-            return
-        self.gen += 1
-        self._stop_playback()
-        self._cancel_fade()
-        self.overlay.clear()
-        W, H = self.ui.screen_size()
-        sc = self._scale()
-        if sys.platform == "darwin":  # the clock sits at the right end of the menu bar (the middle is the notch)
-            spots, first = [(22, 12, "Apple menu"), (W - 70, 12, "Clock"), (W // 2, H - 40, "Dock")], "the Apple menu"
-        else:
-            spots, first = [(70, 14, "Workspaces"), (W // 2, 14, "Clock"), (W // 2, H - 40, "Dock")], "the workspaces button"
-        self.tutorial = tutorial
-        if tutorial:
-            spots = [(22, 12, "Apple menu:click"), (W // 2, H - 40, "Dock")]
-            texts = ("Click the Apple menu to open it", "Nice. That's how tutorials wait for you, then go on")
-            raw = " ".join(f"{txt} [POINT:{int(x * sc)},{int(y * sc)}:{lbl}]." for (x, y, lbl), txt in zip(spots, texts))
-            shot = (int(W * sc), int(H * sc))
-            self._start_playback(self.gen, shot, shot)
-            self.play["raw"], self.play["done"] = raw, True
-            return
-        raw = " ".join(f"{txt} [POINT:{int(x * sc)},{int(y * sc)}:{lbl}]." for (x, y, lbl), txt in zip(spots, (
-            f"This is a preview of how answers look: the pointer starts at {first}",
-            "then glides to the clock while the panel follows it",
-            "and ends on the dock, one step per thing it explains")))
-        shot = (int(W * sc), int(H * sc))
-        self._start_playback(self.gen, shot, shot)
-        self.play["raw"], self.play["done"] = raw, True
+    def preview(self, *args, **kwargs):
+        return demos.preview(self, *args, **kwargs)
 
     # --- draw mode: circle something, then ask about it ---
     def start_draw(self):
@@ -1283,49 +1074,14 @@ class Flippy:
         self._show_box()
 
     # --- scripted demo helpers (used by scripts/record_demo.py) ---
-    def demo_type(self, text, delay_ms=65):
-        if not self.box.visible:
-            self.open_box()
-        state = {"i": 0}
+    def demo_type(self, *args, **kwargs):
+        return demos.demo_type(self, *args, event=event, **kwargs)
 
-        def step():
-            if not self.box.visible:
-                return False
-            state["i"] += 1
-            self.box.set_text(text[:state["i"]])
-            event("typed", ch=text[state["i"] - 1])  # each key as it lands, so a demo edit can sync key sounds
-            if state["i"] >= len(text):
-                loop.timeout_add(450, lambda: self.box.visible and self.box.activate() and False)
-                return False
-            return True
-        loop.timeout_add(500, lambda: loop.timeout_add(delay_ms, step) and False)
+    def demo_draw(self, *args, **kwargs):
+        return demos.demo_draw(self, *args, **kwargs)
 
-    def demo_draw(self, cx, cy, rx, ry, then_ask=None, duration_ms=900):
-        self.start_draw()
-        self.overlay.strokes = [[]]
-        n = duration_ms // 16
-        state = {"i": 0}
-
-        def step():
-            if not self.overlay.drawing or not self.overlay.strokes:
-                return False
-            a = 2 * math.pi * 1.08 * state["i"] / n - math.pi / 2  # a bit past full circle, like a hand would
-            self.overlay.strokes[-1].append((cx + rx * math.cos(a), cy + ry * math.sin(a)))
-            self.overlay.queue_draw()
-            state["i"] += 1
-            if state["i"] > n:
-                self._draw_done()
-                if then_ask:
-                    self.demo_type(then_ask)
-                return False
-            return True
-        loop.timeout_add(600, lambda: loop.timeout_add(16, step) and False)
-
-    def demo_pointer(self, name):
-        def saved(value):
-            settings.set("look", "pointer", value)
-            loop.timeout_add(500, lambda: self.preview() and False)
-        self.ui.demo_pointer(name, saved)
+    def demo_pointer(self, *args, **kwargs):
+        return demos.demo_pointer(self, *args, **kwargs)
 
     def cancel_draw(self):
         event("draw_cancel")
@@ -1426,12 +1182,18 @@ def _friendly_error(err):
 
 
 def main():
+    diagnostics.record_content = "--demo-record-content" in sys.argv
     themes.load_fonts()  # bundled pixel font for the Y2K theme, process-local
     if sys.platform == "darwin":
         from .mac import ui
     else:
         from .linux import ui
-    ui.run(Flippy)
+    def create(native_ui):
+        app = Flippy(native_ui)
+        from .runtime import install_shutdown_handlers
+        install_shutdown_handlers(app.quit, loop.idle_add)
+        return app
+    ui.run(create)
 
 
 if __name__ == "__main__":
