@@ -1,15 +1,23 @@
 # Video review: how it works, how it was built, and the macOS version
 
 "Did I do this edit right?" You press a shortcut in your video editor, play the edit
-back, press it again and ask. Flippy shows Claude the frames that matter and the card
+back, press it again and ask. Flippy shows the selected model the frames that matter and the card
 answers, pointing at your timeline if that helps.
 
-Status: **working on COSMIC** (tested end to end; see [What was tested](#what-was-tested)).
-**macOS: built** (`⌃⌥V`, menu bar "Check a video edit"); see [The macOS version](#the-macos-version).
+Current implementation uses the same serialized, tool-free model request as
+ordinary questions. Picked frames precede the current screenshot in chronological
+order; `[POINT]` coordinates refer only to that final screenshot. Request ownership
+covers recording/capture, streaming and playback cancellation.
+
+Historical platform evidence from the 2026-10-07 source notes (`5ec1f26`):
+**COSMIC was tested end to end**; **macOS was built** (`⌃⌥V`, menu bar
+"Check a video edit"). This is not acceptance evidence for the current integrated
+revision or the Codex adapter. See [What was tested](#what-was-tested) and
+[The macOS version](#the-macos-version).
 
 ## How it works
 
-Claude takes text and images, not video or audio. So video review is a frame picker:
+The review sends text and selected still images, not raw video or audio. Its frame picker works as follows:
 
 1. **Record.** While recording, the platform grabs the editor's window `FPS` (4) times a
    second. Each grab becomes a 1600 px JPEG in memory, plus a 96×54 grayscale thumbnail.
@@ -24,10 +32,10 @@ Claude takes text and images, not video or audio. So video review is a frame pic
 4. **Pick frames.** Before and after each cut, the first and last frame, then evenly
    spaced frames up to `MAX_FRAMES` (12) (`pick`). Each is cropped to the preview,
    shrunk to 1024 px and labelled with its time (`prepare`).
-5. **Ask.** The frames go to Claude in the normal session, followed by a regular
+5. **Ask.** The frames go through `Brain.ask(..., extra_images=...)` in the normal conversation, followed by a regular
    screenshot of the screen as it is now. That screenshot is what `[POINT]` tags refer to,
    so the normal playback code points and plays the answer. The prompt
-   (`ASK_TEMPLATE`) says what Claude can't judge: motion, sub-quarter-second timing,
+   (`ASK_TEMPLATE`) says what the model can't judge: motion, sub-quarter-second timing,
    audio.
 
 All of that is `flippy/video.py`. It's platform-neutral; `tests/test_video.py` covers the
@@ -56,10 +64,15 @@ flippy-ask video cancel     stop and throw the recording away
 ```
 
 The last recording is kept in memory (until the next one or `cancel`), so `video ask`
-can ask about it again. Follow-up questions through the normal box share the session,
-so Claude still has the frames in context.
+can ask about it again. Follow-up questions use the ordinary conversation. Claude
+keeps its active transport in memory without session persistence. After an
+interruption, Flippy retains bounded text context including the marked partial
+answer, closes the old transport and starts a new one. The recording remains in
+memory until canceled or replaced; ask through `video ask` to resend its frames.
+The Codex route has separate live acceptance and funding gates; it is not proven
+by the historical Claude run.
 
-## What we did, in order
+## Historical implementation notes (2026-10-07)
 
 1. Asked what "video" should mean. Answer: record while playing (not an exported file),
    no audio, COSMIC now and macOS built separately.
@@ -91,13 +104,13 @@ These all happened (or nearly did) while building the COSMIC side:
 - **Don't record or screenshot someone's screen without saying so first.** Test with a
   window you opened yourself (a generated clip in a player). The final screenshot shows
   the whole screen, so ask before a live test.
-- **Check for a running Flippy before starting a test copy.** A second daemon unlinks and
-  rebinds the socket (`SOCK_PATH`), so the first one keeps running but can't be reached,
-  and the next shortcut starts a third. Stop it with `flippy-ask quit` first, or test
-  under another `XDG_RUNTIME_DIR`.
+- **Use an isolated test profile.** The current demo has separate config, socket and
+  logs. Instance ownership refuses an active listener and never removes a non-socket
+  path. The original implementation lacked that protection, so its test instructions
+  required stopping the first copy or changing `XDG_RUNTIME_DIR`.
 - **Kill test processes by PID, not `pkill -f <pattern>`.** The pattern matches the
   shell running the command and kills it halfway through.
-- **Don't promise audio.** Claude can't hear. Numbers about audio (loudness, silence) are
+- **Don't promise audio.** The review sends no audio. Numbers about audio (loudness, silence) are
   possible later, but "does it sound right" isn't.
 - **Synthetic test data has to look like the real thing.** The first cut test used
   "motion" that changed every preview pixel each frame, which real footage at 4 fps
@@ -115,7 +128,8 @@ These all happened (or nearly did) while building the COSMIC side:
 
 ## The macOS version
 
-Built as planned below. `video_window` uses `sensors.front_window(pid)` (first layer-0
+The following describes the original build recorded on 2026-10-07, not a new
+verification of the current platform or deployment target. Built as planned below. `video_window` uses `sensors.front_window(pid)` (first layer-0
 window of the frontmost app, front to back); `video_frame` uses `CGWindowListCreateImage`
 (still works on macOS 27, ~16 ms a grab) and falls back to `screencapture -l <id>` if it
 ever stops returning frames. `flippy/video.py` is used as is.
@@ -177,9 +191,10 @@ flippy-ask video start
 flippy-ask video ask "where are the cuts, and are they clean?"
 ```
 
-The log (`~/Library/Logs/flippy.log`) shows the answer. `flippy-events.jsonl` shows
-`video_start` / `video_stop` (with seconds and frames) / `video_ask`. A generated test
-clip with known cuts:
+The original build logged the answer. Current default diagnostics contain metadata
+only, without questions, answers or frames. Observe the answer in the card.
+`flippy-events.jsonl` records allowlisted event metadata; detailed recording requires
+an explicit process option. A generated test clip with known cuts:
 
 ```
 ffmpeg -f lavfi -i testsrc2=size=960x540:rate=30:duration=5 -f lavfi -i smptebars=size=960x540:rate=30:duration=5 \
@@ -189,20 +204,20 @@ ffmpeg -f lavfi -i testsrc2=size=960x540:rate=30:duration=5 -f lavfi -i smptebar
 
 ## Merging the two
 
-Done (steps 1-3): `Flippy` owns `self.video` and routes `video …`; COSMIC's `_route`
-stopgap is gone. Step 4 is still open:
+The historical routing merge gave `Flippy` one `video.Review` and removed the
+COSMIC routing stopgap. The current integration also removes direct SDK calls
+from video review: `video.ask` delegates to `Brain.ask` with ordered extra images.
+Recording and inference acquire request ownership before capture; the final
+screen uses the shared frame pipeline. Late callbacks from canceled requests
+cannot update a newer request's playback.
 
-1. `Flippy.__init__`: `self.video = video.Review(self)` (import `video` with the other
-   modules).
-2. `Flippy.command`: `elif cmd == "video" or cmd.startswith("video "): return
-   self.video.command(cmd)`, guarded with `hasattr(self.ui, "video_window")` →
-   `NOT_HERE`, like the other platform features.
-3. Remove `Platform._route` (and its uses in `listen` and `start`) and the
-   `self.video = Review(...)` line from `flippy/linux/ui.py`.
-4. Optionally move `Review`'s use of the controller's private methods into a public
-   `Flippy.ask_with(...)`, so the normal ask and video review share one path.
+`Review` still coordinates with the controller's capture and playback methods.
+This refactor does not claim that its entire controller interface is public.
 
 ## What was tested
+
+These are the original 2026-10-07 results, retained for provenance. They do not
+verify the current merged app, supported macOS versions or live Codex behavior.
 
 - `tests/test_video.py`: preview detection, cuts, frame picking, command parsing.
 - Live on COSMIC (Pop!_OS 24.04, cosmic-comp, Opus 5.5 at low effort): the generated clip
