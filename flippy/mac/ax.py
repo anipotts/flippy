@@ -91,17 +91,25 @@ def _short(value):
 
 # ---- which app
 
+def _running():
+    """Every running app. Read from NSWorkspace's list: NSRunningApplication's lookups by pid or bundle id, called
+    from the task's worker thread, returned nothing for an app launched moments earlier (a task stopped with
+    "Spotify quit" while Spotify ran under exactly that pid), while this list had it."""
+    return [a for a in AppKit.NSWorkspace.sharedWorkspace().runningApplications() if not a.isTerminated()]
+
+
 def running_app(pid):
-    app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
-    return app if app is not None and not app.isTerminated() else None
+    return next((a for a in _running() if a.processIdentifier() == pid), None)
 
 
 def _relaunched(bundle, old_pid):
     """The same app under a new process (it restarted, or swapped processes), or None if it's really gone."""
     if not bundle:
         return None
-    apps = [a for a in AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_(bundle) or []
-            if not a.isTerminated() and a.activationPolicy() == AppKit.NSApplicationActivationPolicyRegular]
+    apps = [a for a in _running() if str(a.bundleIdentifier() or "") == bundle
+            and a.activationPolicy() == AppKit.NSApplicationActivationPolicyRegular]
+    if any(a.processIdentifier() == old_pid for a in apps):
+        return old_pid
     return apps[0].processIdentifier() if apps else None
 
 

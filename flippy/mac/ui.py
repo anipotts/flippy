@@ -1284,7 +1284,8 @@ class Platform:
 
     def app_name(self, bundle_id, pid):
         """The app's display name for approval cards ("Notes"), or None."""
-        app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid) if type(pid) is int else None
+        from . import ax
+        app = ax.running_app(pid) if type(pid) is int else None
         return str(app.localizedName()) if app is not None and app.localizedName() else None
 
     def key(self, combo, check=None):
