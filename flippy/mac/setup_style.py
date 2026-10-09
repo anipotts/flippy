@@ -7,7 +7,7 @@ from .widgets import label, target
 # Black, with white-ish gray outlines; buttons and cards have sharp corners.
 BACKGROUND = (0, 0, 0)
 SURFACE = (0, 0, 0)
-OUTLINE = (0.80, 0.80, 0.82)   # buttons, cards, keycaps
+OUTLINE = (0.50, 0.50, 0.52)   # buttons, cards, keycaps
 BORDER = (0.22, 0.22, 0.23)    # dividers
 PRESSED = (0.16, 0.16, 0.17)
 TEXT = (0.94, 0.945, 0.95)
@@ -21,6 +21,22 @@ def color(rgb):
 class Canvas(NSView):
     def isFlipped(self):
         return True
+
+
+class Diamond(Canvas):
+    """A rhombus outline (the section numbers sit inside one)."""
+    def drawRect_(self, rect):
+        from AppKit import NSBezierPath
+        w, h = self.bounds().size.width, self.bounds().size.height
+        path = NSBezierPath.bezierPath()
+        path.moveToPoint_((w / 2, 0.5))
+        path.lineToPoint_((w - 0.5, h / 2))
+        path.lineToPoint_((w / 2, h - 0.5))
+        path.lineToPoint_((0.5, h / 2))
+        path.closePath()
+        path.setLineWidth_(1)
+        color(OUTLINE).setStroke()
+        path.stroke()
 
 
 def panel(width, height, surface=BACKGROUND, radius=0, outline=None):
@@ -79,6 +95,50 @@ def outline_popup(popup):
     return popup
 
 
+def flippy_mark(size):
+    """The pointing hand with its click lines in the setup's grays, no tile behind it (an NSImageView)."""
+    import math
+    import cairo
+    from AppKit import NSImageScaleProportionallyUpOrDown
+    from Foundation import NSData
+    from .. import themes
+    scale = 2  # Retina
+    rows = themes.HAND
+    px = int(size * scale / 1.5 / len(rows))  # the hand plus its click lines (a third of its height) fit
+    w, h = len(rows[0]) * px, len(rows) * px
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, int(size * scale), int(size * scale))
+    cr = cairo.Context(surface)
+    ox, oy = round((size * scale - w) / 2), round(size * scale - h - (size * scale - 1.38 * h) / 2)
+    cr.set_antialias(cairo.ANTIALIAS_NONE)
+    for r, row in enumerate(rows):
+        for c, ch in enumerate(row):
+            if ch != " ":
+                cr.set_source_rgb(*(OUTLINE if ch == "#" else TEXT))
+                cr.rectangle(ox + c * px, oy + r * px, px, px)
+                cr.fill()
+    cr.set_antialias(cairo.ANTIALIAS_DEFAULT)
+    tip_x, tip_y = ox + (themes.HAND_TIP_COL + 0.5) * px, oy
+    start, length = 0.15 * h, 0.19 * h
+    cr.set_source_rgb(*MUTED)
+    cr.set_line_width(0.075 * h)
+    cr.set_line_cap(cairo.LINE_CAP_ROUND)
+    for a in (-90, -130, -50, -165, -15):
+        r = math.radians(a)
+        cr.move_to(tip_x + start * math.cos(r), tip_y + start * math.sin(r))
+        cr.line_to(tip_x + (start + length) * math.cos(r), tip_y + (start + length) * math.sin(r))
+    cr.stroke()
+    chunks = []
+    surface.write_to_png(type("Sink", (), {"write": lambda self, b: chunks.append(b) or len(b)})())
+    data = b"".join(chunks)
+    image = NSImage.alloc().initWithData_(NSData.dataWithBytes_length_(data, len(data)))
+    image.setSize_((size, size))
+    view = NSImageView.alloc().initWithFrame_(NSMakeRect(0, 0, size, size))
+    view.setImage_(image)
+    view.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+    view.setAccessibilityLabel_("Flippy")
+    return view
+
+
 def place(parent, view, x, y, width=None, height=None):
     frame = view.frame()
     view.setFrame_(NSMakeRect(x, y, width or frame.size.width, height or frame.size.height))
@@ -108,9 +168,10 @@ def symbol(name, description, size=22):
 
 
 def section(parent, number, title, subtitle, y, width):
-    circle = panel(26, 26, SURFACE, 13, outline=OUTLINE)
-    text(circle, str(number), 9, 4, 14, 13, bold=True)
-    place(parent, circle, 24, y)
+    diamond = Diamond.alloc().initWithFrame_(NSMakeRect(0, 0, 30, 30))
+    digit = text(diamond, str(number), 0, 6, 30, 13, bold=True)
+    digit.setAlignment_(1)
+    place(parent, diamond, 22, y - 2)
     text(parent, title, 62, y - 1, width - 86, 16, bold=True)
     text(parent, subtitle, 62, y + 20, width - 86, 11, muted=True)
 

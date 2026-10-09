@@ -124,10 +124,7 @@ class SetupWindow:
         self.body.setAppearance_(NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua"))
         b = self.body
         installed = bool(APP and os.path.isdir(APP))
-        if installed:
-            icon = app_icon(APP)
-            icon.setImageScaling_(NSImageScaleProportionallyUpOrDown)
-            style.place(b, icon, 20, 16, 60, 60)
+        style.place(b, style.flippy_mark(60), 20, 16, 60, 60)
         style.text(b, "Hi, I'm Flippy.", 96, 22, 420, 25, bold=True)
         style.text(b, "Ask about anything on your screen. I'll point it out.", 96, 55, 420, 12, muted=True)
         style.rule(b, 88, WIDTH - 48)
