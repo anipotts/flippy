@@ -149,7 +149,8 @@ class SetupWindow:
         card = style.card(WIDTH - 48, 62)
         style.place(b, card, 24, 348)
         if installed:
-            buddy = app_icon(APP)
+            buddy = app_icon(APP)  # still drags the real app into Settings; only its look matches the setup
+            buddy.setImage_(style.flippy_mark(48).image())
             buddy.setImageScaling_(NSImageScaleProportionallyUpOrDown)
             style.place(card, buddy, 8, 7, 48, 48)
             style.text(card, os.path.basename(APP), 66, 12, 235, 12, bold=True)
