@@ -141,6 +141,17 @@ class TestTools(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.tools.cleanup_failed)
         self.assertTrue(self.tools.cancel.is_set())
 
+    async def test_acting_before_a_screenshot_is_refused_without_ending_the_task(self):
+        result = await self.tools.invoke("key", {"combo": "return", "reason": "press"})
+        self.assertTrue(result["is_error"])
+        self.assertFalse(self.tools.cancel.is_set())
+        self.assertIsNone(self.tools.failure)
+        self.assertEqual(self.tools.actions, 0)
+        await self.tools.invoke("screenshot", {})  # then it looks, and can go on
+        result = await self.tools.invoke("key", {"combo": "return", "reason": "press"})
+        self.assertNotIn("is_error", result)
+        self.assertEqual(self.tools.actions, 1)
+
     async def test_held_input_is_its_own_reason_not_a_cleanup_failure(self):
         from flippy.actions import InputHeldError
         await self.tools.invoke("screenshot", {})

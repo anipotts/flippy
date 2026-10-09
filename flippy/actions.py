@@ -142,7 +142,10 @@ class DesktopTools:
                     self._validate(name, args)
                 if name != "screenshot":
                     if self.snapshot is None:
-                        raise ActionError("Take a screenshot before acting.")
+                        # Nothing was done, so this isn't a reason to end the task: Claude asked to act before
+                        # (or alongside) its first screenshot. Tell it, and let it look first.
+                        return {"content": [{"type": "text", "text": "No input was made. Take a screenshot first, "
+                                             "then act on what it shows."}], "is_error": True}
                     if self.actions >= self.max_actions:
                         raise ActionError("Action limit reached. Start a new /act request to continue.")
                     self._validate(name, args)
