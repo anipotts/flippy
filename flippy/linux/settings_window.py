@@ -240,13 +240,24 @@ class SettingsWindow(Adw.PreferencesWindow):
         return page
 
     def _claude(self, on_reset):
-        page = Adw.PreferencesPage(title="Claude", icon_name="dialog-information-symbolic")
-        g = Adw.PreferencesGroup(title="Model", description="Changes apply from your next question (it starts a fresh session).")
+        page = Adw.PreferencesPage(title="Models", icon_name="dialog-information-symbolic")
+        connection = Adw.PreferencesGroup(title="Connection", description="Uses your signed-in subscription. Changing connections starts a fresh session.")
+        connection.add(combo_row("Provider", None, "provider", "mode", settings.options("provider", "mode")))
+        page.add(connection)
+        g = Adw.PreferencesGroup(title="Claude", description="Model and effort apply when Claude is selected.")
         g.add(combo_row("Model", None, "claude", "model", MODELS))
         g.add(combo_row("Effort", "Higher thinks more carefully but answers slower", "claude", "effort", EFFORTS))
         g.add(combo_row("Screenshot detail", "Sharper helps with tiny icons but uses more of your plan",
                         "claude", "image", IMAGES))
         page.add(g)
+        codex = Adw.PreferencesGroup(title="Codex / ChatGPT", description="Uses the Codex sign-in. Model and effort apply when Codex is selected.")
+        model = Adw.EntryRow(title="Model (default uses the account model)")
+        model.set_text(settings.get("codex", "model"))
+        model.set_show_apply_button(True)
+        model.connect("apply", self._codex_model_changed)
+        codex.add(model)
+        codex.add(combo_row("Effort", None, "codex", "effort", settings.options("codex", "effort")))
+        page.add(codex)
         g = Adw.PreferencesGroup(title="Session")
         g.add(button_row("Start fresh session", "Forget the conversation so far", "Reset", on_reset))
         page.add(g)
@@ -257,7 +268,11 @@ class SettingsWindow(Adw.PreferencesWindow):
         page.add(g)
         return page
 
-
+    def _codex_model_changed(self, row):
+        try:
+            settings.set("codex", "model", row.get_text().strip())
+        except ValueError:
+            row.set_text(settings.get("codex", "model"))
 
     def _actions(self):
         page = Adw.PreferencesPage(title="Automation", icon_name="input-mouse-symbolic")
