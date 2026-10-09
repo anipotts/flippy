@@ -148,6 +148,7 @@ class Flippy:
                                "root": os.path.realpath(os.path.dirname(os.path.dirname(__file__))),
                                "pid": os.getpid(), "app": os.environ.get("FLIPPY_APP"),
                                "busy": self.busy, "input_disabled": self.input_disabled,
+                               "last_action": getattr(self, "last_action", None),
                                "permissions": self.ui.permission_state() if hasattr(self.ui, "permission_state") else {}})
         if cmd.startswith("quit-owned "):
             if os.path.realpath(cmd[11:]) != os.path.realpath(os.path.dirname(os.path.dirname(__file__))):
@@ -504,10 +505,39 @@ class Flippy:
     def _action_done(self, tools, req, result, error):
         if not self._owns(req) or self.action_tools is not tools:
             return
+        failure = (tools.failure or "").lower()
+        stopped = bool(error or tools.failure)
+        reason = "operation_failed" if stopped else "none"
+        if "screen changed" in failure:
+            reason = "pixels_changed"
+        elif "foreground" in failure:
+            reason = "target_changed"
+        elif "capture" in failure:
+            reason = "capture_failed"
+        elif "declined" in failure:
+            reason = "declined"
+        elif tools.cleanup_failed or "cleanup" in failure or "release" in failure:
+            reason = "cleanup_failed"
+        elif "accessibility" in failure or "permission" in failure:
+            reason = "permission"
+        self.last_action = {"request_id": req.identity, "completed_inputs": tools.actions,
+                            "stopped": stopped, "cleanup_failed": tools.cleanup_failed,
+                            "reason_code": reason}
+        event("action_result", request_id=req.identity, count=tools.actions,
+              outcome="stopped" if stopped else "completed", reason_code=reason)
         self.action_tools = self.action_future = None
         self.ui.action_card.hide()
-        if error:
-            self._fail("Desktop task stopped or timed out. Check the screen before continuing.")
+        if stopped:
+            messages = {
+                "pixels_changed": "The screen changed while approval was pending.",
+                "target_changed": "The foreground window or display changed.",
+                "capture_failed": "Could not capture the screen.",
+                "declined": "Action declined.",
+                "cleanup_failed": "Input release could not be confirmed. Restart Flippy before acting again.",
+                "permission": "Check macOS Screen Recording and Accessibility permissions.",
+                "operation_failed": "The operation failed or timed out.",
+            }
+            self._fail("Desktop task stopped: " + messages[reason] + " Check the screen before continuing.")
         else:
             self.overlay.show_text(result)
             self._schedule_fade(settings.get("timing", "max_show_seconds"))
