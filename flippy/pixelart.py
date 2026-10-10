@@ -4,7 +4,9 @@ Two ways to draw: pixel art on the GRID_W x GRID_H grid (cells), or smooth (a no
 strokes on a canvas RES times finer than the grid). Either way the tip (hotspot) is a grid cell, and the
 pointer shows at the same size.
 """
+import colorsys
 import math
+import re
 
 import cairo
 
@@ -28,6 +30,45 @@ def checker(cr, x, y, w, h, sq=6):
             if (i + j) % 2:
                 cr.rectangle(x + i * sq, y + j * sq, min(sq, w - i * sq), min(sq, h - j * sq))
     cr.fill()
+
+
+def to_hex(rgb):
+    return "#" + "".join(f"{round(max(0, min(c, 1)) * 255):02X}" for c in rgb)
+
+
+def from_hex(text):
+    """'#RGB', '#RRGGBB' or without the # -> (r, g, b) 0-1, else None."""
+    text = text.strip().lstrip("#")
+    if re.fullmatch(r"[0-9a-fA-F]{3}", text):
+        text = "".join(c * 2 for c in text)
+    if not re.fullmatch(r"[0-9a-fA-F]{6}", text):
+        return None
+    return tuple(int(text[i:i + 2], 16) / 255 for i in (0, 2, 4))
+
+
+# ---- the editor's color sliders: hue / saturation / brightness, or red / green / blue in whole 0-255 steps
+def slide(mode, channel, frac, rgb, hsv):
+    """Slider `channel` moved to frac (0-1): the new (rgb, hsv). In HSB the hue and saturation stay where they were
+    set even at black or gray, where the color alone would lose them."""
+    frac = max(0.0, min(frac, 1.0))
+    if mode == "rgb":
+        rgb = tuple(round(frac * 255) / 255 if k == channel else c for k, c in enumerate(rgb))
+        return rgb, colorsys.rgb_to_hsv(*rgb)
+    hsv = tuple(frac if k == channel else c for k, c in enumerate(hsv))
+    return colorsys.hsv_to_rgb(*hsv), hsv
+
+
+def slider_at(mode, channel, rgb, hsv):
+    """Where slider `channel`'s knob sits, 0-1."""
+    return rgb[channel] if mode == "rgb" else hsv[channel]
+
+
+def slider_texts(mode, rgb, hsv):
+    """The values shown beside the sliders: "0".."255", or "360°", "100%", "100%"."""
+    if mode == "rgb":
+        return [str(round(c * 255)) for c in rgb]
+    h, s, v = hsv
+    return [f"{round(h * 360)}°", f"{round(s * 100)}%", f"{round(v * 100)}%"]
 
 
 def from_sprite(grid_rows, tip_col):

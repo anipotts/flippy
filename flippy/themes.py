@@ -917,8 +917,12 @@ class Y2K(Theme):
     def _w(self, card):
         return 400 if card.follow else 460
 
+    THINK_H = 34      # the LCD while thinking: a line of text and the visualizer
+
     def hit_regions(self, card, x, y, w, h, opts=None):
         P = self.PAD
+        if card.phase == "thinking":  # only the window buttons: there's nothing to play yet
+            return {"close": (x + w - 17, y + 8, 10, 10), "min": (x + w - 29, y + 8, 10, 10)}
         by = y + h - self.BTN_H - P + 4
         hits = {name: (x + P + i * 26, by, 23, 18) for i, name in enumerate(("prev", "play", "pause", "stop", "next"))}
         sx = x + P + 5 * 26 + 8
@@ -934,9 +938,6 @@ class Y2K(Theme):
         px = opts["text_size"] + 4
         w = self._w(card) - 2 * self.PAD - 16
         rows = []
-        if card.phase == "thinking":
-            rows.append((layout(cr, "1. CONNECTING TO CLAUDE...", PIXEL_FONT, px), "current"))
-            return rows
         labels = card.steps or [card.header or ("ERROR" if card.error else "ANSWER")]
         cur = min(card.step, len(labels) - 1)
         first = max(0, cur - 3)
@@ -948,6 +949,8 @@ class Y2K(Theme):
         return rows
 
     def size(self, card, opts):
+        if card.phase == "thinking":
+            return self._w(card), 3 + self.TITLE_H + self.PAD + self.THINK_H + self.PAD + 3
         rows = self._playlist(_measure_ctx, card, opts)
         list_h = sum(lsize(r)[1] + (6 if k == "body" else 1) for r, k in rows) + 12
         return self._w(card), self.TITLE_H + self.LCD_H + list_h + self.BTN_H + self.PAD * 4
@@ -993,15 +996,15 @@ class Y2K(Theme):
             show(cr, gl, bx + 2, ty + 3, (0.05, 0.05, 0.08, 1))
         # LCD
         lx, ly, lw = x + P, ty + self.TITLE_H + P, w - 2 * P
+        if card.phase == "thinking":
+            self._thinking_lcd(cr, lx, ly, lw, card, t)
+            return
         cr.rectangle(lx, ly, lw, self.LCD_H)
         cr.set_source_rgb(0, 0, 0)
         cr.fill()
         bevel(cr, lx, ly, lw, self.LCD_H, self.METAL_LO, self.METAL_HI)
         n = max(len(card.steps), 1)
-        if card.phase == "thinking":
-            digits = "--/--"
-        else:
-            digits = f"{min(card.step + 1, 99):02d}/{min(n, 99):02d}"
+        digits = f"{min(card.step + 1, 99):02d}/{min(n, 99):02d}"
         play = self.LCD if not card.error else (1, 0.3, 0.25)
         cr.move_to(lx + 8, ly + 9)
         cr.line_to(lx + 8, ly + 21)
@@ -1010,27 +1013,14 @@ class Y2K(Theme):
         cr.set_source_rgb(*play)
         cr.fill()
         dw = seven_seg(cr, digits, lx + 22, ly + 6, 10, 20, play)
-        # visualizer
-        vx, vy, vh = lx + 30 + dw, ly + 6, 22
-        active = card.phase in ("thinking",) or card.typing
-        bars = 14
-        for i in range(bars):
-            amp = 0.85 if active else 0.25
-            v = 0.5 + 0.5 * math.sin(t * (5.0 + i * 0.7) + i * 1.3) * math.sin(t * 2.3 + i)
-            hgt = max(1, int(amp * v * (vh / 2)))
-            for b in range(hgt):
-                k = b / (vh / 2)
-                col = (0.0, 1.0, 0.3) if k < 0.5 else ((0.9, 1.0, 0.0) if k < 0.8 else (1.0, 0.25, 0.1))
-                cr.set_source_rgb(*col)
-                cr.rectangle(vx + i * 6, vy + vh - b * 2 - 2, 4, 1.5)
-                cr.fill()
+        self._visualizer(cr, lx + 30 + dw, ly + 6, 22, card.typing, t)
         meta = layout(cr, card.meta or "CLAUDE", PIXEL_FONT, 15)
         mw = lsize(meta)[0]
         show(cr, meta, lx + lw - mw - 8, ly + 4, (*self.LCD, 0.9))
         stereo = layout(cr, f"SPEED {card.speed:g}X", PIXEL_FONT, 13)
         show(cr, stereo, lx + lw - lsize(stereo)[0] - 8, ly + 18, (*self.LCD, 0.45))
         # marquee
-        label = card.header or ("CONNECTING..." if card.phase == "thinking" else "FLIPPY - ANSWER")
+        label = card.header or "FLIPPY - ANSWER"
         mq = layout(cr, f"♪ {card.step + 1}. {label.upper()}   ***   ", PIXEL_FONT, 17)
         mqw, mqh = lsize(mq)
         cr.save()
@@ -1049,16 +1039,12 @@ class Y2K(Theme):
         cr.fill()
         bevel(cr, px_, py_, lw, list_h, self.METAL_LO, self.METAL_HI)
         ry = py_ + 6
-        blink_on = int(t * 2) % 2 == 0
         for lay, kind in rows:
             rw, rh = lsize(lay)
             if kind == "current":
                 cr.rectangle(px_ + 3, ry - 1, lw - 6, rh + 2)
                 cr.set_source_rgb(*((0.45, 0.06, 0.05) if card.error else self.HL))
                 cr.fill()
-                if card.phase == "thinking" and not blink_on:
-                    ry += rh + 1
-                    continue
                 show(cr, lay, px_ + 8, ry, (1, 1, 1, 1))
             elif kind == "past":
                 show(cr, lay, px_ + 8, ry, (*self.LIST, 0.55))
@@ -1119,6 +1105,36 @@ class Y2K(Theme):
         cr.fill()
         bevel(cr, thx, by + 2, 14, 14, (0.97, 0.97, 1.0), (0.1, 0.1, 0.14))
 
+    @staticmethod
+    def _visualizer(cr, vx, vy, vh, active, t):
+        """The spectrum bars: busy while text comes in (or Flippy thinks), idling otherwise."""
+        for i in range(14):
+            amp = 0.85 if active else 0.25
+            v = 0.5 + 0.5 * math.sin(t * (5.0 + i * 0.7) + i * 1.3) * math.sin(t * 2.3 + i)
+            hgt = max(1, int(amp * v * (vh / 2)))
+            for b in range(hgt):
+                k = b / (vh / 2)
+                col = (0.0, 1.0, 0.3) if k < 0.5 else ((0.9, 1.0, 0.0) if k < 0.8 else (1.0, 0.25, 0.1))
+                cr.set_source_rgb(*col)
+                cr.rectangle(vx + i * 6, vy + vh - b * 2 - 2, 4, 1.5)
+                cr.fill()
+
+    def _thinking_lcd(self, cr, lx, ly, lw, card, t):
+        """While Flippy thinks: a short LCD with the card's text (thinking…) and the visualizer going."""
+        h = self.THINK_H
+        cr.rectangle(lx, ly, lw, h)
+        cr.set_source_rgb(0, 0, 0)
+        cr.fill()
+        bevel(cr, lx, ly, lw, h, self.METAL_LO, self.METAL_HI)
+        text = layout(cr, (card.text or "thinking…").upper(), PIXEL_FONT, 20)
+        tw_, th_ = lsize(text)
+        show(cr, text, lx + 10, ly + (h - th_) / 2, (*self.LCD, 1))
+        if int(t * 2.5) % 2:  # a blinking block cursor after it
+            cr.rectangle(lx + 12 + tw_, ly + h / 2 - 7, 8, 14)
+            cr.set_source_rgb(*self.LCD)
+            cr.fill()
+        self._visualizer(cr, lx + lw - 14 * 6 - 8, ly + 6, h - 12, True, t)
+
     def box_css(self):
         return f"""
 window.flippy-box .flippy-card {{ background: linear-gradient(#454959, #22252f); border-radius: 2px;
@@ -1167,8 +1183,11 @@ class MediaPlayer(Theme):
             x, w = x + 4, w - 8
         G = self._geom(x, y, w, h)
         cy, ox, bx = G["cy"], G["ox"], G["bx"]
+        window = {"min": (bx, y + 5, 21, 15), "max": (bx + 22, y + 5, 21, 15), "close": (bx + 44, y + 5, 24, 15)}
+        if card.phase == "thinking":  # only the window buttons: there's nothing to play yet
+            return window
         hits = {
-            "min": (bx, y + 5, 21, 15), "max": (bx + 22, y + 5, 21, 15), "close": (bx + 44, y + 5, 24, 15),
+            **window,
             "stop": (ox - 92, cy - 9, 22, 18),
             "prev": (ox - 62, cy - 11, 42, 22), "next": (ox + 20, cy - 11, 42, 22),
             "toggle": (ox - 18, cy - 18, 36, 36),
@@ -1180,6 +1199,8 @@ class MediaPlayer(Theme):
 
     def size(self, card, opts):
         _, bh = lsize(self._body(_measure_ctx, card, opts))
+        if card.phase == "thinking":  # the title bar and the text: no controls yet
+            return self._w(card), self.TITLE_H + bh + 30
         return self._w(card), self.TITLE_H + bh + 26 + self.CTRL_H + 8
 
     @staticmethod
@@ -1201,7 +1222,7 @@ class MediaPlayer(Theme):
         cr.set_source_rgba(1, 1, 1, hi * 0.35)
         cr.fill()
 
-    def _liquid(self, cr, x, y, w, h, a, gloss=True):
+    def _liquid(self, cr, x, y, w, h, a, gloss=True, controls=True):
         """Over a real glass backdrop: just light, no body. WMP 11-style gloss on the title and controls bars
         (lighter top half, crisp edge, a bright line on top) and a rim around the glass."""
         R = self.LIQUID_R
@@ -1214,7 +1235,7 @@ class MediaPlayer(Theme):
         g.add_color_stop_rgba(1, 0, 0.05, 0.08, 0.07 * a)
         cr.set_source(g)
         cr.paint()
-        bars = ((y, self.TITLE_H + 2), (y + h - self.CTRL_H - 10, self.CTRL_H + 10)) if gloss else ()
+        bars = ((y, self.TITLE_H + 2),) + ((y + h - self.CTRL_H - 10, self.CTRL_H + 10),) * controls if gloss else ()
         for by, bh in bars:  # title bar, controls bar
             half = bh * 0.5
             g = cairo.LinearGradient(0, by, 0, by + half)
@@ -1249,7 +1270,8 @@ class MediaPlayer(Theme):
         a = opts["card_opacity"]
         liquid = opts.get("backdrop")
         if liquid:
-            self._liquid(cr, x, y, w, h, a, gloss=opts.get("player_shine", "wmp") == "wmp")
+            self._liquid(cr, x, y, w, h, a, gloss=opts.get("player_shine", "wmp") == "wmp",
+                         controls=card.phase != "thinking")
         else:
             self._classic(cr, x, y, w, h, a)
         self._chrome(cr, x, y, w, h, card, t, opts, opts.get("pressed"), liquid)
@@ -1314,8 +1336,7 @@ class MediaPlayer(Theme):
         cr.close_path()
         cr.set_source_rgb(1, 1, 1)
         cr.fill()
-        title = card.header or ("Connecting to Claude…" if card.phase == "thinking" else
-                                ("Error" if card.error else "Flippy"))
+        title = card.header or ("Error" if card.error else "Flippy")
         tl = layout(cr, title, self.font, 13, width=w - 120)
         ellipsize_end(tl)
         halo = ((0, 1, 0.7), (1, 0, 0.45), (-1, 0, 0.45), (0, -1, 0.3)) if liquid else ((0, 1, 0.55), (1, 0, 0.25), (-1, 0, 0.25))
@@ -1370,6 +1391,8 @@ class MediaPlayer(Theme):
         for dx, dy in ((1, 1), (0, 1), (1, 0), (-1, 0), (0, -1)):
             show(cr, body, px + 12 + dx, py + 8 + dy, (0, 0, 0, 0.55))
         show(cr, body, px + 12, py + 8, (1.0, 0.62, 0.58, 1) if card.error else (0.97, 0.99, 1.0, 1))
+        if card.phase == "thinking":  # no seek line or controls until there's an answer
+            return
 
         # seek line with a tick per walkthrough step and a glowing nub
         sy = y + h - self.CTRL_H - 4
@@ -1395,7 +1418,7 @@ class MediaPlayer(Theme):
 
         # controls: counter, stop, prev|next pill, blue orb, volume
         cy = y + h - self.CTRL_H / 2 - 2
-        counter = "--/--" if card.phase == "thinking" else f"{card.step + 1} / {max(n, 1)}"
+        counter = f"{card.step + 1} / {max(n, 1)}"
         cl = layout(cr, counter, self.font, 12)
         self._label(cr, cl, x + 14, cy - lsize(cl)[1] / 2, (0.9, 0.95, 1.0, 0.95), liquid)
         ox = x + w / 2
@@ -1417,11 +1440,10 @@ class MediaPlayer(Theme):
                 cr.fill()
             cr.rectangle(bxx + d * 11 - (1 if d > 0 else 1), cy - 5, 2, 10)
             cr.fill()
-        # orb: glossy blue, pulses while thinking
-        pulse = (0.5 + 0.5 * math.sin(t * 5)) if card.phase == "thinking" else 0
+        # orb: glossy blue
         orb_r = 17
-        cr.arc(ox, cy, orb_r + 4 + 3 * pulse, 0, 2 * math.pi)
-        cr.set_source_rgba(0.3, 0.65, 1.0, 0.18 + 0.25 * pulse)
+        cr.arc(ox, cy, orb_r + 4, 0, 2 * math.pi)
+        cr.set_source_rgba(0.3, 0.65, 1.0, 0.18)
         cr.fill()
         cr.arc(ox, cy, orb_r, 0, 2 * math.pi)
         g = cairo.RadialGradient(ox, cy + orb_r * 0.55, 1, ox, cy, orb_r)
@@ -1508,8 +1530,7 @@ class Glass(Theme):
         return 360 if card.follow else 440
 
     def _title(self, card):
-        return card.header or ("Connecting to Claude…" if card.phase == "thinking" else
-                               ("Something went wrong" if card.error else "Flippy"))
+        return card.header or ("Something went wrong" if card.error else "Flippy")
 
     def _layouts(self, cr, card, opts):
         w = self._w(card) - 2 * self.PAD
@@ -1520,6 +1541,8 @@ class Glass(Theme):
 
     def size(self, card, opts):
         head, body = self._layouts(_measure_ctx, card, opts)
+        if card.phase == "thinking":  # just the glass and the text: no title or controls yet
+            return self._w(card), self.PAD + lsize(body)[1] + self.PAD
         h = self.PAD + lsize(head)[1] + 3 + lsize(body)[1] + 14 + self.BAR_H + 8 + self.CTRL_H + 12
         return self._w(card), h
 
@@ -1530,6 +1553,8 @@ class Glass(Theme):
                 "speed": (x + self.PAD + self.BTN / 2, cy), "close": (x + w - self.PAD - self.BTN / 2, cy)}
 
     def hit_regions(self, card, x, y, w, h, opts=None):
+        if card.phase == "thinking":
+            return {}
         G = self._geom(x, y, w, h)
         cy, ox, b = G["cy"], G["ox"], self.BTN
         hits = {"prev": (ox - 78, cy - 20, 40, 40), "toggle": (ox - 22, cy - 22, 44, 44), "next": (ox + 38, cy - 20, 40, 40),
@@ -1581,6 +1606,9 @@ class Glass(Theme):
         cr.stroke()
 
         head, body = self._layouts(cr, card, opts)
+        if card.phase == "thinking":
+            show(cr, body, x + P, y + P, (1, 1, 1, 0.9))
+            return
         ty = y + P
         show(cr, head, x + P, ty, (1.0, 0.6, 0.56, 1) if card.error else (1, 1, 1, 0.96))
         ty += lsize(head)[1] + 3
@@ -1590,8 +1618,8 @@ class Glass(Theme):
         n = max(len(card.steps), 1)
         # progress: step counter, thin bar, steps left
         by = G["by"]
-        left = "--" if card.phase == "thinking" else f"{card.step + 1} of {n}"
-        right = "" if card.phase == "thinking" else ("done" if card.finished else f"{n - card.step - 1} left")
+        left = f"{card.step + 1} of {n}"
+        right = "done" if card.finished else f"{n - card.step - 1} left"
         for text, rx, align in ((left, x + P, 0), (right, x + w - P, 1)):
             if text:
                 lay = layout(cr, text, self.font, 11)
@@ -1609,12 +1637,9 @@ class Glass(Theme):
 
         # transport: bare white glyphs, like the lock screen
         cy, ox = G["cy"], G["ox"]
-        thinking = card.phase == "thinking"
-        pulse = (0.5 + 0.5 * math.sin(t * 5)) if thinking else 0
         for name, gx, sz in (("prev", ox - 58, 8), ("next", ox + 58, 8)):
             glyph(cr, name, gx, cy, sz, (1, 1, 1, 1.0 if pressed == name else 0.85))
-        glyph(cr, "pause" if playing(card) else "play", ox, cy, 12,
-              (1, 1, 1, 0.55 + 0.45 * (1 - pulse) if thinking else (1.0 if pressed != "toggle" else 0.7)))
+        glyph(cr, "pause" if playing(card) else "play", ox, cy, 12, (1, 1, 1, 1.0 if pressed != "toggle" else 0.7))
         # round glass buttons: speed (left), close (right)
         sx, sy = G["speed"]
         self._glass_button(cr, sx, sy, self.BTN, pressed == "speed_cycle")

@@ -32,7 +32,9 @@ _names = {}
 
 
 def app_name(app_id):
-    """The app's display name from its .desktop file, else its id's last part."""
+    """The app's display name from its .desktop file, else its id's last part. The file is usually named after
+    the app id; when it isn't (gedit's window says "gedit", its file is org.gnome.gedit.desktop), it's the one
+    whose window class or executable is the app id."""
     if app_id not in _names:
         name = None
         for cand in (app_id, app_id.lower()):
@@ -43,6 +45,11 @@ def app_name(app_id):
             if info:
                 name = info.get_name()
                 break
+        if name is None:
+            want = app_id.lower()
+            name = next((a.get_name() for a in Gio.AppInfo.get_all() if isinstance(a, Gio.DesktopAppInfo)
+                         and want in ((a.get_startup_wm_class() or "").lower(),
+                                      (a.get_executable() or "").rsplit("/", 1)[-1].lower())), None)
         _names[app_id] = name or app_id.rsplit(".", 1)[-1].replace("-", " ").title()
     return _names[app_id]
 

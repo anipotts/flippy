@@ -78,5 +78,39 @@ class TrayIcon(unittest.TestCase):
             self.assertTrue(any(data[i] for data in [maps[0][2]] for i in range(0, len(data), 4)))  # some alpha
 
 
+@unittest.skipUnless(LINUX, "Linux only")
+class Setup(unittest.TestCase):
+    """The setup window's words, worked out without a window (flippy/linux/setup_window.py)."""
+
+    def test_the_line_under_use(self):
+        from flippy.linux.setup_window import provider_prompt
+        text, bright, pick = provider_prompt("auto", True, True)
+        self.assertEqual(text, "Both are connected. Pick Claude or ChatGPT under Use to finish setup.")
+        self.assertTrue(bright and pick)
+        text, bright, pick = provider_prompt("codex", True, False)
+        self.assertEqual(text, "ChatGPT isn't connected yet. Connect it above, or pick the other.")
+        self.assertTrue(bright)
+        self.assertFalse(pick)
+        for args in (("auto", True, False), ("auto", False, False), ("claude", True, True)):
+            self.assertEqual(provider_prompt(*args), ("You can switch any time in Settings → Models.", False, False))
+
+    def test_keycaps_and_missing_shortcuts(self):
+        from flippy.linux.setup_window import accel_tokens, missing_text
+        self.assertEqual(accel_tokens("<Super><Shift>space"), ["Super", "Shift", "Space"])
+        self.assertEqual(accel_tokens("<Super>p"), ["Super", "P"])
+        self.assertEqual(missing_text([1, 3]), "Not in COSMIC yet: circle something, then ask (Super+Alt), "
+                                               "pause / resume a walkthrough (Super+P).")
+
+
+@unittest.skipUnless(LINUX, "Linux only")
+class Eyedropper(unittest.TestCase):
+    def test_the_portals_answer(self):
+        from flippy.linux.screenshot import picked_color
+        self.assertEqual(picked_color(0, {"color": (0.25, 1.2, -0.1)}), ((0.25, 1.0, 0.0), False))
+        self.assertEqual(picked_color(1, {}), (None, False))  # they pressed Esc
+        self.assertEqual(picked_color(2, {}), (None, True))   # the portal couldn't
+        self.assertEqual(picked_color(0, {}), (None, True))
+
+
 if __name__ == "__main__":
     unittest.main()

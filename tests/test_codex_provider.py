@@ -44,6 +44,10 @@ class FakeRPC:
                     "modelProvider": "openai", "model": "fixture-model", "instructionSources": []}
         if method == "mcpServerStatus/list":
             return {"data": self.inventory, "nextCursor": None}
+        if method == "model/list":
+            return {"data": [{"id": "fixture-old", "model": "fixture-old", "isDefault": False},
+                             {"id": "fixture-default", "model": "fixture-default", "isDefault": True}],
+                     "nextCursor": None}
         if method == "turn/start":
             self.turns.append(params)
             thread, turn = params["threadId"], f"turn{len(self.turns)}"
@@ -188,6 +192,22 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
             with patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}), patch.object(codex_provider, "CODEX_DIRS", (tmp,)):
                 self.assertEqual(codex_provider.codex_executable(), fake)
                 self.assertTrue(codex_provider.child_environment()["PATH"].startswith(tmp))
+
+    def test_codex_from_nvm_is_found_newest_node_first(self):
+        # Linux: npm i -g under nvm puts codex in ~/.nvm/versions/node/<v>/bin, never on a shortcut's PATH
+        from flippy import codex_provider
+        with tempfile.TemporaryDirectory() as home:
+            for v in ("v9.0.0", "v24.11.1", "v18.2.0"):
+                os.makedirs(os.path.join(home, ".nvm", "versions", "node", v, "bin"))
+            for v in ("v9.0.0", "v24.11.1"):
+                fake = os.path.join(home, ".nvm", "versions", "node", v, "bin", "codex")
+                with open(fake, "w") as f:
+                    f.write("#!/bin/sh\n")
+                os.chmod(fake, 0o755)
+            with patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "HOME": home}), \
+                    patch.object(codex_provider, "CODEX_DIRS", ()):
+                self.assertEqual(codex_provider.codex_executable(),
+                                 os.path.join(home, ".nvm", "versions", "node", "v24.11.1", "bin", "codex"))
 
     def test_newer_codex_versions_are_accepted(self):
         self.assertTrue(_new_enough("codex-cli 0.153.4"))
@@ -411,6 +431,16 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
         await self.provider.stop()
         self.assertEqual(self.provider.history, [])
         self.assertEqual(self.provider.partial, "")
+
+    async def test_default_means_codexs_default_not_a_model_left_in_the_users_config(self):
+        # ~/.codex/config.toml from an older Codex named gpt-5.1-codex-max, which ChatGPT accounts can't use
+        self.allow_fixture_turns()
+        await self.provider.ask("question", "screen", (100, 100))
+        self.assertEqual(self.rpc.threads[-1]["model"], "fixture-default")
+        await self.provider.stop()
+        self.provider.configure("chosen-model", "medium")  # a model picked in Settings is used as it is
+        await self.provider.ask("question", "screen", (100, 100))
+        self.assertEqual(self.rpc.threads[-1]["model"], "chosen-model")
 
     def test_memory_retention_is_bounded_and_configuration_clears_it(self):
         for _ in range(20):

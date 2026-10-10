@@ -515,7 +515,9 @@ class Flippy:
                              lambda name, args, shot, cancel: self._app_perform(name, args, shot, cancel, req),
                              max_actions=limits.max_actions, max_text=limits.max_text,
                              approval_mode=self.action_policy.mode,
-                             catalog=BACKGROUND_CATALOG, prompt=BACKGROUND_PROMPT + act_memory.brief())
+                             # a platform whose tools differ (COSMIC: no pointer-free clicks) brings its own
+                             catalog=getattr(self.ui, "act_catalog", BACKGROUND_CATALOG),
+                             prompt=getattr(self.ui, "act_prompt", BACKGROUND_PROMPT) + act_memory.brief())
         tools.max_turns = limits.max_turns
         self.action_tools = tools
         async def run():
@@ -547,6 +549,8 @@ class Flippy:
             + (" (real pointer)" if args.get("real_pointer") else ""))
         what = "needs the pointer for a moment, waiting for you to pause" if args.get("real_pointer") else \
             name.replace("_", " ")
+        if hasattr(self.ui, "act_borrow_note"):  # COSMIC: keys and clicks by position can need the window for a moment
+            what = self.ui.act_borrow_note(name, args) or what
         await self._action_main(lambda: self._acting(req, what), req)
         if name == "use_app":
             self.action_app = await asyncio.to_thread(self.ui.app_open, args["name"], cancel)

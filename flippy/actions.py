@@ -50,6 +50,13 @@ class InputHeldError(ActionError):
     code = "input_held"
 
 
+WAYLAND = "wayland"  # target[4] of a COSMIC target (flippy/linux/atspi.py): target[0] is a Wayland app id
+
+
+def wayland(target):
+    return isinstance(target, tuple) and len(target) >= 5 and target[4] == WAYLAND
+
+
 def app_id(target):
     """Canonical native identifier; unresolved app names cannot be remembered."""
     if not isinstance(target, tuple) or len(target) < 2:
@@ -58,6 +65,8 @@ def app_id(target):
     if not isinstance(app, str) or type(pid) is not int or pid <= 0:
         return None
     app = app.strip().lower()
+    if wayland(target):  # Wayland app ids are often dotted (org.gnome.TextEditor), not always (firefox, kitty)
+        return app if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", app) else None
     return app if re.fullmatch(r"[a-z0-9][a-z0-9._-]*\.[a-z0-9._-]+", app) else None
 
 
@@ -82,6 +91,23 @@ class ApprovalPolicy:
         "com.bitwarden.desktop", "org.keepassxc.keepassxc", "com.keepassxc.keepassxc",
         "com.dashlane.dashlane", "com.enpass.enpass", "com.lastpass.lastpass",
     })
+    # COSMIC targets (Wayland app ids, lowercased): terminals, settings, browsers, password managers, and the
+    # windows that ask for passwords or install software
+    LINUX_SENSITIVE = frozenset({
+        "com.system76.cosmicterm", "org.gnome.ptyxis", "org.gnome.console", "org.gnome.terminal", "kitty",
+        "alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "foot", "footclient", "org.kde.konsole",
+        "com.gexperts.tilix", "xterm", "com.raggesilver.blackbox", "io.elementary.terminal",
+        "com.system76.cosmicsettings", "org.gnome.settings", "gnome-control-center", "com.system76.cosmicstore",
+        "io.elementary.appcenter", "org.gnome.software", "com.system76.cosmicosd", "gcr-prompter",
+        "org.gnome.seahorse.application", "polkit-gnome-authentication-agent-1",
+        "firefox", "org.mozilla.firefox", "google-chrome", "com.google.chrome", "chromium", "chromium-browser",
+        "org.chromium.chromium", "brave-browser", "com.brave.browser", "microsoft-edge", "vivaldi-stable",
+        "app.zen_browser.zen", "librewolf", "io.gitlab.librewolf-community", "org.gnome.epiphany",
+        "org.keepassxc.keepassxc", "com.bitwarden.desktop", "1password", "com.onepassword.onepassword",
+    })
+    LINUX_WORDS = ("term", "console", "konsole", "kitty", "alacritty", "ghostty", "settings", "polkit", "keyring",
+                   "seahorse", "prompter", "browser", "zen", "brave", "edge", "librewolf", "epiphany", "store",
+                   "software", "appcenter")
 
     def __init__(self, mode="per_app"):
         if mode not in self.MODES:
@@ -93,6 +119,9 @@ class ApprovalPolicy:
     def sensitive(target):
         app = app_id(target)
         if app is None:
+            return True
+        if wayland(target) and (app in ApprovalPolicy.LINUX_SENSITIVE
+                                or any(word in app for word in ApprovalPolicy.LINUX_WORDS)):
             return True
         return (app in ApprovalPolicy.SENSITIVE
                 or any(word in app for word in ("password", "keychain", "bitwarden", "1password", "onepassword",
@@ -294,8 +323,12 @@ class DesktopTools:
                 text.encode("utf-16-le")
             except UnicodeError:
                 raise ActionError("Invalid text.") from None
-        elif name == "key" and args["combo"] not in self.tool_catalog["key"]["schema"]["properties"]["combo"]["enum"]:
-            raise ActionError("Unsupported shortcut.")
+        elif name == "key":
+            combo = self.tool_catalog["key"]["schema"]["properties"]["combo"]
+            ok = (args["combo"] in combo["enum"] if "enum" in combo else  # COSMIC's catalog gives a pattern instead
+                  isinstance(args["combo"], str) and re.fullmatch(combo["pattern"], args["combo"]) is not None)
+            if not ok:
+                raise ActionError("Unsupported shortcut.")
 
     def catalog(self):
         catalog = copy.deepcopy(self.tool_catalog)

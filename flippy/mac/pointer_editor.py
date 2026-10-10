@@ -5,7 +5,6 @@ shared (flippy/pixelart.py). On save they call on_saved(name).
 """
 import colorsys
 import math
-import re
 
 import cairo
 from AppKit import (NSAlert, NSApp, NSAppearance, NSBackingStoreBuffered, NSOpenPanel, NSTextField, NSWindow,
@@ -14,7 +13,7 @@ from Foundation import NSMakeRect
 from PIL import Image
 
 from .. import pointers
-from ..pixelart import BRUSHES, CELL, GRID_H, GRID_W, PALETTE, PixelArt, checker
+from ..pixelart import BRUSHES, CELL, GRID_H, GRID_W, PALETTE, PixelArt, checker, from_hex, to_hex
 from . import setup_style as style
 from .cairoview import cairo_view
 from .setup_style import button
@@ -44,20 +43,6 @@ def checkbox(title, on, fn, keep):
     lab.setFrameOrigin_((30, (22 - lab.frame().size.height) / 2))
     box.addSubview_(lab)
     return box
-
-
-def to_hex(rgb):
-    return "#" + "".join(f"{round(max(0, min(c, 1)) * 255):02X}" for c in rgb)
-
-
-def from_hex(text):
-    """'#RGB', '#RRGGBB' or without the # -> (r, g, b) 0-1, else None."""
-    text = text.strip().lstrip("#")
-    if re.fullmatch(r"[0-9a-fA-F]{3}", text):
-        text = "".join(c * 2 for c in text)
-    if not re.fullmatch(r"[0-9a-fA-F]{6}", text):
-        return None
-    return tuple(int(text[i:i + 2], 16) / 255 for i in (0, 2, 4))
 
 
 def _place(parent, view, x, y, w=None, h=None):

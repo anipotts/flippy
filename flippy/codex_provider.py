@@ -6,6 +6,7 @@ not an atomic promise that the next request cannot spend existing credits.
 """
 import asyncio
 import contextlib
+import glob
 import json
 import re
 import os
@@ -72,9 +73,21 @@ CODEX_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/.loca
               os.path.expanduser("~/.npm-global/bin"), os.path.expanduser("~/.volta/bin"), os.path.expanduser("~/.bun/bin"))
 
 
+def _node_version_dirs():
+    """bin dirs of Node versions installed with nvm or fnm, newest first: npm puts a global codex there, and
+    neither is on the PATH an app or a desktop shortcut gets."""
+    def version(path):
+        return tuple(int(n) for n in re.findall(r"\d+", os.path.basename(path.rstrip("/")))[:3])
+    found = []
+    for pattern, tail in ((os.path.expanduser("~/.nvm/versions/node/*"), "bin"),
+                          (os.path.expanduser("~/.local/share/fnm/node-versions/*"), "installation/bin")):
+        found += [os.path.join(d, tail) for d in sorted(glob.glob(pattern), key=version, reverse=True)]
+    return found
+
+
 def codex_executable():
     """The codex command: on PATH, or in the usual install places."""
-    return shutil.which("codex") or shutil.which("codex", path=os.pathsep.join(CODEX_DIRS))
+    return shutil.which("codex") or shutil.which("codex", path=os.pathsep.join([*CODEX_DIRS, *_node_version_dirs()]))
 
 
 def _search_path():
@@ -362,13 +375,23 @@ class CodexProvider:
             del effective
         self._isolated = True
 
+    async def _default_model(self):
+        """Codex's own default model for this account. Not leaving it to Codex: it would take the model named in
+        the user's ~/.codex/config.toml, and one left there from an older Codex (gpt-5.1-codex-max) is refused
+        for ChatGPT accounts, so every request failed. None if Codex can't say (then it does pick)."""
+        try:
+            models = (await self._rpc.request("model/list", {})).get("data", [])
+        except (CodexError, OSError, asyncio.TimeoutError):
+            return None
+        return next((m.get("model") or m.get("id") for m in models if m.get("isDefault")), None)
+
     async def _new_thread(self, instructions, desktop):
         tools = []
         if desktop:
             tools = [{"type": "function", "name": name, "description": spec["description"],
                       "inputSchema": spec["schema"]} for name, spec in desktop.catalog().items()]
         result = await self._rpc.request("thread/start", {
-            "model": self.model, "modelProvider": "openai", "allowProviderModelFallback": False,
+            "model": self.model or await self._default_model(), "modelProvider": "openai", "allowProviderModelFallback": False,
             "baseInstructions": instructions, "developerInstructions": "", "ephemeral": True,
             "dynamicTools": tools, "environments": [], "runtimeWorkspaceRoots": [],
             "selectedCapabilityRoots": [], "cwd": self._rpc.cwd,
