@@ -409,7 +409,8 @@ class Platform:
         return self.nudge.visible
 
     def press_nudge(self, title):
-        return self.nudge.press(title)
+        """Scripted demos: a button on the card on screen, a desktop task's approval card included."""
+        return self.nudge.press(title) or self.action_card.press(title)
 
     def show_update(self, rel, install, later):
         import subprocess

@@ -295,13 +295,24 @@ def _toplevel(conn, app_id, title=None):
 
 
 def front_app():
-    """(app id, name, handle) of the app in front, if it isn't Flippy."""
+    """(app id, name, handle) of the app in front, if it isn't Flippy. On COSMIC the question box is a window that
+    takes the focus (flippy/linux/ui.py InputBox), so /act typed there means the window that had it before."""
     conn = wl.connection()
-    tl = conn.active() if conn else None
-    if tl is None or not tl.app_id or tl.app_id == wl.SELF_APP_ID:
+    tl = before_flippy(conn.toplevels.values() if conn else ())
+    if tl is None:
         raise ActionError("Put the app you want Flippy to work in in front, then start /act again.")
     _, pid = _find(tl.app_id, tl.title)
     return tl.app_id, sensors.app_name(tl.app_id), _handle(tl.app_id, pid)
+
+
+def before_flippy(toplevels):
+    """The window in front, or, when that's one of Flippy's own, the one that had the focus last before it."""
+    tls = [t for t in toplevels if t.app_id]
+    active = next((t for t in tls if t.activated), None)
+    if active is not None and active.app_id != wl.SELF_APP_ID:
+        return active
+    others = [t for t in tls if t.app_id != wl.SELF_APP_ID and t.active_at]
+    return max(others, key=lambda t: t.active_at) if others else None
 
 
 def find_app(name):

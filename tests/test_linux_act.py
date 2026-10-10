@@ -44,6 +44,15 @@ class WhichApp(unittest.TestCase):
         self.assertEqual(self.atspi.match_app("org.gnome.Calculator", None, apps, ["gnome-calculator"]), 7)
         self.assertIsNone(self.atspi.match_app("org.gnome.Calculator", None, apps))  # no hint, no guess
 
+    def test_a_task_typed_in_the_question_box_starts_in_the_window_before_it(self):
+        # the box is a window of Flippy's own that takes the focus
+        tl = lambda app, active, at: SimpleNamespace(app_id=app, activated=active, active_at=at)  # noqa: E731
+        firefox, gedit, box = tl("firefox", False, 5.0), tl("gedit", False, 9.0), tl("dev.flippy.daemon", True, 10.0)
+        self.assertIs(self.atspi.before_flippy([firefox, gedit, box]), gedit)
+        gedit.activated, box.activated = True, False
+        self.assertIs(self.atspi.before_flippy([firefox, gedit, box]), gedit)
+        self.assertIsNone(self.atspi.before_flippy([box]))
+
     def test_nothing_matching_is_none(self):
         apps = [{"pid": 3, "name": "evolution-alarm-notify", "frames": [], "comm": "evolution-alar", "exe": ""}]
         self.assertIsNone(self.atspi.match_app("com.system76.CosmicEdit", "Untitled", apps))
