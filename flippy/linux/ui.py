@@ -15,6 +15,7 @@ is) comes from a second, private Wayland connection: flippy/linux/wl.py.
 
 Run via bin/flippy-daemon (sets LD_PRELOAD for gtk4-layer-shell).
 """
+import math
 import sys
 import threading
 import time
@@ -84,6 +85,7 @@ class Overlay(NoticeLayer, OverlayBase):
         self.win.connect("map", lambda w: w.get_surface().set_input_region(EMPTY_REGION))
         self.tick_id = 0
         self.region_key = None    # last input region we set, to avoid resetting it every frame
+        self.blur = None          # real glass behind the card (flippy/linux/blur.py), made on the first paint
         self.drag_start = (0, 0)
 
         drag = Gtk.GestureDrag(button=Gdk.BUTTON_PRIMARY)
@@ -95,6 +97,41 @@ class Overlay(NoticeLayer, OverlayBase):
         right.connect("pressed", lambda *a: self.right_click())
         self.win.add_controller(right)
         self.win.present()
+
+    def paint(self, cr, w, h):
+        """Real glass first, where the compositor can blur (flippy/linux/blur.py): the tint under the card and the glass
+        pointers, then everything else on top, drawn as for real glass (has_backdrop)."""
+        if self.blur is None:
+            from .blur import Blur
+            self.blur = Blur(self.win.get_display(), self.win.get_surface())
+            self.has_backdrop = self.blur.available
+        if self.has_backdrop:
+            self._glass(cr, w, h)
+        super().paint(cr, w, h)
+
+    def _glass(self, cr, w, h):
+        from .. import glass
+        shapes = []
+        lay = self.card_layout(w, h)
+        if lay and lay[1]["backdrop"]:
+            (x, y, cw, ch), bd = lay[0], self.theme.backdrop
+            themes.round_rect(cr, x, y, cw, ch, bd["radius"])
+            cr.set_source_rgba(*glass.card_tint(bd))
+            cr.fill()
+            shapes.append(("round", x, y, cw, ch, bd["radius"]))
+        lens = self.pointer_lens()
+        if lens:
+            cx, cy, r = lens
+            cr.arc(cx, cy, r, 0, 2 * math.pi)
+            cr.set_source_rgba(*glass.glass_rgba(glass.LENS["frost"], glass.LENS["smoke"]))
+            cr.fill()
+            shapes.append(("circle", cx, cy, r))
+        for piece in self.pointer_hand(h) or ():
+            themes._piece_path(cr, *piece)
+            cr.set_source_rgba(*glass.glass_rgba(glass.LENS["frost"], glass.LENS["smoke"]))
+            cr.fill()
+            shapes.append(("piece", *piece))
+        self.blur.set_shapes(shapes)
 
     def _drag_begin(self, gesture, x, y):
         self.drag_start = (x, y)
@@ -671,7 +708,7 @@ class Platform:
     def open_settings(self, on_preview, on_reset):
         if self.settings_win is None:
             self.settings_win = SettingsWindow(self.app, on_preview=on_preview, on_reset=on_reset,
-                                               command=self.command)
+                                               command=self.command, glass=self.overlay.has_backdrop)
             self.settings_win.connect("close-request", lambda w: setattr(self, "settings_win", None) or False)
         self.settings_win.present()
 

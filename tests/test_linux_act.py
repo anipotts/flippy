@@ -428,3 +428,29 @@ class RemotePointer(unittest.TestCase):
         with self.assertRaisesRegex(remote.Unavailable, "didn't allow"):
             rd.open()
         rd.closer.cancel()
+
+
+@unittest.skipUnless(LINUX, "Linux only")
+class GlassRegion(unittest.TestCase):
+    """flippy/linux/blur.py: the blur region (rectangles only) covers the rounded card, lens and hand, and no more."""
+
+    def covered(self, rects, x, y):
+        return any(rx <= x < rx + rw and ry <= y < ry + rh for rx, ry, rw, rh in rects)
+
+    def test_a_rounded_card_without_its_corners(self):
+        from flippy.linux import blur
+        rects = blur.strips([("round", 100, 50, 440, 120, 24)])
+        self.assertTrue(self.covered(rects, 320, 110))          # the middle
+        self.assertTrue(self.covered(rects, 101, 110))          # the left edge
+        self.assertFalse(self.covered(rects, 101, 51))          # the rounded-off corner
+        self.assertFalse(self.covered(rects, 320, 171))         # under it
+        self.assertLess(len(rects), 40)                          # the straight middle is one rect
+
+    def test_a_lens_and_a_tilted_hand_piece(self):
+        from flippy.linux import blur
+        lens = blur.strips([("circle", 300, 300, 22)])
+        self.assertTrue(self.covered(lens, 300, 300))
+        self.assertFalse(self.covered(lens, 280, 281))           # outside the circle, inside its box
+        piece = blur.strips([("piece", 0, 0, 10, 40, 3, 90)])    # stood on its side: 40 wide, 10 tall
+        self.assertTrue(self.covered(piece, -12, 20))
+        self.assertFalse(self.covered(piece, 5, 2))
