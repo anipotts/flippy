@@ -2,8 +2,10 @@
 
 An AI tutor that sits on top of your desktop. Press a hotkey, type a question about whatever's on screen, and Claude answers in a small card, with a pointer that flies to the exact button, menu or setting it's talking about.
 
-[![Install on macOS](https://img.shields.io/badge/Install_on-macOS-111?style=for-the-badge&logo=apple&logoColor=white)](#macos)
-[![Install on Linux (COSMIC)](https://img.shields.io/badge/Install_on-Linux_(COSMIC)-e95420?style=for-the-badge&logo=linux&logoColor=white)](#linux-cosmic)
+[![Download for macOS](https://img.shields.io/badge/Download_for-macOS_(.dmg)-111?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/kap-il/flippy/releases/latest/download/Flippy.dmg)
+[![Download for Linux (COSMIC)](https://img.shields.io/badge/Download_for-Linux_(.tar.gz)-e95420?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/kap-il/flippy/releases/latest/download/flippy-linux.tar.gz)
+
+Then follow [macOS](#macos) or [Linux](#linux-cosmic) below.
 
 Runs on **macOS** (13+, native AppKit) and on **Linux with COSMIC on Wayland** (Pop!_OS 24.04). Modeled on [farzaa/clicky](https://github.com/farzaa/clicky) (macOS), rewritten from scratch in Python. If you like what I made, Farza is the pioneer! go check out (and star his repo if you starred this) [heyclicky.com](https://www.heyclicky.com/)
 
@@ -32,7 +34,12 @@ curl -fsSL https://raw.githubusercontent.com/kap-il/flippy/main/install.sh | bas
 
 It downloads Flippy to `~/flippy` (set `FLIPPY_DIR` to put it elsewhere) and runs the right installer for your OS. Run it again any time to update. Prefer to look first? `git clone https://github.com/kap-il/flippy && cd flippy && ./install.sh` does the same.
 
-Or download your platform's copy from the [latest release](https://github.com/kap-il/flippy/releases/latest): `flippy-<version>-macos.tar.gz` or `flippy-<version>-linux.tar.gz`. Each has only the code that platform needs. Unpack it where you want Flippy to live and run `./install.sh` inside. Downloads update themselves from releases, like a git install does.
+Or download it (the buttons at the top):
+
+- **macOS:** [Flippy.dmg](https://github.com/kap-il/flippy/releases/latest/download/Flippy.dmg). Open it and double-click **Install Flippy**: it copies Flippy to `~/flippy` and runs the installer. Flippy isn't notarized, so the first time macOS may say it's from an unidentified developer. Open System Settings → Privacy & Security, click **Open Anyway**, and double-click it again.
+- **Linux:** [flippy-linux.tar.gz](https://github.com/kap-il/flippy/releases/latest/download/flippy-linux.tar.gz). Unpack it where you want Flippy to live and run `./install.sh` inside.
+
+Each has only the code that platform needs, and updates itself from releases, like a git install does. Every release also has versioned copies (`flippy-<version>-macos.tar.gz`, `flippy-<version>-linux.tar.gz`) on the [releases page](https://github.com/kap-il/flippy/releases/latest).
 
 ### macOS
 

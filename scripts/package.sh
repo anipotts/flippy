@@ -12,7 +12,7 @@ VERSION="$(git show "$REVISION:VERSION")"
 [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}([a-zA-Z0-9.-]*)?$ ]] || { echo "invalid VERSION" >&2; exit 1; }
 OUT="$ROOT/dist"
 mkdir -p "$OUT"
-COMMON=(':!tests' ':!scripts/release.sh' ':!scripts/package.sh' ':!.gitignore' ':!.codex' ':!script' ':!scripts/dev.sh' ':!scripts/doctor.py' ':!scripts/action_fixture.py')
+COMMON=(':!tests' ':!scripts/release.sh' ':!scripts/package.sh' ':!scripts/make_dmg.sh' ':!.gitignore' ':!.codex' ':!script' ':!scripts/dev.sh' ':!scripts/doctor.py' ':!scripts/action_fixture.py')
 MAC_ONLY=('flippy/mac' 'packaging/macos' 'scripts/install_mac.sh' 'scripts/build_mac.sh' 'requirements-mac.txt')
 LINUX_ONLY=('flippy/linux' 'scripts/install_linux.sh' 'requirements-linux.txt' 'docs/linux-port.md')
 
