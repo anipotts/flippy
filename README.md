@@ -169,6 +169,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `claude.effort` | `low`, `medium`, `high`, `max` |
 | `claude.image` | screenshot size sent to Claude: `1366`, `1920`, `0` (full) |
 | `look.theme` | `midnight`, `y2k`, `mediaplayer`, `glass`, `terminal`, `cosmic` |
+| `look.frosted` | `true` (default) or `false`: on COSMIC, real blur behind the Glass and Media Player panels; off, they're painted and `look.card_opacity` applies |
 | `look.player_shine` | `wmp` (gloss bars) or `none`: reflections on the Media Player theme's real glass (macOS, COSMIC) |
 | `look.pointer` | `theme`, `hand`, `ring`, `arrow`, `dot`, `glass` (Liquid Glass lens), `glasshand`, or `custom:<name>` |
 | `look.pointer_size`, `look.text_size`, `look.card_opacity` | numbers |

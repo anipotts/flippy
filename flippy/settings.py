@@ -37,6 +37,8 @@ DEFAULTS = {
         "glass_color": "smoke", # smoke | blue | purple | pink | red | orange | green | teal: the tint's color
         "controls": "all",      # all | players (playback controls on every theme, or only Media Player/Y2K)
         "player_shine": "wmp",  # wmp | none: gloss bars on the Media Player theme's Liquid Glass (macOS), or plain
+        "frosted": True,        # COSMIC: the compositor blurs behind the Glass and Media Player cards; off: painted
+                                # glass, and card_opacity applies to it like to the other themes
     },
     "timing": {
         "show_seconds": 8,      # answer stays at least this long after it finishes

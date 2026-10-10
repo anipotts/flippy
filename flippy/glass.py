@@ -8,7 +8,8 @@ SMOKE = {"card": 0.25}
 LENS = {"frost": 0.04, "smoke": 0.06}  # the glass pointer: nearly clear
 # the tint colors you can pick: deep shades, so white text reads
 TINTS = {"smoke": (0, 0, 0), "blue": (0.04, 0.18, 0.62), "purple": (0.30, 0.10, 0.62), "pink": (0.66, 0.10, 0.42),
-         "red": (0.66, 0.07, 0.08), "orange": (0.72, 0.30, 0.02), "green": (0.04, 0.44, 0.18)}
+         "red": (0.66, 0.07, 0.08), "orange": (0.72, 0.30, 0.02), "green": (0.04, 0.44, 0.18),
+         "teal": (0.02, 0.40, 0.46)}
 
 
 def glass_rgba(frost, smoke, rgb=(0, 0, 0)):

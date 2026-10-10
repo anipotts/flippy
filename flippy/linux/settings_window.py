@@ -168,7 +168,7 @@ class SettingsWindow(Gtk.Window):
              ("help", "Help"), ("hotkeys", "Hotkeys"))
 
     def __init__(self, app, on_preview, on_reset, command=lambda cmd: None, glass=False):
-        """glass: the overlay draws real Liquid Glass, so its tint and reflections settings apply."""
+        """glass: the compositor can blur behind the overlay (real glass), so Frosted glass, tint and reflections apply."""
         global _adw_ready
         if not _adw_ready:
             Adw.init()
@@ -305,6 +305,8 @@ class SettingsWindow(Gtk.Window):
         look.add(slider_row("Text size", "Answer text, in px", "look", "text_size"))
         look.add(slider_row("Panel opacity", None, "look", "card_opacity"))
         if self.glass:
+            look.add(check_row("Frosted glass", "COSMIC blurs what's behind the Glass and Media Player panels. Off: "
+                               "they're painted, and Panel opacity applies to them", "look", "frosted"))
             look.add(slider_row("Glass tint", "How tinted Liquid Glass is (Glass, Media Player, the ask box)",
                                 "look", "glass_tint"))
             look.add(combo_row("Tint color", None, "look", "glass_color", settings.options("look", "glass_color")))

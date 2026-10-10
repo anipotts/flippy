@@ -104,9 +104,11 @@ class Overlay(NoticeLayer, OverlayBase):
         if self.blur is None:
             from .blur import Blur
             self.blur = Blur(self.win.get_display(), self.win.get_surface())
-            self.has_backdrop = self.blur.available
+        self.has_backdrop = self.blur.available and settings.get("look", "frosted")
         if self.has_backdrop:
             self._glass(cr, w, h)
+        elif self.blur.available:
+            self.blur.set_shapes([])  # Frosted glass turned off: no blur anywhere
         super().paint(cr, w, h)
 
     def _glass(self, cr, w, h):
@@ -709,7 +711,8 @@ class Platform:
     def open_settings(self, on_preview, on_reset):
         if self.settings_win is None:
             self.settings_win = SettingsWindow(self.app, on_preview=on_preview, on_reset=on_reset,
-                                               command=self.command, glass=self.overlay.has_backdrop)
+                                               command=self.command,
+                                               glass=bool(self.overlay.blur and self.overlay.blur.available))
             self.settings_win.connect("close-request", lambda w: setattr(self, "settings_win", None) or False)
         self.settings_win.present()
 
