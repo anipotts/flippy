@@ -393,3 +393,38 @@ class Cards(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(LINUX, "Linux only")
+class RemotePointer(unittest.TestCase):
+    """flippy/linux/remote.py: screen points into the monitor stream's coordinates, and the restore token stays private."""
+
+    def test_screen_points_map_into_the_stream(self):
+        from flippy.linux import remote
+        rd = remote.RemoteDesktop()
+        sent = []
+        rd._notify = lambda method, sig, *values: sent.append((method, values))
+        rd.stream = (77, (0, 0), (3840, 2160))       # the stream in device pixels, the screen at 1.5x
+        rd.move(100, 200, (2560, 1440))
+        self.assertEqual(sent, [("NotifyPointerMotionAbsolute", (77, 150.0, 300.0))])
+        rd.scroll("up", 3)
+        self.assertEqual(sent[-1], ("NotifyPointerAxisDiscrete", (remote.AXIS_VERTICAL, -3)))
+        rd.scroll("right", 2)
+        self.assertEqual(sent[-1], ("NotifyPointerAxisDiscrete", (remote.AXIS_HORIZONTAL, 2)))
+
+    def test_the_restore_token_is_written_for_the_user_only(self):
+        import os
+        import tempfile
+        from flippy.linux import remote
+        with tempfile.TemporaryDirectory() as d, patch.object(remote, "TOKEN_PATH", os.path.join(d, "t")):
+            remote._write_token("secret")
+            self.assertEqual(os.stat(remote.TOKEN_PATH).st_mode & 0o777, 0o600)
+            self.assertEqual(remote._read_token(), "secret")
+
+    def test_a_refusal_isnt_asked_again_until_a_restart(self):
+        from flippy.linux import remote
+        rd = remote.RemoteDesktop()
+        rd.refused = True
+        with self.assertRaisesRegex(remote.Unavailable, "didn't allow"):
+            rd.open()
+        rd.closer.cancel()

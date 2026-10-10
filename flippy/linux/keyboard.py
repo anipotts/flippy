@@ -2,9 +2,8 @@
 through a virtual keyboard.
 
 Like wtype: every call uploads a small keymap with just the keysyms it needs, so
-any character can be typed whatever the layout. Moving or clicking the mouse
-isn't possible: cosmic-comp has no virtual pointer protocol and its portal no
-RemoteDesktop (docs/linux-port.md).
+any character can be typed whatever the layout. The pointer is flippy/linux/remote.py
+(the RemoteDesktop portal): cosmic-comp has no virtual pointer protocol.
 """
 import random
 import threading

@@ -79,6 +79,8 @@ type or key. Prefer menu for commands (File > New, Save As…). use_app switches
 Numbers are only valid for the latest look; every action returns a fresh look, so check it before going on.
 Some apps list few or no controls (they don't show them to Linux's accessibility layer): work by position in the
 screenshot's pixels there, and with keys.
+Some apps (Blender, many editors and games) send keys to the part of the window under the pointer: click an
+empty spot in that part first (in Blender's 3D view, empty space), then press the key.
 If something is "Not done", nothing happened: read why and keep going. Look again and retry, or try another way
 (a listed control, a menu, keys, the app's search). Try at least twice before giving up on a step, and never ask the
 user to do something you have a tool for (bringing an app forward, opening a window, searching). If the task is

@@ -16,6 +16,7 @@ is) comes from a second, private Wayland connection: flippy/linux/wl.py.
 Run via bin/flippy-daemon (sets LD_PRELOAD for gtk4-layer-shell).
 """
 import sys
+import threading
 import time
 
 import cairo
@@ -302,6 +303,7 @@ class Platform:
         self.settings_win = None
         self.setup_win = None
         self.overlay = Overlay(app)
+        self.screen = self.screen_size()  # logical px, for the pointer's worker threads (GDK is main-thread only)
         self.screenshotter = Screenshotter()
         self.nudge = Nudge(self.overlay)
         self.action_card = Nudge(self.overlay)  # desktop tasks' approval cards, separate from tips and updates
@@ -436,9 +438,6 @@ class Platform:
 
     # --- desktop tasks (/act): one app's window and controls through AT-SPI (flippy/linux/atspi.py). Keys AT-SPI
     # can't do borrow the window while you pause (flippy/linux/borrow.py); the rest leaves your window alone.
-    NO_POINTER = ("Clicking, scrolling or dragging by position needs COSMIC's remote desktop support, which this "
-                  "computer doesn't have yet. Use the app's controls, menus or keys instead.")
-
     def app_preflight(self):
         from . import atspi
         atspi.preflight()
@@ -464,6 +463,8 @@ class Platform:
         from . import atspi
         if name == "key" and args.get("combo") not in atspi.BACKGROUND_KEYS:
             return "needs the window for a moment, waiting for you to pause"
+        if name in ("scroll", "drag") or (name == "click" and args.get("count") == 2):
+            return "needs the pointer for a moment, waiting for you to pause"
         return None
 
     def app_act(self, name, args, frame, cancel):
@@ -505,30 +506,111 @@ class Platform:
             if want and self.app_name(*target[:2]) != want:
                 raise RetryableActionError(f"{args['action']} works on {want}; use_app {want} first.")
             result = scripts.run(args["action"], args["args"])
-        elif name == "click":
+        elif name in ("click", "scroll", "drag"):
             x, y = frame.to_logical(args["x"], args["y"])
-            if not (args["count"] == 1 and atspi.press_at(win, *atspi.to_window(target, x, y))):
-                raise RetryableActionError(self.NO_POINTER)
-        elif name in ("scroll", "drag"):
-            frame.to_logical(args["x"], args["y"])  # no screenshot: says so
-            raise RetryableActionError(self.NO_POINTER)
+            # a control at that spot is pressed in the background; anything else needs the real pointer
+            if name != "click" or args["count"] != 1 or not atspi.press_at(win, *atspi.to_window(target, x, y)):
+                if name == "click":
+                    act = lambda: self.click(x, y, double=args["count"] == 2, wait=True)  # noqa: E731
+                elif name == "scroll":
+                    act = lambda: self.scroll(x, y, args["direction"], args["lines"])  # noqa: E731
+                else:
+                    act = lambda: self.drag(x, y, *frame.to_logical(args["to_x"], args["to_y"]))  # noqa: E731
+                self._pointer()  # COSMIC's dialog the first time, before the window is borrowed
+                self._borrow_window(target, act, cancel, (x, y), keys=False)
         else:
             raise ActionError("Unsupported desktop action.")
         time.sleep(0.25)  # let the app redraw before the next look
         return result
 
-    def _borrow_window(self, target, act, cancel, point=None):
+    def _borrow_window(self, target, act, cancel, point=None, keys=True):
         from ..actions import RetryableActionError
         from .borrow import Borrow
         conn = wl.connection()
-        if conn is None or not conn.can_activate() or not conn.can_type():
+        if conn is None or not conn.can_activate() or (keys and not conn.can_type()):
             raise RetryableActionError("COSMIC doesn't let Flippy bring the window forward or type here. Use the "
                                        "app's controls or menus instead.")
         Borrow(conn)(conn.toplevels.get(target[2]), act, cancel, point)
 
-    # --- scripted input (flippy-ask type/key/tap, behind automation.clicks); the mouse can't be driven on COSMIC
-    NO_MOUSE = ("moving or clicking the mouse isn't possible on COSMIC yet: no RemoteDesktop portal or virtual "
-                "pointer (docs/linux-port.md)")
+    # --- scripted input (flippy-ask click/move/path/type/key/tap, behind automation.clicks): the keyboard is a
+    # virtual one (flippy/linux/keyboard.py), the pointer the real one through the RemoteDesktop portal
+    # (flippy/linux/remote.py), which asks once. Commands from flippy-ask run on a thread: that first time, the
+    # portal waits for the user to answer its dialog.
+    def _pointer(self):
+        """The RemoteDesktop session, opened if needed; RetryableActionError (for /act) saying why when there's none."""
+        from ..actions import RetryableActionError
+        from . import remote
+        rd = remote.shared()
+        try:
+            rd.open()
+        except remote.Unavailable as e:
+            raise RetryableActionError(f"{e} Use the app's controls, menus or keys instead.") from None
+        return rd
+
+    def _scripted(self, fn):
+        """Run a flippy-ask pointer command on a thread; its failure goes to the log."""
+        def run():
+            try:
+                result = fn()
+            except Exception as e:  # noqa: BLE001 - a script's click failing is reported, never raised
+                result = str(e)
+            if result not in (None, "ok"):
+                print(f"flippy: pointer: {result}", flush=True)
+        threading.Thread(target=run, daemon=True).start()
+        return "ok"
+
+    def click(self, x, y, double=False, wait=False):
+        """A real left click at (x, y) on the screen (logical px, top-left origin)."""
+        if not wait:
+            return self._scripted(lambda: self.click(x, y, double, wait=True))
+        rd = self._pointer()
+        rd.move(x, y, self.screen)
+        time.sleep(0.05)
+        for _ in (1, 2) if double else (1,):
+            try:
+                rd.button(True)
+                time.sleep(0.03)
+            finally:
+                rd.button(False)  # always let go
+            time.sleep(0.06)
+        return "ok"
+
+    def move(self, x, y):
+        return self._scripted(lambda: self._pointer().move(x, y, self.screen))
+
+    def path(self, points, drag):
+        """Along points [(x, y, seconds to the next)], holding the button down when drag."""
+        if not points:
+            return "empty path"
+        return self._scripted(lambda: self._gesture(points, drag))
+
+    def _gesture(self, points, drag):
+        rd = self._pointer()
+        down = False
+        try:
+            for i, (x, y, dt) in enumerate(points):
+                rd.move(x, y, self.screen)
+                if drag and i == 0:
+                    time.sleep(0.025)
+                    down = True
+                    rd.button(True)
+                if dt:
+                    time.sleep(max(dt, 0.004))
+        finally:
+            if down:
+                rd.button(False)
+        return "ok"
+
+    def drag(self, x, y, to_x, to_y):
+        return self._gesture([(x + (to_x - x) * i / 24, y + (to_y - y) * i / 24, 0.6 / 24 if i < 24 else 0)
+                              for i in range(25)], True)
+
+    def scroll(self, x, y, direction, lines):
+        rd = self._pointer()
+        rd.move(x, y, self.screen)
+        time.sleep(0.025)
+        rd.scroll(direction, lines)
+        return "ok"
 
     def type_text(self, text, on_key=None):
         from . import keyboard
@@ -541,12 +623,6 @@ class Platform:
     def tap(self, mod, times):
         from . import keyboard
         return keyboard.tap(mod, times)
-
-    def move(self, x, y):
-        return self.NO_MOUSE
-
-    def path(self, points, drag):
-        return self.NO_MOUSE
 
     def start_recording(self, path):
         """Demo recording through the ScreenCast portal (flippy/linux/recorder.py)."""
