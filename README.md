@@ -14,13 +14,13 @@ Runs on **macOS** (13+, native AppKit) and on **Linux with COSMIC on Wayland** (
 - **Circle and ask.** A second hotkey lets you draw on the screen to mark something, then ask about it ("what does this say?").
 - **Tutorials that wait for you.** When Claude walks you through doing something, the steps you have to do yourself wait until you click the thing (on COSMIC, Flippy infers the click from the mouse and the screen reacting; see [docs/linux-port.md](docs/linux-port.md#tutorials-that-wait-for-clicks)). If that click opens a menu or dialog Claude couldn't see yet, Flippy takes a fresh screenshot and Claude carries on from there. Next on the card skips a step. Turn it off with `timing.wait_for_clicks`.
 - **Follow-ups.** Questions share one session, so "and where's bluetooth?" works. `/new` starts fresh; sessions also reset after 15 idle minutes.
-- **Themes.** Midnight, Y2K Player, Media Player (a 2000s media player skin), Glass (a lock-screen style card), Terminal, and one that follows your system's accent color (macOS or COSMIC). On macOS 26+, Media Player and Glass sit on real Liquid Glass.
+- **Themes.** Midnight, Y2K Player, Media Player (a 2000s media player skin), Glass (a lock-screen style card), Terminal, and one that follows your system's accent color (macOS or COSMIC). On macOS 26+ and COSMIC Epoch 1.7+, Media Player and Glass sit on real glass.
 - **Custom pointers.** Built-in hand, ring, arrow and dot, or draw your own in the 20×24 pixel editor, or import an image and pick its tip.
 - **Check a video edit.** Press `⌃⌥V` on macOS or `Super+Shift+V` on COSMIC in your editor, play the edit back, press it again and ask ("is the cut at 0:12 clean?", "does the title stay up long enough?"). Flippy grabs the editor's window a few times a second, in memory only, finds the preview and the cuts, and shows Claude the frames that matter. Claude sees stills, not motion, and can't hear the audio. How it works: [docs/video-review.md](docs/video-review.md).
 - **Help when you're stuck, and tips.** Flippy can watch an app you're learning and offer a hand, or a tip, at the right moment (see below).
 - **Settings window** for model, effort, theme, pointer, sizes, timing, help mode and (on macOS) hotkeys.
 
-Ordinary questions and tips stay tool-free. On macOS, an explicit `/act` request can use approved desktop tools (see below). Flippy uses your existing **Claude Pro/Max subscription** through the Claude Agent SDK; no API client or key is added.
+Ordinary questions and tips stay tool-free. An explicit `/act` request can use approved desktop tools (see below). Flippy uses your existing **Claude Pro/Max subscription** through the Claude Agent SDK; no API client or key is added.
 
 ## Install
 
@@ -71,7 +71,7 @@ Use the full path; custom shortcuts don't always see `~/.local/bin` on `PATH`. T
 
 If you installed gtk4-layer-shell somewhere other than `~/.local`, set `FLIPPY_LAYER_SHELL_LIB` to its library directory.
 
-Single monitor only for now, on both platforms. A few macOS features aren't on COSMIC yet (`/act` desktop tasks, real Liquid Glass, scripted clicks); 0.3.0 brings them ([docs/linux-0.3.0.md](docs/linux-0.3.0.md)). The double-tap pause key can't work on Wayland, so COSMIC uses a normal shortcut. [docs/linux-port.md](docs/linux-port.md) explains how the rest works there.
+Single monitor only for now, on both platforms. `/act` desktop tasks, the real pointer and real glass need COSMIC Epoch 1.7 or newer (`sudo apt full-upgrade` on Pop!_OS, then log in again); the first time a task needs the pointer, COSMIC asks once to allow remote desktop. The double-tap pause key can't work on Wayland, so COSMIC uses a normal shortcut. [docs/linux-port.md](docs/linux-port.md) explains how it all works there.
 
 ## Updates
 
@@ -85,7 +85,7 @@ Press the ask hotkey (`⇧⌘Space` on macOS, `Super+Shift+Space` on COSMIC), ty
 
 For draw mode, press the draw hotkey (`⌃⇧Space` / `Super+Alt`), drag to circle something, release, then type your question. Esc, right-click, the hotkey again, or 60 s of nothing cancels it.
 
-### Approved desktop tasks (macOS)
+### Approved desktop tasks
 
 Put the app you want to use in front, open Flippy's question box, and type `/act <task>`, for example `/act type hello into this empty note`. Or run `flippy-ask act <task>`.
 
@@ -93,7 +93,9 @@ Flippy takes a screenshot, proposes a click, short text entry, shortcut, scroll 
 
 This uses custom tools inside the existing Agent SDK, with the same configured model, effort, and Claude login. Each task gets its own session so tools and task history don't enter ordinary tutor conversations. Screenshots and tool turns consume your subscription limits. Screen Recording and Accessibility permissions are required; allow Flippy in macOS settings and restart it if needed.
 
-The first version supports one display, at most 12 inputs per task and 160 characters per text entry, with a five-minute task timeout. Scroll uses 1–10 native wheel lines; drag follows a straight path for 0.6 seconds within the foreground window. Before dispatch, Flippy hides its preview, checks the original target geometry and compares the screen's decoded pixels with the proposed frame. Any difference stops the task, including blinking carets or animation. During drag, intentional window movement is allowed while the app, window and display must remain the same. These checks cannot eliminate the final dispatch race. Actions can affect documents or submit forms, so review every approval. Browser interaction uses your visible desktop and session; there is no browser extension or DOM driver. Linux retains the tutor only.
+The first version supports one display, at most 12 inputs per task and 160 characters per text entry, with a five-minute task timeout. Scroll uses 1–10 native wheel lines; drag follows a straight path for 0.6 seconds within the foreground window. Before dispatch, Flippy hides its preview, checks the original target geometry and compares the screen's decoded pixels with the proposed frame. Any difference stops the task, including blinking carets or animation. During drag, intentional window movement is allowed while the app, window and display must remain the same. These checks cannot eliminate the final dispatch race. Actions can affect documents or submit forms, so review every approval. Browser interaction uses your visible desktop and session; there is no browser extension or DOM driver.
+
+On COSMIC, tasks work through the app's controls (AT-SPI, Linux's accessibility layer) without bringing it in front. Keys it can't send that way, and clicks on spots that aren't controls, wait until you pause for a second, bring the app forward for a moment and give your window back. Terminals, settings, browsers and password managers always ask before each input. How it works: [docs/linux-port.md](docs/linux-port.md#desktop-tasks-act).
 
 ## Isolated local demo
 
@@ -117,7 +119,7 @@ flippy-ask draw             draw mode
 flippy-ask video            start recording your editor; again to stop and ask (COSMIC)
 flippy-ask video ask <q>    ask about the last recording without the box
 flippy-ask q <question>     ask without the box
-flippy-ask act <task>       approved desktop task (macOS)
+flippy-ask act <task>       approved desktop task
 flippy-ask dismiss          hide the current answer
 flippy-ask pause-toggle     pause or resume the walkthrough on screen
 flippy-ask reset            start a fresh Claude session
@@ -167,7 +169,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `claude.effort` | `low`, `medium`, `high`, `max` |
 | `claude.image` | screenshot size sent to Claude: `1366`, `1920`, `0` (full) |
 | `look.theme` | `midnight`, `y2k`, `mediaplayer`, `glass`, `terminal`, `cosmic` |
-| `look.player_shine` | `wmp` (gloss bars) or `none`: reflections on the Media Player theme's Liquid Glass (macOS) |
+| `look.player_shine` | `wmp` (gloss bars) or `none`: reflections on the Media Player theme's real glass (macOS, COSMIC) |
 | `look.pointer` | `theme`, `hand`, `ring`, `arrow`, `dot`, `glass` (Liquid Glass lens), `glasshand`, or `custom:<name>` |
 | `look.pointer_size`, `look.text_size`, `look.card_opacity` | numbers |
 | `timing.show_seconds`, `timing.max_show_seconds` | how long answers stay up |
@@ -176,7 +178,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `timing.wait_for_clicks` | `true` (default): tutorial steps wait until you click the thing |
 | `help.mode` | `off`, `quiet` (offer a hand when stuck), `tips` (that, plus cached tips) |
 | `help.apps`, `help.muted` | comma-separated app ids (macOS bundle ids, e.g. `com.ableton.live`; Wayland app ids on COSMIC, e.g. `io.lmms.LMMS`) |
-| `automation.clicks` | `false` (default) or `true`: lets `flippy-ask click <x> <y> [double]` click on screen (macOS, needs the Accessibility permission). When on, any program running as you can make Flippy click. `/act` uses its separate per-input approval and does not enable scripted clicks. |
+| `automation.clicks` | `false` (default) or `true`: lets `flippy-ask click <x> <y> [double]` click on screen (macOS: needs the Accessibility permission; COSMIC: the remote desktop portal, which asks once). When on, any program running as you can make Flippy click. `/act` uses its separate per-input approval and does not enable scripted clicks. |
 | `updates.check` | `true` (default): look for a new release once a day |
 | `keys.pause` | `double-cmd` (default), `double-option`, `double-ctrl`, `double-shift` or `off`: pause/resume a walkthrough (macOS, needs the Accessibility permission; on COSMIC, bind `flippy-ask pause-toggle` to a shortcut) |
 | `keys.ask`, `keys.draw` | macOS hotkeys, e.g. `cmd+shift+space` (modifiers: `cmd`, `ctrl`, `option`, `shift`) |
@@ -218,12 +220,13 @@ rm -rf ~/.config/flippy   # settings and custom pointers, if you want them gone 
 install.sh  picks scripts/install_mac.sh or scripts/install_linux.sh
 bin/        flippy-ask (CLI, talks to the daemon over a Unix socket), flippy-daemon (launcher)
 flippy/     shared: daemon (controller), Claude brain, overlay painting, POINT-tag parsing, themes, settings
-flippy/linux/  GTK + gtk4-layer-shell windows, portal screenshots, Wayland watcher (help mode, clicks), panel icon, settings, setup
+flippy/linux/  GTK + gtk4-layer-shell windows, portal screenshots, Wayland watcher (help mode, clicks), panel icon, settings, setup,
+               /act through AT-SPI, the pointer (RemoteDesktop portal), real glass (background blur)
 flippy/mac/    AppKit overlay and windows, screencapture, Carbon hotkeys, menu bar, first-run setup
 packaging/macos/  Flippy.app launcher (Swift) and icon
 scripts/    the macOS and Linux installers, release.sh, package.sh (the per-platform release downloads)
 tests/      python -m unittest discover tests
-docs/       linux-port.md: how the macOS features work on COSMIC, and what's still blocked;
+docs/       linux-port.md: how the macOS features work on COSMIC;
             linux-0.3.0.md: instructions for bringing COSMIC up to macOS (/act, pointer input, glass, the new look);
             video-review.md: video review, and how to build it on macOS;
             errors.md: every error code Flippy shows, what it means and what to do

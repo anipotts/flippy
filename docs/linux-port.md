@@ -6,11 +6,13 @@ the controller looks for (`hasattr(self.ui, ...)`); a missing piece switches its
 feature off instead of crashing, and commands that need it answer "not available on
 this platform yet".
 
-Everything COSMIC needs lives in `flippy/linux/`. The port doesn't change the shared
-files or `flippy/mac/`, so macOS runs exactly what it ran before; where COSMIC needed
-something of a shared file, it has its own copy or extends it from `flippy/linux/`.
+Everything COSMIC needs lives in `flippy/linux/`. Where the controller needed a hook, the shared
+change is platform-neutral (a platform can bring its own `/act` tool catalog, for example), so macOS
+runs what it ran before.
 
-**Next: Flippy 0.3.0 brings COSMIC up to macOS (`/act`, real pointer input, real glass, Codex, the new look). The step-by-step instructions are in [linux-0.3.0.md](linux-0.3.0.md); the "Blocked" sections below predate COSMIC Epoch 1.7, which unblocked pointer input and blur.**
+Flippy 0.3.0 brought COSMIC up to macOS: `/act` desktop tasks, the real pointer, real glass, Codex, and
+the new look. It needs **COSMIC Epoch 1.7 or newer** for the pointer (the RemoteDesktop portal) and the
+glass (`ext_background_effect_v1`); on an older COSMIC those two switch off and say so.
 
 | Feature | On COSMIC | How |
 |---|---|---|
@@ -26,10 +28,13 @@ something of a shared file, it has its own copy or extends it from `flippy/linux
 | Pause / resume shortcut | a COSMIC shortcut, not a double-tap | [Pause](#pause-shortcut) |
 | Demo tools `shot`, `nudge`, `demo-nudge`, `demo-tip`, `demo-update` | yes | |
 | Scripted typing (`type`, `key`, `tap`) | yes | [Typing](#scripted-typing) |
-| Scripted mouse (`click`, `move`, `path`) | **no** | [Blocked](#scripted-mouse) |
-| Real Liquid Glass (Media Player, Glass, lens, glass hand), `look.glass_tint`, `look.glass_color`, `look.player_shine` | **no**, painted look | [Blocked](#liquid-glass) |
+| `/act` desktop tasks | yes, through AT-SPI; keys and clicks by position borrow the window | [Desktop tasks](#desktop-tasks-act) |
+| Codex / ChatGPT, the usage guard, error codes | yes | shared (`flippy/codex_provider.py`) |
+| The new look (setup, settings, Draw editor), Mono | yes | `flippy/linux/style.py` |
+| Scripted mouse (`click`, `move`, `path`) | yes, through the RemoteDesktop portal (asks once) | [Pointer](#the-pointer) |
+| Real Liquid Glass (Media Player, Glass, lens, glass hand), `look.glass_tint`, `look.glass_color`, `look.player_shine` | yes: the compositor's blur, Flippy's tint | [Glass](#real-glass) |
 | `record` (demo screen recording) | yes | [Recording](#demo-recording) |
-| Hotkeys set from Flippy's settings (`keys.ask`, `keys.draw`) | COSMIC owns shortcuts | [Pause](#pause-shortcut) |
+| Hotkeys set from Flippy's settings (`keys.ask`, `keys.draw`) | by design: COSMIC owns shortcuts | [Shortcuts](#shortcuts-by-design) |
 
 ## What Flippy can see on COSMIC
 
@@ -112,12 +117,20 @@ just like the question box. COSMIC's active-window outline shows as a 2-px speck
 
 ## First-run setup
 
-`flippy-ask setup` (or the panel menu → Setup…) opens `flippy/linux/setup_window.py`:
-it checks the Claude login (`~/.claude/.credentials.json`; **Log in…** opens a
-terminal running `claude`), lists Flippy's COSMIC shortcuts, and **Add** writes the
-missing ones into `~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom`
-(backed up to `custom.bak-flippy` first). **Open Flippy at login** writes an XDG
-autostart entry, like macOS's LaunchAgent. It opens by itself when Claude isn't logged in.
+`flippy-ask setup` (or the panel menu → Setup…) opens `flippy/linux/setup_window.py`, in
+the same design as macOS. Two steps, no permissions:
+
+1. **Connect:** Claude (**Log in…** opens a terminal running `claude`) and ChatGPT through
+   Codex (**Sign in…** opens a terminal running `codex login`, with node on its PATH, and
+   stays open if it fails). **Use** picks which one answers.
+2. **Your shortcut:** the ask shortcut as keycaps. **Add them** writes the missing ones
+   into `~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom` (backed up to
+   `custom.bak-flippy` first); **Edit…** opens Settings → Hotkeys, and the shortcuts
+   themselves change in COSMIC Settings.
+
+**Open Flippy at login** writes an XDG autostart entry, like macOS's LaunchAgent. Setup
+opens by itself only on install, a new major version, or a lost login
+(`flippy/setup_gate.py`).
 
 ## Pause shortcut
 
@@ -132,7 +145,8 @@ reason `keys.ask` / `keys.draw` don't apply: the shortcuts live in COSMIC Settin
 Hotkeys) go through `zwp_virtual_keyboard_v1` (`flippy/linux/keyboard.py`). Like
 `wtype`, each call uploads a keymap holding just the keysyms it needs, so any
 character types regardless of layout. Modifiers: `ctrl`, `shift`, `alt`, `super`
-(`cmd` means `super`).
+(`cmd` means `super`); they go down as keys of their own, not just as modifier state,
+because apps like Blender track the keys themselves.
 
 ## Demo recording
 
@@ -142,25 +156,65 @@ ScreenCast portal (monitor, cursor embedded, persist mode 2 with its restore tok
 openh264enc ! h264parse ! mp4mux` (`qtmux` for .mov, `matroskamux` for .mkv). Stop
 writes `<path>.json` with the wall clock, like macOS.
 
-# Blocked on COSMIC today
+## Desktop tasks (`/act`)
 
-## Scripted mouse
+`/act` works on one app, whether or not it's in front, like on macOS. `flippy/linux/atspi.py`
+mirrors `flippy/mac/ax.py` through AT-SPI, Linux's accessibility layer:
 
-`flippy-ask click/move/path` (behind `automation.clicks`) post real mouse input
-on macOS. On Wayland the sanctioned route is the RemoteDesktop portal, and
-xdg-desktop-portal-cosmic doesn't implement it (it has Screenshot, ScreenCast,
-FileChooser, Access, Settings). cosmic-comp also doesn't offer
-`zwlr_virtual_pointer_manager_v1`, so there's no other way to move or click the
-mouse. When the portal gains RemoteDesktop: session → `SelectDevices` (pointer) →
-`Start` (keep the `restore_token`) → `NotifyPointerMotionAbsolute` /
-`NotifyPointerButton`, as `click()`, `move()` and `path()` on the Linux `Platform`.
+- **Which app.** The window in front comes from Wayland (app id, title). A task typed in the
+  question box starts in the window that had the focus before the box. AT-SPI lists apps by
+  process; `match_app` pairs them by flatpak id (`/proc/<pid>/root/.flatpak-info`), the window
+  title among the app's windows, or the executable its `.desktop` file names. An app that isn't on
+  AT-SPI still gets screenshots, with a handle above any pid.
+- **Seeing it.** The window is captured on its own (`wl.capture_window`). Controls come from the
+  AT-SPI tree (only what's showing). Their positions are in WINDOW coordinates, which GTK3 counts
+  from the surface (shadow included) and GTK4 from the visible window; the union of the window's
+  top-level children is the visible window, so its corner maps them onto the capture.
+- **Acting in the background:** press (the Action interface), set_text, focus, typing (inserted
+  at the cursor through EditableText, length in bytes), and return / delete / ctrl+a/c/x/v in a
+  text control. Menus come from the menu bar, or from a menu button's popover (GTK4 apps have
+  no menu bar): `["Menu", "Preferences"]` presses the button, then the item.
+- **Borrowing the window** (`flippy/linux/borrow.py`): Wayland can't send a key or a click to one
+  app. Other keys, and clicks by position that don't land on a control, wait until the user has
+  been idle for a second, bring the window forward (`zcosmic_toplevel_manager_v1.activate`), do
+  the input, and give the focus back to the window they were in. The pointer can't be put back:
+  Wayland doesn't let a client read where it was.
+- **Opening apps:** a desktop entry by name, generic name or id; a new window takes the focus on
+  COSMIC, so it's handed straight back.
+- **Media and app actions:** MPRIS over D-Bus (`flippy/linux/mpris.py`), and
+  `flippy/linux/scripts.py` with macOS's action names where Linux can do them (Spotify through
+  MPRIS and `spotify:` links, `browser.open_url` to the default browser).
+- **The tools** (`flippy/linux/act.py`): `ctrl` shortcuts, any ctrl / shift / alt combination
+  except super and ctrl+alt (COSMIC handles those itself), no `real_pointer` choice.
+- **Approval:** Wayland app ids can be bare names (`firefox`); terminals, settings, browsers,
+  password managers and polkit prompts always ask (`ApprovalPolicy.LINUX_SENSITIVE`).
 
-## Liquid Glass
+Flippy turns on `org.a11y.Status.IsEnabled`, the standard switch, but never
+`ScreenReaderEnabled`. Limits: COSMIC's own apps (libcosmic) show AT-SPI little, so they're
+worked by position and keys. Apps that were running before the switch flipped (Firefox,
+Chromium, Electron) expose their controls only after a restart.
 
-The real thing needs the compositor to blur behind part of a surface. The protocol for
-that, `ext-background-effect-v1`, is in wayland-protocols, but cosmic-comp doesn't
-offer it yet. The themes already paint a no-backdrop look on Linux. When it shows up:
-request blur for the card's rect each frame (the rect `card_layout()` gives
-`_place_glass` on macOS), and the lens and glass-hand shapes, then set
-`has_backdrop = True` on the Linux `Overlay`. `look.glass_tint`, `look.glass_color` and
-`look.player_shine` only matter then.
+## The pointer
+
+`flippy/linux/remote.py`: the RemoteDesktop portal (Epoch 1.7). The session asks once (COSMIC's
+dialog); its restore token is kept in `~/.config/flippy/remote-desktop-token` with 0600
+permissions, so later sessions start without asking. Absolute positions need a screen-cast stream
+on the same session, which COSMIC shows in the panel, so a session closes after 20 s unused. Its
+portal requests wait on a private main context, so it runs on the task's worker thread. It drives
+`/act`'s clicks, scrolls and drags, and `flippy-ask click/move/path` (behind `automation.clicks`).
+
+## Real glass
+
+`flippy/linux/blur.py`: `ext_background_effect_v1` (Epoch 1.7). The compositor blurs what's behind
+the overlay under the Glass and Media Player cards, the glass lens and the glass hand; the overlay
+paints the tint over it (the user's Glass tint strength and color, `flippy/glass.py`, the same
+formulas as macOS). The request has to be on GTK's own Wayland connection (the overlay's surface
+belongs to it), so it goes through ctypes to libwayland-client, with a private queue for its one
+roundtrip. A region is rectangles, so the rounded shapes become thin strips. Without the protocol
+the themes keep their painted glass, and Settings hides the glass rows.
+
+## Shortcuts: by design
+
+COSMIC has no GlobalShortcuts portal, so Flippy writes its shortcuts into COSMIC's custom
+shortcuts (setup offers that) instead of grabbing keys, and pause is an ordinary shortcut: Wayland
+apps can't watch for a double-tap outside their own windows.
