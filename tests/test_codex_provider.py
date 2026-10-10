@@ -44,6 +44,10 @@ class FakeRPC:
                     "modelProvider": "openai", "model": "fixture-model", "instructionSources": []}
         if method == "mcpServerStatus/list":
             return {"data": self.inventory, "nextCursor": None}
+        if method == "model/list":
+            return {"data": [{"id": "fixture-old", "model": "fixture-old", "isDefault": False},
+                             {"id": "fixture-default", "model": "fixture-default", "isDefault": True}],
+                     "nextCursor": None}
         if method == "turn/start":
             self.turns.append(params)
             thread, turn = params["threadId"], f"turn{len(self.turns)}"
@@ -427,6 +431,16 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
         await self.provider.stop()
         self.assertEqual(self.provider.history, [])
         self.assertEqual(self.provider.partial, "")
+
+    async def test_default_means_codexs_default_not_a_model_left_in_the_users_config(self):
+        # ~/.codex/config.toml from an older Codex named gpt-5.1-codex-max, which ChatGPT accounts can't use
+        self.allow_fixture_turns()
+        await self.provider.ask("question", "screen", (100, 100))
+        self.assertEqual(self.rpc.threads[-1]["model"], "fixture-default")
+        await self.provider.stop()
+        self.provider.configure("chosen-model", "medium")  # a model picked in Settings is used as it is
+        await self.provider.ask("question", "screen", (100, 100))
+        self.assertEqual(self.rpc.threads[-1]["model"], "chosen-model")
 
     def test_memory_retention_is_bounded_and_configuration_clears_it(self):
         for _ in range(20):
