@@ -36,16 +36,18 @@ It downloads Flippy to `~/flippy` (set `FLIPPY_DIR` to put it elsewhere) and run
 
 Or download it (the buttons at the top):
 
-- **macOS:** [Flippy.dmg](https://github.com/kap-il/flippy/releases/latest/download/Flippy.dmg). Open it and double-click **Install Flippy**: it copies Flippy to `~/flippy` and runs the installer. Flippy isn't notarized, so the first time macOS may say it's from an unidentified developer. Open System Settings → Privacy & Security, click **Open Anyway**, and double-click it again.
+- **macOS (Apple Silicon):** [Flippy.dmg](https://github.com/kap-il/flippy/releases/latest/download/Flippy.dmg). Open it and drag **Flippy** to **Applications**, then open it from Applications. Everything it needs is inside: no Homebrew or Terminal. Flippy isn't notarized, so the first time macOS says it can't verify it. Open System Settings → Privacy & Security, click **Open Anyway**, and open Flippy again. On an Intel Mac, use the one-line install above.
 - **Linux:** [flippy-linux.tar.gz](https://github.com/kap-il/flippy/releases/latest/download/flippy-linux.tar.gz). Unpack it where you want Flippy to live and run `./install.sh` inside.
 
 Each has only the code that platform needs, and updates itself from releases, like a git install does. Every release also has versioned copies (`flippy-<version>-macos.tar.gz`, `flippy-<version>-linux.tar.gz`) on the [releases page](https://github.com/kap-il/flippy/releases/latest).
 
 ### macOS
 
-Needs [Homebrew](https://brew.sh) (for cairo) and the Xcode Command Line Tools (the installer offers them if missing).
+**From Flippy.dmg** (Apple Silicon): drag Flippy to Applications and open it. Nothing else to install. Its code lives in `~/Library/Application Support/Flippy/code` and updates there, so the app itself never changes and keeps its permissions.
 
-`./install.sh` sets up the Python environment, builds **`~/Applications/Flippy.app`** and starts it. Flippy lives in the menu bar (the pointer icon); there's no Dock icon. On first launch a setup window walks you through:
+**From the one-line install or a checkout** (any Mac): needs [Homebrew](https://brew.sh) (for cairo) and the Xcode Command Line Tools (the installer offers them if missing). `./install.sh` sets up the Python environment, builds **`~/Applications/Flippy.app`** and starts it.
+
+Flippy lives in the menu bar (the pointer icon); there's no Dock icon. On first launch a setup window walks you through:
 
 1. **Logging in to Claude** with your Pro/Max account (it opens Terminal running Claude Code; type `/login`).
 2. **Screen Recording permission**, so Flippy can see your screen. macOS only applies it after a restart; the setup window has a button for that.
@@ -56,7 +58,7 @@ Then a one-minute tour shows you each thing (ask, pause, skip and speed, follow 
 
 Reopen the setup any time from the menu bar icon → Setup…
 
-Flippy.app is signed ad hoc (not notarized), so rebuilding it can make macOS ask for Screen Recording again.
+Flippy.app is signed ad hoc (not notarized). With an install from a checkout, rebuilding it can make macOS ask for Screen Recording again; the Flippy.dmg app is never rebuilt, so it doesn't.
 
 ### Linux (COSMIC)
 

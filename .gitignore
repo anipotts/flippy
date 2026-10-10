@@ -18,7 +18,7 @@ scripts/*
 !scripts/install_linux.sh
 !scripts/release.sh
 !scripts/package.sh
-!scripts/make_dmg.sh
+!scripts/build_app.sh
 !scripts/build_mac.sh
 !scripts/dev.sh
 !scripts/doctor.py
