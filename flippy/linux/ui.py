@@ -116,7 +116,8 @@ class Overlay(NoticeLayer, OverlayBase):
         if lay and lay[1]["backdrop"]:
             (x, y, cw, ch), bd = lay[0], self.theme.backdrop
             themes.round_rect(cr, x, y, cw, ch, bd["radius"])
-            cr.set_source_rgba(*glass.card_tint(bd))
+            r, g, b, a = glass.card_tint(bd)
+            cr.set_source_rgba(r, g, b, a * lay[1]["card_opacity"])  # Panel opacity: the blur stays, the tint thins
             cr.fill()
             shapes.append(("round", x, y, cw, ch, bd["radius"]))
         lens = self.pointer_lens()
