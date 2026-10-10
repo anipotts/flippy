@@ -1183,7 +1183,7 @@ class Flippy:
             self.overlay.show_text("Already up to date.")
             self._schedule_fade(3)
             return
-        self.overlay.show_text(f"Updated to {updates.current_version()}. Restarting…")
+        self.overlay.show_text(f"Updated to {res['version']}. Restarting…")
         loop.timeout_add(1200, lambda: self.ui.restart(full_install=res["app"]) and False)
 
     # --- settings ---

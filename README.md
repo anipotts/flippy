@@ -43,7 +43,7 @@ Each has only the code that platform needs, and updates itself from releases, li
 
 ### macOS
 
-**From Flippy.dmg** (Apple Silicon): drag Flippy to Applications and open it. Nothing else to install. Its code lives in `~/Library/Application Support/Flippy/code` and updates there, so the app itself never changes and keeps its permissions.
+**From Flippy.dmg** (Apple Silicon): drag Flippy to Applications and open it. Nothing else to install. Its code lives in `~/Library/Application Support/Flippy/code`. An update installs the new code next to the running copy after checking it against the download's checksum, then switches over in one step, so the app itself never changes and keeps its permissions. A release that needs different packages or a different Python asks you to download the new Flippy.dmg instead.
 
 **From the one-line install or a checkout** (any Mac): needs [Homebrew](https://brew.sh) (for cairo) and the Xcode Command Line Tools (the installer offers them if missing). `./install.sh` sets up the Python environment, builds **`~/Applications/Flippy.app`** and starts it.
 
@@ -58,7 +58,7 @@ Then a one-minute tour shows you each thing (ask, pause, skip and speed, follow 
 
 Reopen the setup any time from the menu bar icon → Setup…
 
-Flippy.app is signed ad hoc (not notarized). With an install from a checkout, rebuilding it can make macOS ask for Screen Recording again; the Flippy.dmg app is never rebuilt, so it doesn't.
+Flippy.app is signed ad hoc (not notarized). With an install from a checkout, rebuilding it can make macOS ask for Screen Recording again. The Flippy.dmg app keeps its permissions through code updates; a new Flippy.dmg is a new build, so macOS asks once more.
 
 ### Linux (COSMIC)
 
