@@ -8,7 +8,6 @@ them up right away.
 import os
 import shutil
 import subprocess
-import shlex
 
 import gi
 
@@ -60,15 +59,14 @@ def open_login_terminal():
 
 
 def open_codex_login():
-    from ..codex_provider import child_environment, codex_executable
+    from ..codex_provider import codex_executable, login_command
     cli = codex_executable()  # not only PATH: apps get a minimal one
     if not cli:
         subprocess.Popen(["xdg-open", "https://developers.openai.com/codex/cli/"])
         return False
-    # Codex installed with npm is a node script: the terminal needs node on its PATH, and an app's PATH (a
-    # shortcut's, the app library's) often hasn't got it. Keep the window open if signing in fails, to read why.
-    cmd = ("unset OPENAI_API_KEY CODEX_API_KEY; export PATH=" + shlex.quote(child_environment()["PATH"]) + "; "
-           + shlex.quote(cli) + " -c 'forced_login_method=\"chatgpt\"' login"
+    # login_command puts node on PATH too (an npm-installed Codex is a node script, and an app's PATH often hasn't
+    # got it). Keep the window open if signing in fails, to read why.
+    cmd = (login_command(cli)
            + " || { echo; echo 'Signing in to Codex failed (see above). Press Enter to close.'; read _; }")
     for term in (["gnome-terminal", "--"], ["x-terminal-emulator", "-e"], ["kgx", "--"], ["xterm", "-e"]):
         if shutil.which(term[0]):

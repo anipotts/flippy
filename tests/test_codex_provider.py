@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from flippy.actions import DesktopTools
 from flippy.frames import ScreenFrame
-from flippy import usage_guard
+from flippy import codex_provider, usage_guard
 from flippy.codex_provider import (CodexError, CodexProvider, RUNTIME_UNAVAILABLE, SAFE_CONFIG, _RPC,
                                    _new_enough, _toml_key, child_environment)
 from flippy.usage_guard import PlanLimitReached
@@ -452,19 +452,55 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
 
 
 class TestEnvironment(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = os.path.join(self.tmp.name, "home")
+
     def test_child_environment_drops_api_billing_and_custom_routing(self):
-        with patch.dict(os.environ, {"HOME": "/fixture/home", "PATH": "/fixture/bin",
+        with patch.dict(os.environ, {"HOME": self.home, "PATH": "/fixture/bin",
              "OPENAI_API_KEY": "fixture", "CODEX_API_KEY": "fixture", "CODEX_HOME": "/other/login",
              "OPENAI_BASE_URL": "https://example.invalid", "HTTPS_PROXY": "fixture",
              "ANTHROPIC_API_KEY": "fixture", "NODE_OPTIONS": "fixture"}, clear=True):
             env = child_environment()
-            self.assertEqual(set(env), {"HOME", "PATH"})   # no keys, proxies, CODEX_HOME or base URLs
-            self.assertEqual(env["HOME"], "/fixture/home")
+            self.assertEqual(set(env), {"HOME", "PATH", "CODEX_HOME"})   # no keys, proxies or base URLs
+            self.assertEqual(env["HOME"], self.home)
             self.assertIn("/fixture/bin", env["PATH"].split(os.pathsep))  # the user's PATH, plus Codex's install dirs
         self.assertEqual(SAFE_CONFIG["history.persistence"], "none")
         self.assertEqual(SAFE_CONFIG["model_provider"], "openai")
         self.assertFalse(SAFE_CONFIG["features.shell_tool"])
         self.assertFalse(SAFE_CONFIG["features.plugins"])
+
+    def test_codex_runs_in_flippys_own_home_never_the_users(self):
+        # The user's Codex setup (config.toml, AGENTS.md, plugins, MCP servers) lives in ~/.codex or $CODEX_HOME;
+        # Flippy's Codex has a home of its own, per profile, private to the user.
+        for profile, slug in (("default", "flippy"), ("demo", "flippy-demo")):
+            with self.subTest(profile), patch.dict(os.environ, {"HOME": self.home, "PATH": "/usr/bin",
+                                                                "CODEX_HOME": os.path.join(self.home, ".codex"),
+                                                                "FLIPPY_PROFILE": profile}, clear=True):
+                home = child_environment()["CODEX_HOME"]
+                self.assertEqual(home, os.path.join(self.home, ".config", slug, "codex"))
+                self.assertTrue(os.path.isdir(home))
+                self.assertEqual(os.stat(home).st_mode & 0o777, 0o700)
+
+    def test_signing_in_signs_in_flippys_codex(self):
+        with patch.dict(os.environ, {"HOME": self.home, "PATH": "/usr/bin", "XDG_CONFIG_HOME": self.home + "/my cfg"},
+                        clear=True):
+            command = codex_provider.login_command("/opt/my codex/codex")
+            home = child_environment()["CODEX_HOME"]
+        import shlex
+        self.assertIn("export CODEX_HOME=" + shlex.quote(home), command)
+        self.assertIn("unset OPENAI_API_KEY CODEX_API_KEY", command)
+        self.assertTrue(command.endswith(shlex.quote("/opt/my codex/codex") + " -c 'forced_login_method=\"chatgpt\"' login"))
+        self.assertEqual(shlex.split(command.split("; ")[1])[1], "CODEX_HOME=" + home)  # a path with spaces survives
+
+
+class TestIsolationReasons(unittest.TestCase):
+    def test_the_log_says_which_check_refused_and_the_user_sees_one_sentence(self):
+        from flippy import errors
+        shown, logged = errors.describe(codex_provider._not_isolated("instruction_sources"))
+        self.assertEqual(shown, errors.say("CODEX-ISOLATION"))
+        self.assertIn("(instruction_sources)", logged)
 
 
 class TestStdio(unittest.IsolatedAsyncioTestCase):

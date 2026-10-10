@@ -62,15 +62,13 @@ def open_login_terminal():
 
 
 def open_codex_login():
-    # The owner completes Codex's native browser flow; Flippy never handles tokens.
-    import shutil
-    import shlex
-    from ..codex_provider import codex_executable
+    # The owner completes Codex's native browser flow, into Flippy's own Codex home; Flippy never handles tokens.
+    from ..codex_provider import codex_executable, login_command
     cli = codex_executable()  # not only PATH: apps get a minimal one
     if not cli:
         subprocess.Popen(["open", "https://developers.openai.com/codex/cli/"])
         return
-    command = "unset OPENAI_API_KEY CODEX_API_KEY; " + shlex.quote(cli) + " -c 'forced_login_method=\"chatgpt\"' login"
+    command = login_command(cli)
     script = 'tell application "Terminal" to do script ' + __import__('json').dumps(command)
     subprocess.Popen(["osascript", "-e", script])
 
