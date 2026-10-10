@@ -170,6 +170,15 @@ def blocked(root=ROOT):
     return None
 
 
+def bundled():
+    """The self-contained Flippy.app (scripts/build_app.sh): its Python and packages are inside the app, so an
+    update can replace the code (in Application Support) but not packages or the launcher."""
+    return os.environ.get("FLIPPY_BUNDLED") == "1"
+
+
+NEW_APP = "Flippy {version} needs the new app: download Flippy.dmg from github.com/kap-il/flippy/releases/latest"
+
+
 def requirements_file():
     return "requirements-mac.txt" if sys.platform == "darwin" else "requirements-linux.txt"
 
@@ -224,6 +233,9 @@ def unpack(archive, root, log=print):
         if package_platform(src) != package_platform(root):
             raise UpdateError(f"the update is for {package_platform(src)}, this copy is {package_platform(root)}")
         new = _files(src)
+        if bundled() and any(before.get(rel) != new.get(rel) for rel in set(before) | set(new)
+                             if rel in (requirements_file(), "packaging/macos/Launcher.swift")):
+            raise UpdateError(NEW_APP.format(version=current_version_at(src)))  # nothing replaced yet
         for rel in new:
             if before.get(rel) != new[rel]:
                 os.makedirs(os.path.dirname(os.path.join(root, rel)) or root, exist_ok=True)

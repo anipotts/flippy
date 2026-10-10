@@ -143,6 +143,24 @@ class TestPackageInstall(unittest.TestCase):
                 updates.install(root=self.root, log=lambda *a: None)
         self.assertEqual(updates.current_version_at(self.root), "0.2.1")
 
+    def test_the_self_contained_app_takes_code_only_updates(self):
+        new = package(self.base, f"flippy-0.2.2-{self.platform}", self.platform,
+                      {"VERSION": "0.2.2\n", "flippy/video.py": "v\n", self.requirements: "a\n"})
+        with mock.patch.dict(os.environ, {"FLIPPY_BUNDLED": "1"}):
+            res, run = self.install(new)
+        self.assertEqual((res["to"], res["packages"]), ("0.2.2", False))
+        self.assertFalse(run.called)
+
+    def test_the_self_contained_app_asks_for_a_new_download_when_packages_change(self):
+        new = package(self.base, f"flippy-0.2.2-{self.platform}", self.platform,
+                      {"VERSION": "0.2.2\n", "flippy/video.py": "v\n", self.requirements: "a\nb\n"})
+        with mock.patch.dict(os.environ, {"FLIPPY_BUNDLED": "1"}):
+            with self.assertRaises(updates.UpdateError) as raised:
+                self.install(new)
+        self.assertIn("Flippy.dmg", str(raised.exception))
+        self.assertEqual(updates.current_version_at(self.root), "0.2.1")  # nothing replaced
+        self.assertFalse(os.path.exists(os.path.join(self.root, "flippy", "video.py")))
+
     def test_up_to_date(self):
         with mock.patch.object(updates, "latest_release", return_value={"version": "0.2.1", "assets": {}}):
             res = updates.install(root=self.root, log=lambda *a: None)
