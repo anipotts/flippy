@@ -1,8 +1,15 @@
 """Installed Codex, with ChatGPT authentication and ephemeral app-server threads.
 
 Protocol: https://developers.openai.com/codex/app-server (Codex 0.153.4).
-The included-usage gate deliberately remains closed: a rate-limit snapshot is
-not an atomic promise that the next request cannot spend existing credits.
+
+Flippy runs Codex in a home of its own (codex_home: CODEX_HOME), the way it runs Claude with setting_sources=[]:
+whatever the user has set up for their own Codex (config.toml, AGENTS.md, plugins, apps, MCP servers, skills,
+hooks) is never loaded, and Flippy never shares state with a Codex app or CLI that's running at the same time.
+That home has its own ChatGPT sign-in (Setup runs `codex login` with it), so Flippy never touches the user's
+Codex sign-in either. The checks in _isolate and _new_thread stay as a second line: they now hold by construction.
+
+Usage: _check_usage reads the plan's rate limits before anything is sent and the turn watches them while it runs
+(flippy/usage_guard.py). A snapshot is not an atomic promise; see usage_guard.py for what that can't rule out.
 """
 import asyncio
 import contextlib
@@ -55,11 +62,17 @@ SAFE_CONFIG = {
 
 
 class CodexError(BrainError):
-    """Only fixed, user-readable text may cross the provider boundary. code: see flippy/errors.py."""
-    def __init__(self, safe_message, code="CODEX-FAILED"):
+    """Only fixed, user-readable text may cross the provider boundary. code: see flippy/errors.py. reason: a fixed
+    name for the log (never a value from Codex or the user's config), to tell apart failures that share a code."""
+    def __init__(self, safe_message, code="CODEX-FAILED", reason=None):
         self.safe_message = safe_message
         self.code = code
+        self.reason = reason
         super().__init__(safe_message)
+
+
+def _not_isolated(reason):
+    return CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION", reason)
 
 
 class CodexSignInRequired(CodexError):
@@ -97,12 +110,31 @@ def _search_path():
     return os.pathsep.join(dict.fromkeys(extra + dirs))
 
 
+def codex_home():
+    """Flippy's own CODEX_HOME, per profile: its ChatGPT sign-in, and nothing of the user's Codex setup."""
+    from .profile import current
+    home = os.path.join(current().config_dir, "codex")
+    os.makedirs(home, mode=0o700, exist_ok=True)
+    return home
+
+
 def child_environment():
-    """Reuse Codex's own login without inheriting API keys, proxies or providers."""
+    """Flippy's Codex home, without inheriting API keys, proxies, providers or the user's CODEX_HOME."""
     keys = ("HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL")
     env = {key: os.environ[key] for key in keys if key in os.environ}
     env["PATH"] = _search_path()
+    env["CODEX_HOME"] = codex_home()
     return env
+
+
+def login_command(executable):
+    """The shell command Setup runs in a terminal: Codex's own ChatGPT browser sign-in, into Flippy's Codex home.
+    Flippy never sees the tokens."""
+    import shlex
+    env = child_environment()
+    return ("unset OPENAI_API_KEY CODEX_API_KEY; export CODEX_HOME=" + shlex.quote(env["CODEX_HOME"])
+            + " PATH=" + shlex.quote(env["PATH"]) + "; "
+            + shlex.quote(executable) + " -c 'forced_login_method=\"chatgpt\"' login")
 
 
 def _config_args(config):
@@ -297,7 +329,8 @@ class CodexProvider:
             self.auth_source = "app-server"
             return True
         except CodexSignInRequired:
-            self.blocked_reason = "Sign in to the installed Codex CLI with ChatGPT to use it in Flippy."
+            self.blocked_reason = ("Sign in to Codex for Flippy from Setup. Flippy keeps its own Codex sign-in, "
+                                   "separate from your Codex app and settings.")
             self.auth_source = None
             return False
         except Exception:
@@ -355,12 +388,12 @@ class CodexProvider:
             return
         effective = (await self._rpc.request("config/read", {"includeLayers": False})).get("config", {})
         if effective.get("model_provider") != "openai":
-            raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
+            raise _not_isolated("model_provider")
         if effective.get("openai_base_url") not in (None, "", "https://api.openai.com/v1"):
-            raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")  # the user's config points requests elsewhere: don't follow it
+            raise _not_isolated("openai_base_url")  # the user's config points requests elsewhere: don't follow it
         servers = effective.get("mcp_servers", {})
         if not isinstance(servers, dict):
-            raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
+            raise _not_isolated("mcp_servers")
         # Empty TOML maps merge with inherited maps, rather than clearing them.
         # Only IDs survive this read; never log or retain credential-bearing config.
         names = tuple(servers)
@@ -371,7 +404,7 @@ class CodexProvider:
             self._rpc = await self._connect({**SAFE_CONFIG, **overrides})
             effective = (await self._rpc.request("config/read", {"includeLayers": False})).get("config", {})
             if any(server.get("enabled") is not False for server in effective.get("mcp_servers", {}).values()):
-                raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
+                raise _not_isolated("mcp_servers_enabled")
             del effective
         self._isolated = True
 
@@ -397,9 +430,12 @@ class CodexProvider:
             "selectedCapabilityRoots": [], "cwd": self._rpc.cwd,
             "approvalPolicy": "never", "sandbox": "read-only",
         })
-        if (result.get("modelProvider") != "openai" or not result.get("thread", {}).get("ephemeral")
-                or result.get("instructionSources") or result.get("runtimeWorkspaceRoots")):
-            raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
+        for reason, leaked in (("thread_provider", result.get("modelProvider") != "openai"),
+                               ("thread_not_ephemeral", not result.get("thread", {}).get("ephemeral")),
+                               ("instruction_sources", result.get("instructionSources")),  # e.g. an AGENTS.md
+                               ("workspace_roots", result.get("runtimeWorkspaceRoots"))):
+            if leaked:
+                raise _not_isolated(reason)
         self.last_model = result.get("model")
         thread_id = result["thread"]["id"]
         cursor = None
@@ -409,7 +445,7 @@ class CodexProvider:
             })
             if any(server.get("tools") or server.get("resources") or server.get("resourceTemplates")
                    for server in inventory.get("data", [])):
-                raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
+                raise _not_isolated("mcp_tools")
             cursor = inventory.get("nextCursor")
             if not cursor:
                 break
@@ -446,7 +482,7 @@ class CodexProvider:
                 or not isinstance(params.get("arguments"), dict)):
             await self._rpc.send({"id": event["id"],
                                   "error": {"code": -32601, "message": "Tool unavailable in Flippy."}})
-            raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
+            raise _not_isolated("unknown_tool_call")
         self._tool_request = event["id"]
         result = await desktop.invoke(name, params["arguments"])
         content = []
@@ -500,7 +536,7 @@ class CodexProvider:
                         if method != "item/tool/call":
                             await self._rpc.send({"id": event["id"], "error": {
                                 "code": -32601, "message": "Capability unavailable in Flippy."}})
-                            raise CodexError(ISOLATION_BLOCKED, "CODEX-ISOLATION")
+                            raise _not_isolated("server_request:" + re.sub(r"[^\w/.-]", "", str(method))[:60])
                         tool_calls += 1
                         if desktop and tool_calls > desktop.max_turns:
                             await self._rpc.send({"id": event["id"], "result": {

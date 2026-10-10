@@ -117,4 +117,6 @@ def describe(err):
     from .usage_guard import PlanLimitReached
     sentence = str(err) if isinstance(err, PlanLimitReached) else None  # it says when the limit resets
     first = (str(err).strip().splitlines() or [""])[0][:160]
-    return say(code, sentence), f"{code}: {type(err).__name__}" + (f": {first}" if first else "")
+    reason = getattr(err, "reason", None)  # CodexError: which check, by a fixed name
+    return say(code, sentence), (f"{code}: {type(err).__name__}" + (f" ({reason})" if reason else "")
+                                 + (f": {first}" if first else ""))
