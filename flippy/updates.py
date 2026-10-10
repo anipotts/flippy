@@ -23,6 +23,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from . import bundle
 from .profile import current
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -85,7 +86,9 @@ def latest_release(slug=None, timeout=10):
         raise UpdateError(f"couldn't reach GitHub ({e})") from e
     return {"version": d.get("tag_name", "").lstrip("v"), "name": d.get("name") or d.get("tag_name", ""),
             "notes": (d.get("body") or "").strip(), "url": d.get("html_url", ""),
-            "assets": {a["name"]: a["browser_download_url"] for a in d.get("assets") or [] if "name" in a}}
+            "assets": {a["name"]: a["browser_download_url"] for a in d.get("assets") or [] if "name" in a},
+            # GitHub records each asset's sha256 when it's uploaded ("sha256:<hex>")
+            "digests": {a["name"]: a["digest"] for a in d.get("assets") or [] if a.get("name") and a.get("digest")}}
 
 
 # ---- remembering checks and "Later"
@@ -172,7 +175,7 @@ def blocked(root=ROOT):
 
 def bundled():
     """The self-contained Flippy.app (scripts/build_app.sh): its Python and packages are inside the app, so an
-    update can replace the code (in Application Support) but not packages or the launcher."""
+    update installs a new copy of the code (flippy/bundle.py) and only when it needs the same runtime."""
     return os.environ.get("FLIPPY_BUNDLED") == "1"
 
 
@@ -214,28 +217,43 @@ def _download(url, dest, timeout=120):
         raise UpdateError(f"couldn't download the update ({e})") from e
 
 
+def _verify(path, digest):
+    """The download is byte-for-byte what was uploaded to the release (digest: GitHub's "sha256:<hex>")."""
+    algo, _, want = (digest or "").partition(":")
+    if algo != "sha256" or not want:
+        raise UpdateError("the release doesn't say what the download should contain; not installing it")
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    if h.hexdigest() != want.lower():
+        raise UpdateError("the download doesn't match the release; not installing it")
+
+
+def _extract(archive, into):
+    """Unpack a release download (one top folder inside) into `into`; returns that folder."""
+    with tarfile.open(archive) as tar:
+        if hasattr(tarfile, "data_filter"):
+            tar.extractall(into, filter="data")  # no absolute paths, .., devices or links out of `into`
+        else:
+            for m in tar.getmembers():
+                if m.name.startswith("/") or ".." in m.name.split("/") or not (m.isfile() or m.isdir()):
+                    raise UpdateError(f"unexpected file in the update: {m.name}")
+            tar.extractall(into)
+    tops = os.listdir(into)
+    if len(tops) != 1 or not os.path.isfile(os.path.join(into, tops[0], "flippy", "daemon.py")):
+        raise UpdateError("the update doesn't look like Flippy")
+    return os.path.join(into, tops[0])
+
+
 def unpack(archive, root, log=print):
     """Unpack a release download (one top folder inside) over root. Returns the changed paths."""
     before = _files(root)
     with tempfile.TemporaryDirectory() as tmp:
-        with tarfile.open(archive) as tar:
-            if hasattr(tarfile, "data_filter"):
-                tar.extractall(tmp, filter="data")  # no absolute paths, .., devices or links out of tmp
-            else:
-                for m in tar.getmembers():
-                    if m.name.startswith("/") or ".." in m.name.split("/") or not (m.isfile() or m.isdir()):
-                        raise UpdateError(f"unexpected file in the update: {m.name}")
-                tar.extractall(tmp)
-        tops = os.listdir(tmp)
-        if len(tops) != 1 or not os.path.isfile(os.path.join(tmp, tops[0], "flippy", "daemon.py")):
-            raise UpdateError("the update doesn't look like Flippy")
-        src = os.path.join(tmp, tops[0])
+        src = _extract(archive, tmp)
         if package_platform(src) != package_platform(root):
             raise UpdateError(f"the update is for {package_platform(src)}, this copy is {package_platform(root)}")
         new = _files(src)
-        if bundled() and any(before.get(rel) != new.get(rel) for rel in set(before) | set(new)
-                             if rel in (requirements_file(), "packaging/macos/Launcher.swift")):
-            raise UpdateError(NEW_APP.format(version=current_version_at(src)))  # nothing replaced yet
         for rel in new:
             if before.get(rel) != new[rel]:
                 os.makedirs(os.path.dirname(os.path.join(root, rel)) or root, exist_ok=True)
@@ -248,9 +266,10 @@ def unpack(archive, root, log=print):
 
 
 def install(root=ROOT, log=print):
-    """Update to the latest: fast-forward a checkout to origin/main, or unpack the latest release over a download;
+    """Update to the latest: fast-forward a checkout to origin/main, or install the latest release download;
     reinstall packages if the requirements changed.
-    Returns {'from', 'to', 'packages', 'app'}: app = the macOS launcher changed (needs ./install.sh)."""
+    Returns {'from', 'to', 'version', 'packages', 'app'}: version = what's installed now; app = the macOS launcher
+    changed (needs ./install.sh)."""
     if current().demo:
         raise UpdateError("Updates are disabled in Flippy Demo; rebuild the demo instead.")
     why = blocked(root)
@@ -260,7 +279,7 @@ def install(root=ROOT, log=print):
         before = current_version_at(root)
         rel = latest_release()
         if not rel or not is_newer(rel["version"], before):
-            return {"from": before, "to": before, "packages": False, "app": False}
+            return {"from": before, "to": before, "version": before, "packages": False, "app": False}
         name = f"flippy-{rel['version']}-{package_platform(root)}.tar.gz"
         url = rel.get("assets", {}).get(name)
         if not url:
@@ -269,6 +288,9 @@ def install(root=ROOT, log=print):
         with tempfile.TemporaryDirectory() as tmp:
             archive = os.path.join(tmp, name)
             _download(url, archive)
+            _verify(archive, rel.get("digests", {}).get(name))
+            if bundled():
+                return _install_bundled(archive, before, log)
             changed = unpack(archive, root, log)
         after = current_version_at(root)
     else:
@@ -290,5 +312,25 @@ def install(root=ROOT, log=print):
                            env=env, timeout=900)
         if r.returncode != 0:
             raise UpdateError("installing packages failed: " + (r.stderr.strip().splitlines() or ["?"])[-1])
-    return {"from": before[:7], "to": after[:7], "packages": packages,
+    return {"from": before[:7], "to": after[:7], "version": current_version_at(root), "packages": packages,
             "app": any(f.startswith("packaging/macos/") for f in changed)}
+
+
+def _install_bundled(archive, before, log):
+    """The self-contained app: the release becomes a new copy of the code next to the running one (flippy/bundle.py),
+    so nothing the running Flippy uses is touched and a restart picks it up. A release that needs a different
+    runtime (packages, launcher, Python) is refused: that takes a new Flippy.dmg."""
+    home, runtime = os.environ.get("FLIPPY_CODE_HOME"), os.environ.get("FLIPPY_RUNTIME")
+    with tempfile.TemporaryDirectory() as tmp:
+        src = _extract(archive, tmp)
+        version = current_version_at(src)
+        if package_platform(src) != "macos":
+            raise UpdateError(f"the update is for {package_platform(src)}, this copy is macos")
+        if not home or not runtime:  # started by an older launcher that doesn't know about runtimes
+            raise UpdateError(NEW_APP.format(version=version))
+        try:
+            slot = bundle.activate(home, src, runtime)
+        except bundle.BundleError:
+            raise UpdateError(NEW_APP.format(version=version)) from None
+    log(f"update: installed {version} at {slot}")
+    return {"from": before, "to": version, "version": version, "packages": False, "app": False}

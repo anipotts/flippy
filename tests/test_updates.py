@@ -86,6 +86,19 @@ def package(base, name, platform, files):
     return archive
 
 
+def published(archive, version="0.2.2", digest=None):
+    """The latest-release record GitHub would return for `archive`, with the sha256 it records on upload."""
+    import hashlib
+    name = os.path.basename(archive)
+    with open(archive, "rb") as f:
+        digest = digest or "sha256:" + hashlib.sha256(f.read()).hexdigest()
+    return {"version": version, "assets": {name: "https://example/" + name}, "digests": {name: digest}}
+
+
+def serve(archive):
+    return mock.patch.object(updates, "_download", lambda url, dest: __import__("shutil").copy(archive, dest))
+
+
 class TestPackageInstall(unittest.TestCase):
     """A release download (no .git) updates from its platform's file on the latest release."""
 
@@ -113,10 +126,8 @@ class TestPackageInstall(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def install(self, new):
-        rel = {"version": "0.2.2", "assets": {os.path.basename(new): "https://example/" + os.path.basename(new)}}
-        with mock.patch.object(updates, "latest_release", return_value=rel), \
-                mock.patch.object(updates, "_download", lambda url, dest: __import__("shutil").copy(new, dest)), \
+    def install(self, new, rel=None):
+        with mock.patch.object(updates, "latest_release", return_value=rel or published(new)), serve(new), \
                 mock.patch("subprocess.run", return_value=mock.Mock(returncode=0, stderr="")) as run:
             return updates.install(root=self.root, log=lambda *a: None), run
 
@@ -136,30 +147,24 @@ class TestPackageInstall(unittest.TestCase):
     def test_wrong_platform_is_refused(self):
         other_platform = "linux" if self.platform == "macos" else "macos"
         new = package(self.base, f"flippy-0.2.2-{other_platform}", other_platform, {"VERSION": "0.2.2\n"})
-        rel = {"version": "0.2.2", "assets": {f"flippy-0.2.2-{self.platform}.tar.gz": "https://example/x"}}
-        with mock.patch.object(updates, "latest_release", return_value=rel), \
-                mock.patch.object(updates, "_download", lambda url, dest: __import__("shutil").copy(new, dest)):
-            with self.assertRaises(updates.UpdateError):
-                updates.install(root=self.root, log=lambda *a: None)
+        rel = published(new)
+        name = f"flippy-0.2.2-{self.platform}.tar.gz"  # served under this platform's name
+        rel["assets"], rel["digests"] = {name: "https://example/x"}, {name: rel["digests"].popitem()[1]}
+        with self.assertRaisesRegex(updates.UpdateError, "is for"):
+            self.install(new, rel)
         self.assertEqual(updates.current_version_at(self.root), "0.2.1")
 
-    def test_the_self_contained_app_takes_code_only_updates(self):
+    def test_a_download_that_doesnt_match_the_release_is_refused(self):
         new = package(self.base, f"flippy-0.2.2-{self.platform}", self.platform,
-                      {"VERSION": "0.2.2\n", "flippy/video.py": "v\n", self.requirements: "a\n"})
-        with mock.patch.dict(os.environ, {"FLIPPY_BUNDLED": "1"}):
-            res, run = self.install(new)
-        self.assertEqual((res["to"], res["packages"]), ("0.2.2", False))
-        self.assertFalse(run.called)
-
-    def test_the_self_contained_app_asks_for_a_new_download_when_packages_change(self):
-        new = package(self.base, f"flippy-0.2.2-{self.platform}", self.platform,
-                      {"VERSION": "0.2.2\n", "flippy/video.py": "v\n", self.requirements: "a\nb\n"})
-        with mock.patch.dict(os.environ, {"FLIPPY_BUNDLED": "1"}):
-            with self.assertRaises(updates.UpdateError) as raised:
-                self.install(new)
-        self.assertIn("Flippy.dmg", str(raised.exception))
-        self.assertEqual(updates.current_version_at(self.root), "0.2.1")  # nothing replaced
-        self.assertFalse(os.path.exists(os.path.join(self.root, "flippy", "video.py")))
+                      {"VERSION": "0.2.2\n", "flippy/video.py": "v\n"})
+        for digest, why in (("sha256:" + "0" * 64, "doesn't match"), ("", "doesn't say")):
+            rel = published(new, digest=digest or None)
+            if not digest:
+                rel["digests"] = {}
+            with self.subTest(why), self.assertRaisesRegex(updates.UpdateError, why):
+                self.install(new, rel)
+            self.assertEqual(updates.current_version_at(self.root), "0.2.1")
+            self.assertFalse(os.path.exists(os.path.join(self.root, "flippy", "video.py")))
 
     def test_up_to_date(self):
         with mock.patch.object(updates, "latest_release", return_value={"version": "0.2.1", "assets": {}}):
@@ -169,3 +174,79 @@ class TestPackageInstall(unittest.TestCase):
 
 class TestLinuxPackageInstall(TestPackageInstall):
     runtime_platform = "linux"
+
+
+RUNTIME = {"requirements-mac.txt": "a\n", "packaging/macos/Launcher.swift": "// launcher\n",
+           "packaging/macos/runtime.env": "PY_VERSION=3.13.15\n"}
+
+
+class TestBundledInstall(unittest.TestCase):
+    """The self-contained Flippy.app: an update becomes a new copy of the code next to the running one
+    (flippy/bundle.py), and only when it needs the runtime the app has."""
+
+    def setUp(self):
+        from flippy import bundle
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = self.tmp.name
+        self.home = os.path.join(self.base, "Application Support", "Flippy")
+        # what the launcher sets up: the running copy, current, checked against this app's runtime
+        old = package(self.base, "flippy-0.2.1-macos", "macos", {"VERSION": "0.2.1\n", **RUNTIME})
+        self.running = os.path.join(self.home, "versions", "1-0.2.1")
+        os.makedirs(os.path.dirname(self.running))
+        updates._extract(old, os.path.join(self.base, "x"))
+        os.rename(os.path.join(self.base, "x", "flippy-0.2.1-macos"), self.running)
+        self.runtime = bundle.runtime_id(self.running)
+        os.symlink("versions/1-0.2.1", os.path.join(self.home, "code"))
+        env = {"FLIPPY_BUNDLED": "1", "FLIPPY_CODE_HOME": self.home, "FLIPPY_RUNTIME": self.runtime}
+        patch = mock.patch.dict(os.environ, env)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.snapshot = self.tree(self.running)
+
+    def tree(self, root):
+        out = {}
+        for d, _, names in os.walk(root):
+            for n in names:
+                with open(os.path.join(d, n)) as f:
+                    out[os.path.relpath(os.path.join(d, n), root)] = f.read()
+        return out
+
+    def install(self, files, version="0.2.2"):
+        new = package(self.base, f"flippy-{version}-macos", "macos", {"VERSION": version + "\n", **files})
+        with mock.patch.object(updates, "latest_release", return_value=published(new, version)), serve(new), \
+                mock.patch("subprocess.run") as run:
+            res = updates.install(root=self.running, log=lambda *a: None)
+        self.assertFalse(run.called)  # never pip, never ./install.sh
+        return res
+
+    def current(self):
+        return os.path.realpath(os.path.join(self.home, "code"))
+
+    def test_a_release_on_the_same_runtime_becomes_a_new_current_copy(self):
+        res = self.install({**RUNTIME, "flippy/video.py": "v\n", "packaging/macos/make_icon.py": "new icon\n"})
+        self.assertEqual((res["from"], res["to"], res["version"], res["packages"], res["app"]),
+                         ("0.2.1", "0.2.2", "0.2.2", False, False))  # app: an icon change never runs ./install.sh
+        new = self.current()
+        self.assertNotEqual(new, os.path.realpath(self.running))
+        self.assertEqual(updates.current_version_at(new), "0.2.2")
+        self.assertTrue(os.path.exists(os.path.join(new, "flippy", "video.py")))
+        self.assertEqual(open(os.path.join(new, "RUNTIME")).read().strip(), self.runtime)
+        self.assertEqual(self.tree(self.running), self.snapshot)  # the running copy is untouched
+        self.assertEqual(os.readlink(os.path.join(self.home, "code")),
+                         os.path.join("versions", os.path.basename(new)))  # relative: the folder can move
+
+    def test_a_release_that_needs_a_different_runtime_asks_for_the_new_app(self):
+        for rel, text in (("requirements-mac.txt", "a\nb\n"), ("packaging/macos/Launcher.swift", "// v2\n"),
+                          ("packaging/macos/runtime.env", "PY_VERSION=3.14.0\n")):
+            with self.subTest(rel), self.assertRaisesRegex(updates.UpdateError, "Flippy.dmg"):
+                self.install({**RUNTIME, rel: text, "flippy/video.py": "v\n"})
+            self.assertEqual(self.current(), os.path.realpath(self.running))  # nothing switched
+            self.assertEqual(self.tree(self.running), self.snapshot)
+            self.assertEqual(os.listdir(os.path.join(self.home, "versions")), ["1-0.2.1"])  # nothing left behind
+
+    def test_an_app_whose_launcher_predates_runtimes_asks_for_the_new_app(self):
+        del os.environ["FLIPPY_RUNTIME"]
+        with self.assertRaisesRegex(updates.UpdateError, "Flippy.dmg"):
+            self.install({**RUNTIME})
+        self.assertEqual(self.current(), os.path.realpath(self.running))

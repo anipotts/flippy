@@ -3,7 +3,9 @@
 #
 # Everything Flippy needs is inside the app: a standalone Python (python-build-standalone), Flippy's packages,
 # cairo built here for macOS 13+ (Homebrew's only runs on the macOS it was built for), and the code, which the
-# launcher copies to ~/Library/Application Support/Flippy/code on first launch (packaging/macos/Launcher.swift).
+# launcher installs under ~/Library/Application Support/Flippy on first launch (packaging/macos/Launcher.swift).
+# Every input comes from the release download: its pinned runtime (packaging/macos/runtime.env), packages and
+# launcher, so the runtime fingerprint stamped into the app (flippy/bundle.py) describes exactly what was built.
 # Apple Silicon only. Needs the Xcode Command Line Tools and network access; nothing is installed system-wide.
 #   scripts/build_app.sh                         (code from scripts/package.sh: needs a clean committed tree)
 #   scripts/build_app.sh dist/flippy-X-macos.tar.gz
@@ -11,11 +13,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 [ "$(uname)" = Darwin ] && [ "$(uname -m)" = arm64 ] || { echo "build_app needs an Apple Silicon Mac" >&2; exit 1; }
-
-# pinned inputs (bump deliberately, then rebuild and test)
-PY_RELEASE=20260924 PY_VERSION=3.13.15
-PIXMAN=0.46.2 LIBPNG=1.6.58 CAIRO=1.18.4 PYCAIRO=1.29.2
-export MACOSX_DEPLOYMENT_TARGET=13.0
 
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 CACHE="$ROOT/dist/cache"
@@ -37,6 +34,12 @@ if [ -z "$TARBALL" ]; then
 fi
 VERSION="$(basename "$TARBALL" .tar.gz | sed -E 's/^flippy-(.*)-macos$/\1/')"
 say "Flippy $VERSION from $TARBALL"
+tar -xzf "$TARBALL" -C "$WORK"
+CODE="$WORK/flippy-$VERSION-macos"
+[ -f "$CODE/flippy/daemon.py" ] || { echo "$TARBALL isn't a macOS release download" >&2; exit 1; }
+# shellcheck source=../packaging/macos/runtime.env
+. "$CODE/packaging/macos/runtime.env"   # pinned inputs: bump them there, deliberately, then rebuild and test
+export MACOSX_DEPLOYMENT_TARGET
 
 # 2. Build tools in a scratch environment (meson, ninja, delocate), not on the system.
 say "Build tools"
@@ -86,7 +89,7 @@ say "pycairo $PYCAIRO (against our cairo)"
 delocate-wheel -w "$WORK/fixed" --require-archs arm64 "$WORK/wheels"/pycairo-*.whl >/dev/null
 "$PY" -m pip install -q "$WORK/fixed"/pycairo-*.whl
 say "Flippy's packages"
-grep -v '^pycairo' "$ROOT/requirements-mac.txt" > "$WORK/requirements.txt"
+grep -v '^pycairo' "$CODE/requirements-mac.txt" > "$WORK/requirements.txt"
 "$PY" -m pip install -q --only-binary :all: -r "$WORK/requirements.txt" certifi
 cp "$("$PY" -c 'import certifi; print(certifi.where())')" "$RES/cacert.pem"
 # What the app never uses: PyObjC's test suite, pip (the app's packages only change with a new Flippy.dmg),
@@ -105,23 +108,26 @@ PY
 
 # 6. The code, the launcher, the icon and Info.plist.
 say "The app"
-tar -xzf "$TARBALL" -C "$WORK"
-mv "$WORK/flippy-$VERSION-macos" "$RES/code"
+mv "$CODE" "$RES/code"
 find "$RES" -name __pycache__ -type d -prune -exec rm -rf {} +
+RUNTIME="$("$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); from flippy.bundle import runtime_id
+print(runtime_id(sys.argv[1]))' "$RES/code")"
+echo "$RUNTIME" > "$RES/code/RUNTIME"
+say "Runtime $RUNTIME"
 xcrun --sdk macosx swiftc -module-cache-path "$WORK/modules" -target "arm64-apple-macosx$MACOSX_DEPLOYMENT_TARGET" -O \
-    -o "$APP/Contents/MacOS/Flippy" "$ROOT/packaging/macos/Launcher.swift"
-"$PY" "$ROOT/packaging/macos/make_icon.py" "$RES/Flippy.icns"
-"$PY" - "$APP/Contents/Info.plist" "$VERSION" <<'PY'
+    -o "$APP/Contents/MacOS/Flippy" "$RES/code/packaging/macos/Launcher.swift"
+"$PY" "$RES/code/packaging/macos/make_icon.py" "$RES/Flippy.icns"
+"$PY" - "$APP/Contents/Info.plist" "$VERSION" "$RUNTIME" "$MACOSX_DEPLOYMENT_TARGET" <<'PY'
 import plistlib, sys
-out, version = sys.argv[1:]
+out, version, runtime, minimum = sys.argv[1:]
 with open(out, "wb") as f:
     plistlib.dump({
         "CFBundleName": "Flippy", "CFBundleDisplayName": "Flippy", "CFBundleIdentifier": "dev.flippy.app",
         "CFBundleExecutable": "Flippy", "CFBundleIconFile": "Flippy", "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": version, "CFBundleVersion": version, "LSMinimumSystemVersion": "13.0",
+        "CFBundleShortVersionString": version, "CFBundleVersion": version, "LSMinimumSystemVersion": minimum,
         "LSUIElement": True, "NSHighResolutionCapable": True, "LSArchitecturePriority": ["arm64"],
         "NSScreenCaptureUsageDescription": "Flippy sends a screenshot with each question so your tutor can see what you mean.",
-        "FlippyBundled": True, "FlippyProfile": "default",
+        "FlippyBundled": True, "FlippyProfile": "default", "FlippyRuntime": runtime,
     }, f)
 PY
 
