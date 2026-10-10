@@ -13,20 +13,25 @@ import copy
 
 from ..actions import _COORD, BACKGROUND_CATALOG, DIRECTIONS, _schema
 
-KEYS = ("return", "tab", "escape", "space", "delete", "up", "down", "left", "right", "home", "end", "pageup",
-        "pagedown", "ctrl+a", "ctrl+c", "ctrl+v", "ctrl+x", "ctrl+z", "ctrl+shift+z", "ctrl+n", "ctrl+t", "ctrl+w",
-        "ctrl+s", "ctrl+shift+s", "ctrl+o", "ctrl+shift+n", "ctrl+f", "ctrl+b", "ctrl+i", "ctrl+u", "ctrl+l",
-        "ctrl+return")
+NAMED_KEYS = ("return", "tab", "escape", "space", "delete", "forwarddelete", "up", "down", "left", "right", "home",
+              "end", "pageup", "pagedown")
+# Any shortcut an app might have (Blender: shift+a, tab, ctrl+r...): ctrl / shift / alt with a letter, digit, F-key,
+# punctuation or a named key. Not super, nor ctrl+alt: COSMIC takes those itself, so they'd reach the desktop, not
+# the app.
+KEY_PATTERN = (r"(?!.*ctrl.*alt|.*alt.*ctrl)((ctrl|shift|alt)\+){0,3}"
+               r"(" + "|".join(NAMED_KEYS) + r"|f[1-9]|f1[0-2]|[a-z0-9]|[-=\[\];',./`\\])")
 
 CATALOG = copy.deepcopy(BACKGROUND_CATALOG)
 CATALOG["use_app"]["description"] = ("Work in another app from now on. Opens it if needed (a new window takes the "
                                      "focus for a moment; Flippy gives it back). Returns a look at it.")
 CATALOG["type"]["description"] = ("Type text into the target app's focused text control (or the one you focused). "
                                    "Goes in at its cursor in the background.")
-CATALOG["key"] = {"description": "Press a key or shortcut in the target app. return, delete, ctrl+a/c/x/v in a text "
-                                 "control work in the background; the rest bring the app forward for a moment while "
-                                 "the user pauses, so prefer a menu item or control that does the same.",
-                  "schema": _schema({"combo": {"type": "string", "enum": list(KEYS)}})}
+CATALOG["key"] = {"description": "Press a key or shortcut in the target app: a key (a, 7, f5, return, escape, "
+                                 "delete, up, pagedown...) with any of ctrl, shift, alt in front, e.g. shift+a, "
+                                 "ctrl+shift+s. return, delete, ctrl+a/c/x/v in a text control work in the background; "
+                                 "the rest bring the app forward for a moment while the user pauses, so prefer a menu "
+                                 "item or control that does the same. Typing a capital letter is text, not a shortcut.",
+                  "schema": _schema({"combo": {"type": "string", "pattern": "^" + KEY_PATTERN + "$"}})}
 CATALOG["click"] = {"description": "Click a spot in the last look's screenshot (its pixels), for things that aren't in "
                                    "the controls list. A control at that spot is pressed in the background; anything "
                                    "else needs the real pointer, which Flippy borrows while the user pauses.",
@@ -87,6 +92,6 @@ Before your final reply, if you learned how this app works (what worked, what it
 a precise how-to, e.g. "new document: menu ["Menu", "New Window"], then type; the text area is the only field".
 Skip it if the remembered way below worked as written.
 Finish by checking the latest look shows the result (the text is there, the song you picked is the one playing).
-Do not claim success unless it does. Keep your final reply short and plain text.
-No POINT tags or tutorial steps.
+Do not claim success unless it does. Keep your final reply short: two or three plain sentences, no
+markdown (no ** or bullet lists; the card shows them as typed). No POINT tags or tutorial steps.
 """

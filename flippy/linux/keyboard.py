@@ -86,12 +86,24 @@ def key(combo):
                               last.upper() if last[:1] == "f" and last[1:].isdigit() else None)
     if sym is None:
         return f"unknown key {last!r}"
+    # The modifiers go down as keys of their own, not just as modifier state: apps that track the keys
+    # themselves (Blender) saw a plain "a" for shift+a when only the state was sent.
+    mods = [bit for bit in MOD_KEYS if mask & bit]
     with _lock:
-        conn.set_keymap([sym])
+        conn.set_keymap([sym] + [MOD_KEYS[bit] for bit in mods])
         time.sleep(0.05)
-        conn.modifiers(mask)
+        held = 0
+        for i, bit in enumerate(mods, start=1):
+            conn.key(i, True)
+            held |= bit
+            conn.modifiers(held)
+            time.sleep(0.01)
         _press(conn, 0, 0.03)
-        conn.modifiers(0)
+        for i, bit in reversed(list(enumerate(mods, start=1))):
+            conn.key(i, False)
+            held &= ~bit
+            conn.modifiers(held)
+            time.sleep(0.01)
     return "ok"
 
 

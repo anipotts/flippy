@@ -349,12 +349,25 @@ class LinuxTools(unittest.IsolatedAsyncioTestCase):
         self.assertIs(seen["catalog"], self.act.CATALOG)
         self.assertTrue(seen["prompt"].startswith(self.act.PROMPT))
 
+    async def test_any_app_shortcut_but_not_the_desktops(self):
+        for combo in ("shift+a", "tab", "ctrl+shift+s", "alt+f4", "f12", "ctrl+/", "pagedown"):
+            r = await self.tools.invoke("key", {"combo": combo, "reason": "x"})
+            self.assertFalse(r.get("is_error"), combo)
+        for combo in ("super+q", "ctrl+alt+t", "ctrl+shift+alt+z", "A", "cmd+s", "ctrl+"):
+            self.tools.cancel.clear()
+            self.tools.failure = None
+            await self.tools.invoke("look", {})
+            r = await self.tools.invoke("key", {"combo": combo, "reason": "x"})
+            self.assertTrue(r.get("is_error"), combo)
+
     def test_every_key_offered_can_be_typed(self):
+        import re
         from flippy.linux import keyboard
-        for combo in self.act.KEYS:
-            *mods, last = combo.split("+")
-            self.assertTrue(all(m in keyboard.MODS for m in mods), combo)
-            self.assertTrue(last in keyboard.NAMED or len(last) == 1, combo)
+        pattern = self.act.CATALOG["key"]["schema"]["properties"]["combo"]["pattern"]
+        for last in (*self.act.NAMED_KEYS, "a", "7", "f11", "/", "`"):
+            self.assertTrue(re.fullmatch(pattern, "ctrl+shift+" + last), last)
+            self.assertTrue(last in keyboard.NAMED or len(last) == 1 or last[1:].isdigit(), last)
+        self.assertTrue(all(m in keyboard.MODS for m in ("ctrl", "shift", "alt")))
 
 
 @unittest.skipUnless(LINUX, "Linux only")

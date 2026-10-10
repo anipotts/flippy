@@ -323,8 +323,12 @@ class DesktopTools:
                 text.encode("utf-16-le")
             except UnicodeError:
                 raise ActionError("Invalid text.") from None
-        elif name == "key" and args["combo"] not in self.tool_catalog["key"]["schema"]["properties"]["combo"]["enum"]:
-            raise ActionError("Unsupported shortcut.")
+        elif name == "key":
+            combo = self.tool_catalog["key"]["schema"]["properties"]["combo"]
+            ok = (args["combo"] in combo["enum"] if "enum" in combo else  # COSMIC's catalog gives a pattern instead
+                  isinstance(args["combo"], str) and re.fullmatch(combo["pattern"], args["combo"]) is not None)
+            if not ok:
+                raise ActionError("Unsupported shortcut.")
 
     def catalog(self):
         catalog = copy.deepcopy(self.tool_catalog)
