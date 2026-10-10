@@ -34,14 +34,15 @@ git push -q origin main "v$VERSION"
 gh release create "v$VERSION" --title "Flippy $VERSION" --notes "$NOTES" \
     "dist/flippy-$VERSION-macos.tar.gz#Flippy $VERSION for macOS" "dist/flippy-$VERSION-linux.tar.gz#Flippy $VERSION for Linux (COSMIC)"
 # The README's download buttons link to releases/latest/download/<name>, which needs names without a version:
-# Flippy.dmg (macOS, built here only on a Mac) and flippy-linux.tar.gz. The updater only reads the versioned ones.
+# Flippy.dmg (the self-contained macOS app, built only on an Apple Silicon Mac) and flippy-linux.tar.gz.
+# The updater only reads the versioned tarballs.
 cp "dist/flippy-$VERSION-linux.tar.gz" dist/flippy-linux.tar.gz
 gh release upload "v$VERSION" "dist/flippy-linux.tar.gz#Flippy for Linux (COSMIC), latest" --clobber
-if [ "$(uname)" = Darwin ]; then
-    scripts/make_dmg.sh "dist/flippy-$VERSION-macos.tar.gz" dist/Flippy.dmg
-    gh release upload "v$VERSION" "dist/Flippy.dmg#Flippy for macOS (disk image), latest" --clobber
+if [ "$(uname)" = Darwin ] && [ "$(uname -m)" = arm64 ]; then
+    scripts/build_app.sh "dist/flippy-$VERSION-macos.tar.gz"
+    gh release upload "v$VERSION" "dist/Flippy.dmg#Flippy for macOS (Apple Silicon), latest" --clobber
 else
-    echo "Now on a Mac: scripts/make_dmg.sh dist/flippy-$VERSION-macos.tar.gz dist/Flippy.dmg &&" \
+    echo "Now on an Apple Silicon Mac: scripts/build_app.sh dist/flippy-$VERSION-macos.tar.gz &&" \
          "gh release upload v$VERSION dist/Flippy.dmg --clobber   (the README's macOS button needs it)" >&2
 fi
 echo "Released Flippy $VERSION"
