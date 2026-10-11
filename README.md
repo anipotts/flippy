@@ -2,12 +2,7 @@
 
 An AI tutor that sits on top of your desktop. Press a hotkey, type a question about whatever's on screen, and Claude answers in a small card, with a pointer that flies to the exact button, menu or setting it's talking about.
 
-[![Download for macOS](https://img.shields.io/badge/Download_for-macOS_(.dmg)-111?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/kap-il/flippy/releases/latest/download/Flippy.dmg)
-[![Download for Linux (COSMIC)](https://img.shields.io/badge/Download_for-Linux_(.tar.gz)-e95420?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/kap-il/flippy/releases/latest/download/flippy-linux.tar.gz)
-
-Then follow [macOS](#macos) or [Linux](#linux-cosmic) below.
-
-Runs on **macOS** (13+, native AppKit) and on **Linux with COSMIC on Wayland** (Pop!_OS 24.04). Modeled on [farzaa/clicky](https://github.com/farzaa/clicky) (macOS), rewritten from scratch in Python. If you like what I made, Farza is the pioneer! go check out (and star his repo if you starred this) [heyclicky.com](https://www.heyclicky.com/)
+Runs on **macOS 13+** (Apple Silicon or Intel) and on **Linux with COSMIC on Wayland** (Pop!_OS 24.04). Modeled on [farzaa/clicky](https://github.com/farzaa/clicky) (macOS), rewritten from scratch in Python. If you like what I made, Farza is the pioneer! go check out (and star his repo if you starred this) [heyclicky.com](https://www.heyclicky.com/)
 
 ## What it does
 
@@ -26,67 +21,69 @@ Ordinary questions and tips stay tool-free. An explicit `/act` request can use a
 
 ## Install
 
-One command on either: open Terminal and paste
+Flippy installs from source with one command. There's no `.dmg` or download to open: Flippy isn't notarized by Apple, so a downloaded app gets blocked by macOS. Building it on your own Mac avoids that.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/kap-il/flippy/main/install.sh | bash
-```
-
-It downloads Flippy to `~/flippy` (set `FLIPPY_DIR` to put it elsewhere) and runs the right installer for your OS. Run it again any time to update. Prefer to look first? `git clone https://github.com/kap-il/flippy && cd flippy && ./install.sh` does the same.
-
-Or download it (the buttons at the top):
-
-- **macOS (Apple Silicon):** [Flippy.dmg](https://github.com/kap-il/flippy/releases/latest/download/Flippy.dmg). Open it and drag **Flippy** to **Applications**, then open it from Applications. Everything it needs is inside: no Homebrew or Terminal. Flippy isn't notarized, so the first time macOS says it can't verify it. Open System Settings → Privacy & Security, click **Open Anyway**, and open Flippy again. On an Intel Mac, use the one-line install above.
-- **Linux:** [flippy-linux.tar.gz](https://github.com/kap-il/flippy/releases/latest/download/flippy-linux.tar.gz). Unpack it where you want Flippy to live and run `./install.sh` inside.
-
-Each has only the code that platform needs, and updates itself from releases, like a git install does. Every release also has versioned copies (`flippy-<version>-macos.tar.gz`, `flippy-<version>-linux.tar.gz`) on the [releases page](https://github.com/kap-il/flippy/releases/latest).
+**You need:** a Claude Pro or Max subscription (or ChatGPT, through Codex), and about 5 minutes.
 
 ### macOS
 
-**From Flippy.dmg** (Apple Silicon): drag Flippy to Applications and open it. Nothing else to install. Its code lives in `~/Library/Application Support/Flippy/code`. An update installs the new code next to the running copy after checking it against the download's checksum, then switches over in one step, so the app itself never changes and keeps its permissions. A release that needs different packages or a different Python asks you to download the new Flippy.dmg instead.
+1. **Install Homebrew** if you don't have it. Paste the command from [brew.sh](https://brew.sh) into Terminal and follow what it prints.
+2. **Install Flippy.** Paste this into Terminal:
 
-**From the one-line install or a checkout** (any Mac): needs [Homebrew](https://brew.sh) (for cairo) and the Xcode Command Line Tools (the installer offers them if missing). `./install.sh` sets up the Python environment, builds **`~/Applications/Flippy.app`** and starts it.
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/kap-il/flippy/main/install.sh | bash
+   ```
 
-Flippy lives in the menu bar (the pointer icon); there's no Dock icon. On first launch a setup window walks you through:
+   If macOS asks to install the Xcode Command Line Tools, click **Install**, wait for it to finish, then paste the command again. The first run downloads about 200 MB and takes a few minutes.
+3. **Wait for the setup window.** Flippy builds `~/Applications/Flippy.app` and opens it. It lives in the menu bar (the pointer icon), with no Dock icon.
+4. **Follow the setup window:**
+   - **Connect Claude.** It opens Terminal running Claude Code. Type `/login` and sign in with your Pro/Max account.
+   - **Screen Recording.** Needed so Flippy can see your screen. Turn on **Flippy** in System Settings → Privacy & Security → Screen & System Audio Recording, then click **Restart Flippy** in the setup window.
+   - **Accessibility.** Needed for `/act` desktop tasks and the double-tap ⌘ pause. Turn on **Flippy** in System Settings → Privacy & Security → Accessibility, then restart Flippy.
+   - **Open at login** (optional).
+5. **Take the tour.** It takes a minute and shows each feature. Replay it any time from the menu bar icon → **Take the tour**.
 
-1. **Logging in to Claude** with your Pro/Max account (it opens Terminal running Claude Code; type `/login`).
-2. **Screen Recording permission**, so Flippy can see your screen. macOS only applies it after a restart; the setup window has a button for that.
-3. **Hotkeys:** `⇧⌘Space` asks, `⌃⇧Space` circles, `⌃⌥V` records a video edit to check, and double-tapping `⌘` pauses or resumes a walkthrough. Change them in Settings → Hotkeys.
-4. Optionally, **open at login**.
+Default hotkeys: `⇧⌘Space` asks, `⌃⇧Space` circles something, `⌃⌥V` records a video edit to check, double-tap `⌘` pauses a walkthrough. Change them in Settings → Hotkeys.
 
-Then a one-minute tour shows you each thing (ask, pause, skip and speed, follow along, circle, video review) and waits for you to try it, ending in Settings. Replay it from the menu (**Take the tour**) or with `flippy-ask tour`.
-
-Reopen the setup any time from the menu bar icon → Setup…
-
-Flippy.app is signed ad hoc (not notarized). With an install from a checkout, rebuilding it can make macOS ask for Screen Recording again. The Flippy.dmg app keeps its permissions through code updates; a new Flippy.dmg is a new build, so macOS asks once more.
+**If a permission is on but Flippy still says it's missing:** in that System Settings list, select Flippy, click **−** to remove it, then add `~/Applications/Flippy.app` again with **+** and restart Flippy. macOS remembers the exact build it approved, and an older Flippy (from a previous install or `Flippy.dmg`) can hold the entry. Delete any old copy first: `rm -rf /Applications/Flippy.app`.
 
 ### Linux (COSMIC)
 
-Needs COSMIC on Wayland (it uses `wlr-layer-shell` through gtk4-layer-shell and the xdg-desktop-portal screenshot API) and Python 3.11+.
+Needs COSMIC on Wayland (Pop!_OS 24.04) and Python 3.11+. For `/act` desktop tasks, the real pointer and real glass, update to COSMIC Epoch 1.7 or newer first (`sudo apt full-upgrade`, then log out and back in).
 
-`./install.sh` installs the apt packages, builds gtk4-layer-shell into `~/.local` (it isn't packaged for Ubuntu/Pop!_OS 24.04), sets up the Python environment links `flippy-ask` and `flippy-daemon` into `~/.local/bin`, and adds **Flippy** to the app library (opening it shows the settings). Then:
+1. **Install Flippy.** Paste this into a terminal (it asks for your password to install apt packages):
 
-1. **Log in to Claude:** run `claude` once and log in with your Pro/Max account. Don't set `ANTHROPIC_API_KEY`, or it would bill the API instead (the launcher unsets it to be safe).
-2. **Add the hotkeys** in COSMIC Settings → Keyboard → Keyboard shortcuts → Custom shortcuts, or let `flippy-ask setup` add them for you (it also checks step 1):
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/kap-il/flippy/main/install.sh | bash
+   ```
 
-| Shortcut | Command |
-|---|---|
-| `Super+Shift+Space` | `~/.local/bin/flippy-ask` |
-| `Super+Alt` | `~/.local/bin/flippy-ask draw` |
-| `Super+P` (optional) | `~/.local/bin/flippy-ask pause-toggle` |
-| `Super+Shift+V` (optional) | `~/.local/bin/flippy-ask video` |
+2. **Log in to Claude.** Run `claude` once and sign in with your Pro/Max account. Don't set `ANTHROPIC_API_KEY`, or it bills the API instead.
+3. **Add the hotkeys.** Run `~/.local/bin/flippy-ask setup` and let it add them, or add them yourself in COSMIC Settings → Keyboard → Keyboard shortcuts → Custom shortcuts. Use the full path:
 
-Use the full path; custom shortcuts don't always see `~/.local/bin` on `PATH`. The daemon starts itself on the first press, so there's no autostart to set up. Once it's running, Flippy's icon (your pointer) sits in the panel with the same menu as on macOS. To have it there from login (with help mode and update checks running), turn on **Open Flippy at login** in `flippy-ask setup`.
+   | Shortcut | Command |
+   |---|---|
+   | `Super+Shift+Space` | `~/.local/bin/flippy-ask` |
+   | `Super+Alt` | `~/.local/bin/flippy-ask draw` |
+   | `Super+P` (optional) | `~/.local/bin/flippy-ask pause-toggle` |
+   | `Super+Shift+V` (optional) | `~/.local/bin/flippy-ask video` |
 
-If you installed gtk4-layer-shell somewhere other than `~/.local`, set `FLIPPY_LAYER_SHELL_LIB` to its library directory.
+4. **Press `Super+Shift+Space`.** Flippy starts on the first press and its icon appears in the panel. To start it at login, turn on **Open Flippy at login** in `flippy-ask setup`.
 
-Single monitor only for now, on both platforms. `/act` desktop tasks, the real pointer and real glass need COSMIC Epoch 1.7 or newer (`sudo apt full-upgrade` on Pop!_OS, then log in again); the first time a task needs the pointer, COSMIC asks once to allow remote desktop. The double-tap pause key can't work on Wayland, so COSMIC uses a normal shortcut. [docs/linux-port.md](docs/linux-port.md) explains how it all works there.
+The installer puts the code in `~/flippy`, builds gtk4-layer-shell into `~/.local` (Pop!_OS doesn't package it), links `flippy-ask` and `flippy-daemon` into `~/.local/bin`, and adds **Flippy** to the app library. If you put gtk4-layer-shell somewhere else, set `FLIPPY_LAYER_SHELL_LIB` to its library folder. The first time a task needs the pointer, COSMIC asks once to allow remote desktop. [docs/linux-port.md](docs/linux-port.md) explains how it all works there.
+
+### Install options
+
+- **Somewhere other than `~/flippy`:** `curl -fsSL https://raw.githubusercontent.com/kap-il/flippy/main/install.sh | FLIPPY_DIR=~/code/flippy bash`
+- **Read it first:** `git clone https://github.com/kap-il/flippy && cd flippy && ./install.sh` does the same thing.
+- Single monitor only for now, on both platforms.
 
 ## Updates
 
-Flippy checks GitHub for a new release once a day. When one is out, Flippy shows a card (**Install / Later / What's new**); **Install** updates your copy and restarts Flippy. Check any time from the menu bar or panel icon (**Check for updates…**) or with `flippy-ask update`; `flippy-ask update install` installs without asking, and `flippy-ask version` shows what you have. Turn the daily check off with `updates.check = false`. If you've edited Flippy's files yourself, it won't overwrite them: update with `git pull` instead.
+Flippy checks GitHub for a new release once a day and shows a card (**Install / Later / What's new**). **Install** updates your copy and restarts Flippy. Check any time from the menu bar or panel icon (**Check for updates…**) or with `flippy-ask update`. You can also run the install command again; it pulls the latest code and rebuilds. Turn the daily check off with `updates.check = false`. If you've edited Flippy's files yourself, it won't overwrite them: update with `git pull` instead.
 
-Releasing (for maintainers): `scripts/release.sh 0.3 "what changed"` bumps `VERSION`, tags, pushes and publishes the GitHub Release with the macOS and Linux downloads attached. The notes' first line is what the update card shows.
+On macOS, rebuilding the app can make macOS ask for Screen Recording again (Flippy is signed ad hoc, not notarized).
+
+Releasing (for maintainers): `scripts/release.sh 0.3 "what changed"` bumps `VERSION`, tags, pushes and publishes the GitHub Release. The notes' first line is what the update card shows.
 
 ## Usage
 
@@ -212,6 +209,7 @@ macOS:
 ```bash
 flippy-ask quit
 rm -rf ~/Applications/Flippy.app ~/Library/LaunchAgents/dev.flippy.app.plist ~/.local/bin/flippy-ask
+rm -rf /Applications/Flippy.app ~/Library/Application\ Support/Flippy   # an old Flippy.dmg install, if you had one
 rm -rf ~/.config/flippy   # settings and custom pointers, if you want them gone too
 ```
 
