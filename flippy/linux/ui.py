@@ -31,7 +31,7 @@ from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
 
 from .. import loop, pointers, settings, themes  # noqa: E402
 from ..overlay import OverlayBase  # noqa: E402
-from . import act, pointer_editor, sensors, wl  # noqa: E402
+from . import act, pointer_editor, preload, sensors, wl  # noqa: E402
 from .notice import Notice, NoticeLayer  # noqa: E402
 from .screenshot import Screenshotter  # noqa: E402
 from .settings_window import SettingsWindow  # noqa: E402
@@ -727,12 +727,15 @@ class Platform:
         app library entry and icon (flippy/linux/desktop.py), instead of rerunning install.sh for full_install:
         its apt step needs sudo, which can't ask from here."""
         import os
+        import shlex
         import subprocess
         from . import desktop
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         refresh = os.path.exists(desktop.ENTRY)  # installed by install.sh; cheap, so every restart
-        cmd = f"sleep 1; cd '{root}' && .venv/bin/python -m flippy.linux.desktop install; " if refresh else "sleep 1; "
-        subprocess.Popen(["/bin/sh", "-c", cmd + f"'{root}/bin/flippy-ask' start"], start_new_session=True)
+        q = shlex.quote(root)
+        cmd = f"sleep 1; cd {q} && .venv/bin/python -m flippy.linux.desktop install; " if refresh else "sleep 1; "
+        subprocess.Popen(["/bin/sh", "-c", cmd + shlex.quote(os.path.join(root, "bin", "flippy-ask")) + " start"],
+                         start_new_session=True)
         self.quit()
 
     def quit(self):
@@ -756,6 +759,7 @@ def run(make_app):
     """Start GTK and call make_app(platform) once it's up."""
     if not LayerShell.is_supported():
         sys.exit("compositor doesn't support wlr-layer-shell (or LD_PRELOAD missing)")
+    preload.scrub()  # loaded now; children (apps /act opens, terminals, the Claude CLI) mustn't inherit it
     app = Gtk.Application(application_id="dev.flippy.daemon", flags=Gio.ApplicationFlags.NON_UNIQUE)
     state = {}
 

@@ -348,6 +348,22 @@ def _desktop_entry(name):
     return partial[0] if len(partial) == 1 else None
 
 
+def entry_ids(app_id, exec_names):
+    """The lowercase names a .desktop app's windows may carry as their Wayland app id: its id, executable, WM class."""
+    return {n.lower() for n in (app_id, *exec_names) if n}
+
+
+def is_app(app_id, ids):
+    """A window's app id is one of entry_ids, or ends in one (org.gnome.TextEditor for texteditor)."""
+    return app_id.lower() in ids or app_id.rsplit(".", 1)[-1].lower() in ids
+
+
+def running_window(toplevels, ids):
+    """The app's most recent window (Flippy's left out), or None."""
+    tls = [t for t in toplevels if t.app_id and t.app_id != wl.SELF_APP_ID and is_app(t.app_id, ids)]
+    return max(tls, key=lambda t: max(t.active_at, t.seen_at)) if tls else None
+
+
 def open_app(name, cancel):
     """Find the app by name, or open it. (id, name, handle). A new window takes the focus on COSMIC (no way to open
     one behind), so the window the user was in gets it back as soon as the app's appears."""
@@ -358,9 +374,15 @@ def open_app(name, cancel):
     if info is None:
         raise RetryableActionError(f"There's no app called {name!r} on this computer. Check the name and try again.")
     conn = wl.connection()
+    entry = (info.get_id() or "").removesuffix(".desktop")
+    ids = entry_ids(entry, _exec_names(entry))
+    # already open under another name ("Text Editor" for COSMIC Text Editor): launching it again would only raise
+    # its window, with no new one to wait for
+    tl = running_window(conn.toplevels.values(), ids)
+    if tl is not None:
+        _, pid = _find(tl.app_id, tl.title)
+        return tl.app_id, sensors.app_name(tl.app_id), _handle(tl.app_id, pid)
     before, known = conn.active(), set(conn.toplevels)
-    ids = {n.lower() for n in ((info.get_id() or "").removesuffix(".desktop"),
-                               *(_exec_names((info.get_id() or "").removesuffix(".desktop")))) if n}
     try:
         info.launch([], None)
     except GLib.Error:
@@ -368,8 +390,7 @@ def open_app(name, cancel):
     deadline = time.monotonic() + LAUNCH_WAIT_S
     while time.monotonic() < deadline and not cancel.is_set():
         new = [t for k, t in conn.toplevels.items() if k not in known and t.app_id and t.app_id != wl.SELF_APP_ID]
-        tl = next((t for t in new if t.app_id.lower() in ids or t.app_id.rsplit(".", 1)[-1].lower() in ids),
-                  new[0] if len(new) == 1 else None)
+        tl = next((t for t in new if is_app(t.app_id, ids)), new[0] if len(new) == 1 else None)
         if tl is not None:
             _give_back(conn, tl, before)
             acc = pid = None

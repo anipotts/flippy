@@ -57,6 +57,34 @@ class WhichApp(unittest.TestCase):
         apps = [{"pid": 3, "name": "evolution-alarm-notify", "frames": [], "comm": "evolution-alar", "exe": ""}]
         self.assertIsNone(self.atspi.match_app("com.system76.CosmicEdit", "Untitled", apps))
 
+    def test_an_app_open_under_another_name_is_found_by_its_desktop_ids(self):
+        # "Text Editor" is COSMIC Text Editor's generic name; its window's app id is the .desktop id
+        tl = lambda app, at: SimpleNamespace(app_id=app, activated=False, active_at=at, seen_at=at)  # noqa: E731
+        edit, old, flippy = tl("com.system76.CosmicEdit", 9.0), tl("com.system76.CosmicEdit", 2.0), \
+            tl("dev.flippy.daemon", 10.0)
+        ids = self.atspi.entry_ids("com.system76.CosmicEdit", ["cosmic-edit", ""])
+        self.assertEqual(ids, {"com.system76.cosmicedit", "cosmic-edit"})
+        self.assertIs(self.atspi.running_window([old, flippy, edit, tl("firefox", 11.0)], ids), edit)
+        self.assertIsNone(self.atspi.running_window([flippy, tl("firefox", 1.0)], ids))
+        self.assertTrue(self.atspi.is_app("org.gnome.TextEditor", {"texteditor"}))
+        self.assertFalse(self.atspi.is_app("org.gnome.Calculator", {"texteditor"}))
+
+    def test_use_app_doesnt_launch_an_app_thats_already_open(self):
+        atspi = self.atspi
+        win = SimpleNamespace(app_id="com.system76.CosmicEdit", title="notes.txt", activated=False, active_at=3.0,
+                              seen_at=3.0)
+        conn = SimpleNamespace(toplevels={1: win})
+        info = Mock(get_id=Mock(return_value="com.system76.CosmicEdit.desktop"))
+        with patch.object(atspi, "find_app", return_value=None), \
+                patch.object(atspi, "_desktop_entry", return_value=info), \
+                patch.object(atspi, "_exec_names", return_value=["cosmic-edit"]), \
+                patch.object(atspi.wl, "connection", return_value=conn), \
+                patch.object(atspi, "_find", return_value=(object(), 42)), \
+                patch.object(atspi.sensors, "app_name", return_value="COSMIC Text Editor"):
+            got = atspi.open_app("Text Editor", threading.Event())
+        self.assertEqual(got, ("com.system76.CosmicEdit", "COSMIC Text Editor", 42))
+        info.launch.assert_not_called()
+
 
 @unittest.skipUnless(LINUX, "Linux only")
 class Positions(unittest.TestCase):

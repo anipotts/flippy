@@ -14,8 +14,17 @@ sudo apt-get install -y git python3-venv python3-gi python3-gi-cairo python3-cai
     gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-atspi-2.0 at-spi2-core \
     meson ninja-build libgtk-4-dev libwayland-dev gobject-introspection libgirepository1.0-dev
 
-# 2. gtk4-layer-shell (not packaged for Ubuntu/Pop!_OS 24.04), into ~/.local.
-if ! ls "$HOME"/.local/lib/*/libgtk4-layer-shell.so >/dev/null 2>&1; then
+# 2. gtk4-layer-shell (not packaged for Ubuntu/Pop!_OS 24.04), into ~/.local. Meson puts it in lib/<arch>/ on
+# Debian/Ubuntu (x86_64 or aarch64), lib/ or lib64/ elsewhere; bin/flippy-daemon looks in the same places.
+have_layer_shell() {
+    local so
+    for so in "$HOME"/.local/lib/*/libgtk4-layer-shell.so "$HOME"/.local/lib/libgtk4-layer-shell.so \
+              "$HOME"/.local/lib64/libgtk4-layer-shell.so; do
+        [ -e "$so" ] && return 0
+    done
+    return 1
+}
+if ! have_layer_shell; then
     say "Building gtk4-layer-shell $LS_VERSION"
     [ -d "$LS_SRC" ] || git clone --branch "$LS_VERSION" https://github.com/wmww/gtk4-layer-shell "$LS_SRC"
     (cd "$LS_SRC" && meson setup build --prefix "$HOME/.local" -Dexamples=false -Ddocs=false -Dtests=false -Dvapi=false \

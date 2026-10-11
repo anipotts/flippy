@@ -1,11 +1,13 @@
 """Linux-only pieces that run without a desktop: COSMIC shortcut writing, the click watcher's comparison,
 the panel icon. Run: python -m unittest discover tests"""
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 
 LINUX = sys.platform.startswith("linux")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 @unittest.skipUnless(LINUX, "Linux only")
@@ -100,6 +102,60 @@ class Setup(unittest.TestCase):
         self.assertEqual(accel_tokens("<Super>p"), ["Super", "P"])
         self.assertEqual(missing_text([1, 3]), "Not in COSMIC yet: circle something, then ask (Super+Alt), "
                                                "pause / resume a walkthrough (Super+P).")
+
+    def test_cosmics_terminal_first_and_none_says_what_to_run(self):
+        from unittest.mock import patch
+        from flippy.linux import setup_window
+        argv = setup_window.terminal_argv("claude", which=lambda name: "/usr/bin/" + name)
+        self.assertEqual(argv, ["cosmic-term", "-e", "sh", "-c", "claude"])
+        argv = setup_window.terminal_argv("claude", which=lambda name: name == "xterm")
+        self.assertEqual(argv, ["xterm", "-e", "sh", "-c", "claude"])
+        with patch.object(setup_window.shutil, "which", return_value=None), \
+                patch.object(setup_window, "claude_cli", return_value="/opt/my claude/claude"), \
+                patch.object(setup_window.subprocess, "Popen") as popen:
+            with self.assertRaises(setup_window.NoTerminal) as e:
+                setup_window.open_login_terminal()
+        popen.assert_not_called()
+        self.assertEqual(e.exception.args[0], "env -u ANTHROPIC_API_KEY '/opt/my claude/claude'")
+
+
+class LayerShellPreload(unittest.TestCase):
+    """gtk4-layer-shell's LD_PRELOAD stays out of what Flippy starts (flippy/linux/preload.py, no GTK)."""
+
+    def test_only_the_layer_shell_entry_goes(self):
+        from flippy.linux.preload import scrub, without_layer_shell
+        lib = "/home/me/.local/lib/aarch64-linux-gnu/libgtk4-layer-shell.so"
+        self.assertIsNone(without_layer_shell(lib))
+        self.assertEqual(without_layer_shell(f"{lib}:/opt/x/libfoo.so"), "/opt/x/libfoo.so")
+        self.assertEqual(without_layer_shell("libgtk4-layer-shell.so.0 /a.so"), "/a.so")  # spaces split too
+        env = {"LD_PRELOAD": lib, "PATH": "/bin"}
+        scrub(env)
+        self.assertEqual(env, {"PATH": "/bin"})
+        env = {"LD_PRELOAD": f"{lib}:/opt/x/libfoo.so"}
+        scrub(env)
+        self.assertEqual(env, {"LD_PRELOAD": "/opt/x/libfoo.so"})
+        env = {"LD_PRELOAD": "/a.so /b.so"}  # someone else's: left exactly as it was
+        scrub(env)
+        self.assertEqual(env, {"LD_PRELOAD": "/a.so /b.so"})
+        env = {}
+        scrub(env)
+        self.assertEqual(env, {})
+
+
+@unittest.skipUnless(os.path.exists(os.path.join(ROOT, ".git")), "a git checkout")
+class LinuxPackage(unittest.TestCase):
+    """The Linux release download (scripts/package.sh) has what flippy/linux/desktop.py needs: the icon script."""
+
+    def test_the_linux_download_has_the_icon_script(self):
+        script = ('eval "$(grep -E \'^(COMMON|MAC_ONLY)=\' scripts/package.sh)"; ex=("${COMMON[@]}"); '
+                  'for p in "${MAC_ONLY[@]}"; do ex+=(":!$p"); done; git ls-files -- . "${ex[@]}"')
+        files = subprocess.run(["bash", "-c", script], cwd=ROOT, capture_output=True, text=True,
+                               check=True).stdout.split()
+        self.assertIn("packaging/make_icon.py", files)
+        self.assertIn("flippy/linux/desktop.py", files)
+        self.assertFalse([f for f in files if f.startswith(("packaging/macos/", "flippy/mac/"))])
+        with open(os.path.join(ROOT, "flippy/linux/desktop.py")) as f:
+            self.assertIn('"packaging"))', f.read())  # where it imports make_icon from
 
 
 @unittest.skipUnless(LINUX, "Linux only")

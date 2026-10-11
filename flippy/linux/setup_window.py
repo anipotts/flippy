@@ -1,11 +1,15 @@
 """First-run setup on COSMIC: connect a subscription, Flippy's keyboard shortcuts, optionally open at login.
 
-The same window as flippy/mac/setup_window.py, in the same look (flippy/linux/style.py). COSMIC needs no
-permissions for Flippy (screenshots go through the portal), so there are two steps, not three. The shortcuts
-live in COSMIC's custom shortcuts file: Flippy can add the missing ones there (backed up first), and COSMIC picks
-them up right away.
+The same window as flippy/mac/setup_window.py, in the same look (flippy/linux/style.py). COSMIC has no
+permission settings to visit first (screenshots go through the portal), so there are two steps, not three. /act
+does need two things, which the window mentions: AT-SPI, Linux's accessibility layer (atspi.enable turns it on;
+apps already open may need a restart to show their controls), and the RemoteDesktop portal, which COSMIC asks
+about once, the first time /act clicks by position. Both need COSMIC Epoch 1.7 or newer. The shortcuts live in
+COSMIC's custom shortcuts file: Flippy can add the missing ones there (backed up first), and COSMIC picks them up
+right away.
 """
 import os
+import shlex
 import shutil
 import subprocess
 
@@ -21,6 +25,9 @@ from .. import settings  # noqa: E402
 from ..profile import current  # noqa: E402
 
 ASK = os.path.expanduser("~/.local/bin/flippy-ask")
+# COSMIC's own terminal first; each takes the command to run after these
+TERMINALS = (["cosmic-term", "-e"], ["gnome-terminal", "--"], ["x-terminal-emulator", "-e"], ["kgx", "--"],
+             ["xterm", "-e"])
 ASSETS = os.path.join(os.path.dirname(__file__), "assets")
 WIDTH = 560
 
@@ -48,14 +55,29 @@ def claude_cli():
     return bundled if os.path.exists(bundled) else "claude"
 
 
+class NoTerminal(Exception):
+    """No terminal app to run it in. args: (the command for them to run themselves, what to do after)."""
+
+
+def terminal_argv(cmd, which=shutil.which):
+    """The argv that runs the shell command `cmd` in the first installed terminal, or None."""
+    term = next((t for t in TERMINALS if which(t[0])), None)
+    return term + ["sh", "-c", cmd] if term else None
+
+
+def _in_terminal(cmd, shown, after=""):
+    argv = terminal_argv(cmd)
+    if argv is None:
+        raise NoTerminal(shown, after)
+    subprocess.Popen(argv, start_new_session=True)
+    return True
+
+
 def open_login_terminal():
     """Run `claude` in a terminal so they can /login with their Pro/Max account."""
-    cmd = f"unset ANTHROPIC_API_KEY; '{claude_cli()}'; exec $SHELL"
-    for term in (["gnome-terminal", "--"], ["x-terminal-emulator", "-e"], ["kgx", "--"], ["xterm", "-e"]):
-        if shutil.which(term[0]):
-            subprocess.Popen(term + ["sh", "-c", cmd], start_new_session=True)
-            return True
-    return False
+    cli = shlex.quote(claude_cli())
+    return _in_terminal(f"unset ANTHROPIC_API_KEY; {cli}; exec $SHELL", f"env -u ANTHROPIC_API_KEY {cli}",
+                        "Then type /login and sign in with your Pro/Max account.")
 
 
 def open_codex_login():
@@ -68,11 +90,7 @@ def open_codex_login():
     # got it). Keep the window open if signing in fails, to read why.
     cmd = (login_command(cli)
            + " || { echo; echo 'Signing in to Codex failed (see above). Press Enter to close.'; read _; }")
-    for term in (["gnome-terminal", "--"], ["x-terminal-emulator", "-e"], ["kgx", "--"], ["xterm", "-e"]):
-        if shutil.which(term[0]):
-            subprocess.Popen(term + ["sh", "-c", cmd], start_new_session=True)
-            return True
-    return False
+    return _in_terminal(cmd, login_command(cli))
 
 
 def _entry(mods, key, args):
@@ -172,8 +190,8 @@ class SetupWindow(Gtk.Window):
 
         body.append(style.section(1, "Connect", "Use the subscription you've already got."))
         cards = Gtk.Box(spacing=12, homogeneous=True, margin_top=16)
-        cards.append(self._provider_card("claude", "Claude", "claude.png", open_login_terminal))
-        cards.append(self._provider_card("codex", "ChatGPT", "openai.png", open_codex_login))
+        cards.append(self._provider_card("claude", "Claude", "claude.png", lambda: self._login(open_login_terminal)))
+        cards.append(self._provider_card("codex", "ChatGPT", "openai.png", lambda: self._login(open_codex_login)))
         body.append(cards)
         use = Gtk.Box(spacing=12, margin_top=14)
         words = _grow(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2))
@@ -219,6 +237,12 @@ class SetupWindow(Gtk.Window):
         self.add_button.set_size_request(82, -1)
         self.missing_row.append(self.add_button)
         body.append(self.missing_row)
+        act = style.label("For /act (Flippy working in an app for you): Flippy turns on Linux's accessibility "
+                          "service, and apps that were already open may need a restart before it can see their "
+                          "controls. The first time it clicks by position, COSMIC asks once to allow remote "
+                          "desktop. Needs COSMIC Epoch 1.7 or newer.", "muted", "tiny", wrap=True, width=WIDTH - 48)
+        act.set_margin_top(14)
+        body.append(act)
 
         # the footer stays put; the body scrolls only on small screens
         scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True,
@@ -296,6 +320,18 @@ class SetupWindow(Gtk.Window):
         for win in app.get_windows() if app else ():
             if isinstance(win, SettingsWindow):
                 win.show_page("hotkeys")
+
+    def _login(self, open_terminal):
+        try:
+            open_terminal()
+        except NoTerminal as e:
+            command, after = e.args
+            dlg = Adw.MessageDialog(transient_for=self, heading="No terminal app found",
+                                    body="Open a terminal and run this command." + (" " + after if after else ""))
+            dlg.set_extra_child(style.label(command, "small", wrap=True, width=WIDTH - 120))
+            dlg.get_extra_child().set_selectable(True)
+            dlg.add_response("ok", "OK")
+            dlg.present()
 
     def _add(self, which):
         try:

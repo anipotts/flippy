@@ -6,9 +6,21 @@ if [ "$(uname)" = Darwin ]; then  # macOS: plain AppKit, nothing to preload
     cd "$ROOT"
     exec "$ROOT/.venv/bin/python" -m flippy.daemon "$@"
 fi
-LS_LIB="${FLIPPY_LAYER_SHELL_LIB:-$HOME/.local/lib/x86_64-linux-gnu}"  # where gtk4-layer-shell is installed
-export LD_PRELOAD="$LS_LIB/libgtk4-layer-shell.so${LD_PRELOAD:+:$LD_PRELOAD}"
-export LD_LIBRARY_PATH="$LS_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export GI_TYPELIB_PATH="$LS_LIB/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
+# Where gtk4-layer-shell is: FLIPPY_LAYER_SHELL_LIB, else where install_linux.sh built it in ~/.local (lib/<arch>/
+# on Debian/Ubuntu, x86_64 or aarch64; lib/ or lib64/ elsewhere), else a system copy the loader finds by name.
+LS_LIB="${FLIPPY_LAYER_SHELL_LIB:-}"
+if [ -z "$LS_LIB" ]; then
+    for so in "$HOME"/.local/lib/*/libgtk4-layer-shell.so "$HOME"/.local/lib/libgtk4-layer-shell.so \
+              "$HOME"/.local/lib64/libgtk4-layer-shell.so; do
+        if [ -e "$so" ]; then LS_LIB="$(dirname "$so")"; break; fi
+    done
+fi
+if [ -n "$LS_LIB" ]; then
+    export LD_PRELOAD="$LS_LIB/libgtk4-layer-shell.so${LD_PRELOAD:+:$LD_PRELOAD}"
+    export LD_LIBRARY_PATH="$LS_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    export GI_TYPELIB_PATH="$LS_LIB/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
+else
+    export LD_PRELOAD="libgtk4-layer-shell.so${LD_PRELOAD:+:$LD_PRELOAD}"
+fi
 cd "$ROOT"
 exec "$ROOT/.venv/bin/python" -m flippy.daemon "$@"
