@@ -16,7 +16,7 @@ class TestGestures(unittest.TestCase):
         clock = SimpleNamespace(monotonic=lambda: now[0],
                                 sleep=Mock(side_effect=lambda s: now.__setitem__(0, now[0] + s)))
         namespace = {'__name__': 'flippy.mac.ui', '__package__': 'flippy.mac', 'Quartz': Mock(), 'time': clock,
-                     'hotkeys': SimpleNamespace(KEYS={'return': 36})}
+                     'hotkeys': SimpleNamespace(KEYS={'return': 36, 'a': 0})}
         for n in methods:
             exec(compile(ast.Module(body=[n], type_ignores=[]), '<native gesture>', 'exec'), namespace)
         self.q = namespace['Quartz']

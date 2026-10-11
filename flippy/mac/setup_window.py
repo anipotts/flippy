@@ -54,11 +54,18 @@ def claude_cli():
 
 
 # ---- actions
+def terminal_env():
+    """The environment for opening Terminal: without Flippy's own variables, which a Terminal started from here
+    would pass on to every shell in it (FLIPPY_BUNDLED there made later Flippy commands act like the app)."""
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith(("FLIPPY_", "PYTHON")) and k not in ("SSL_CERT_FILE", "ANTHROPIC_API_KEY")}
+
+
 def open_login_terminal():
     """Run `claude` in Terminal so the user can /login with their Pro/Max account."""
     cmd = f"unset ANTHROPIC_API_KEY; '{claude_cli()}'"
     script = f'tell application "Terminal" to do script "{cmd}"\ntell application "Terminal" to activate'
-    subprocess.Popen(["osascript", "-e", script])
+    subprocess.Popen(["osascript", "-e", script], env=terminal_env())
 
 
 def open_codex_login():
@@ -70,7 +77,7 @@ def open_codex_login():
         return
     command = login_command(cli)
     script = 'tell application "Terminal" to do script ' + __import__('json').dumps(command)
-    subprocess.Popen(["osascript", "-e", script])
+    subprocess.Popen(["osascript", "-e", script], env=terminal_env())
 
 
 def ask_screen():
@@ -78,10 +85,22 @@ def ask_screen():
     subprocess.Popen(["open", SCREEN_PANE])
 
 
+def ask_accessibility():
+    from . import ax
+    if not ax.ask_trust():
+        subprocess.Popen(["open", ACCESSIBILITY_PANE])
+
+
 def restart():
     """macOS applies Screen Recording only to newly started processes."""
     from . import ui
     ui.PLATFORM.restart()
+
+
+def temporary_path(app):
+    """Flippy running from the disk image or a quarantine copy (App Translocation): the path is gone after
+    ejecting or a restart, so a login item there would open nothing."""
+    return bool(app) and (app.startswith("/Volumes/") or "/AppTranslocation/" in app)
 
 
 def login_item_on():
@@ -101,7 +120,7 @@ def set_login_item(on):
         except FileNotFoundError:
             pass
         return
-    if not APP:
+    if not APP or temporary_path(APP):
         return
     os.makedirs(os.path.dirname(AGENT), exist_ok=True)
     with open(AGENT, "wb") as f:
@@ -121,7 +140,7 @@ class SetupWindow:
         self.body = style.panel(WIDTH, BODY_HEIGHT)
         self.body.setAppearance_(NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua"))
         b = self.body
-        installed = bool(APP and os.path.isdir(APP))
+        installed = bool(APP and os.path.isdir(APP)) and not temporary_path(APP)
         style.place(b, style.flippy_mark(60), 20, 16, 60, 60)
         style.text(b, "Hi, I'm Flippy.", 96, 22, 420, 25, bold=True)
         style.text(b, "Ask about anything on your screen. I'll point it out.", 96, 55, 420, 12, muted=True)
@@ -163,8 +182,7 @@ class SetupWindow:
         self._permission_row("screen", "display", "Screen Recording",
                              "So I can see what you're asking about.", 422, ask_screen)
         self._permission_row("accessibility", "accessibility", "Accessibility",
-                             "For desktop actions and double-tap shortcuts.", 468,
-                             lambda: subprocess.Popen(["open", ACCESSIBILITY_PANE]))
+                             "For desktop actions and double-tap shortcuts.", 468, ask_accessibility)
         style.text(b, "Drag the icon into Settings. If dropping won't work, use + or Show in Finder.",
                    24, 515, WIDTH - 48, 10, muted=True)
         style.rule(b, 536, WIDTH - 48)

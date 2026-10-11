@@ -24,7 +24,7 @@ import ApplicationServices as AX
 import Quartz
 
 from ..actions import ActionError, RetryableActionError
-from . import hotkeys
+from . import hotkeys, keymap
 
 MAX_ELEMENTS = 150      # controls listed per look
 MAX_DEPTH = 30
@@ -49,6 +49,12 @@ ERR_GONE = (-25202, -25204)   # kAXErrorInvalidUIElement, kAXErrorCannotComplete
 
 def trusted():
     return bool(AX.AXIsProcessTrusted())
+
+
+def ask_trust():
+    """Ask macOS for the Accessibility permission: its prompt, and Flippy added (switched off) to the list in
+    System Settings, so nobody has to find the app and drag it in. Shown once per app build; True if already allowed."""
+    return bool(AX.AXIsProcessTrustedWithOptions({AX.kAXTrustedCheckOptionPrompt: True}))
 
 
 def _attr(el, name):
@@ -113,12 +119,57 @@ def _relaunched(bundle, old_pid):
     return apps[0].processIdentifier() if apps else None
 
 
+FINDER = "com.apple.finder"
+_last_front = None   # (bundle id, name, pid) of the last app in front that wasn't Flippy
+_observer = None
+
+
+def _is_flippy(app):
+    """Flippy's own process, its launcher (Flippy.app's executable), or any Flippy build."""
+    return app.processIdentifier() in (os.getpid(), os.getppid()) or \
+        str(app.bundleIdentifier() or "").startswith("dev.flippy.")
+
+
+def _remember(app):
+    global _last_front
+    if app is not None and not _is_flippy(app) and \
+            app.activationPolicy() == AppKit.NSApplicationActivationPolicyRegular:
+        _last_front = str(app.bundleIdentifier() or ""), str(app.localizedName()), app.processIdentifier()
+
+
+def watch_front():
+    """Remember the last app in front that isn't Flippy. Settings, setup and the tour bring Flippy forward, and a
+    task started right after should still go to the app you were in. Main thread, once."""
+    global _observer
+    if _observer is not None:
+        return
+    ws = AppKit.NSWorkspace.sharedWorkspace()
+    _remember(ws.frontmostApplication())
+    _observer = ws.notificationCenter().addObserverForName_object_queue_usingBlock_(
+        AppKit.NSWorkspaceDidActivateApplicationNotification, None, None,
+        lambda note: _remember(note.userInfo().get(AppKit.NSWorkspaceApplicationKey)))
+
+
+def give_back_front():
+    """A Flippy window closed: bring back the app that was in front before it, instead of leaving Flippy (with no
+    window) as the active app."""
+    app = running_app(_last_front[2]) if _last_front else None
+    if app is not None:
+        app.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)
+
+
 def front_app():
-    """(bundle id, name, pid) of the app in front, if it isn't Flippy."""
+    """(bundle id, name, pid) of the app the task starts in: the one in front, or the last one that was when Flippy
+    is (its settings or setup were just open), or Finder, from where use_app can open any app."""
     app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
-    if app is None or app.processIdentifier() == os.getpid():
-        raise ActionError("Put the app you want Flippy to work in in front, then start /act again.")
-    return str(app.bundleIdentifier() or ""), str(app.localizedName()), app.processIdentifier()
+    if app is not None and not _is_flippy(app):
+        return str(app.bundleIdentifier() or ""), str(app.localizedName()), app.processIdentifier()
+    if _last_front and running_app(_last_front[2]) is not None:
+        return _last_front
+    finder = next((a for a in _running() if str(a.bundleIdentifier() or "") == FINDER), None)
+    if finder is None:
+        raise ActionError("Click the app you want Flippy to work in, then ask again.")
+    return FINDER, str(finder.localizedName()), finder.processIdentifier()
 
 
 def find_app(name):
@@ -131,17 +182,59 @@ def find_app(name):
     return None
 
 
+def _bundle_for(name):
+    """The bundle id of the app `open -a name` opens ("Chrome" -> com.google.Chrome), or None."""
+    path = AppKit.NSWorkspace.sharedWorkspace().fullPathForApplication_(name.strip()) or _app_named_like(name)
+    bundle = AppKit.NSBundle.bundleWithPath_(path) if path else None
+    return str(bundle.bundleIdentifier()) if bundle is not None and bundle.bundleIdentifier() else None
+
+
+APP_DIRS = ("/Applications", "/System/Applications", "/System/Applications/Utilities", "/Applications/Utilities",
+            os.path.expanduser("~/Applications"))
+
+
+def _app_named_like(name):
+    """An installed app whose name contains every word of `name` ("chrome" -> Google Chrome.app), the shortest
+    such name, or None."""
+    words = name.lower().replace(".app", "").split()
+    if not words:
+        return None
+    hits = []
+    for d in APP_DIRS:
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        hits += [os.path.join(d, n) for n in names if n.endswith(".app") and all(w in n.lower() for w in words)]
+    return min(hits, key=lambda p: len(os.path.basename(p)), default=None)
+
+
+def _running_bundle(bundle):
+    """A running app with that bundle id, as (bundle, name, pid), or None."""
+    for app in _running():
+        if str(app.bundleIdentifier() or "") == bundle and not _is_flippy(app) and \
+                app.activationPolicy() == AppKit.NSApplicationActivationPolicyRegular:
+            return bundle, str(app.localizedName()), app.processIdentifier()
+    return None
+
+
 def open_app(name, cancel):
-    """Find the app by name, or open it without bringing it to the front (`open -g`). (bundle, name, pid)."""
+    """Find the app by name, or open it without bringing it to the front (`open -g`). (bundle, name, pid).
+    A loose name ("Chrome", "vscode") is matched by the bundle id it resolves to, not only the exact app name."""
     found = find_app(name)
     if found:
         return found
-    r = subprocess.run(["/usr/bin/open", "-g", "-a", name], capture_output=True, text=True, timeout=15)
+    bundle = _bundle_for(name)
+    found = _running_bundle(bundle) if bundle else None
+    if found:
+        return found
+    r = subprocess.run(["/usr/bin/open", "-g", *(["-b", bundle] if bundle else ["-a", name])],
+                       capture_output=True, text=True, timeout=15)
     if r.returncode != 0:
         raise RetryableActionError(f"There's no app called {name!r} on this Mac. Check the name and try again.")
     deadline = time.monotonic() + LAUNCH_WAIT_S
     while time.monotonic() < deadline and not cancel.is_set():
-        found = find_app(name)
+        found = find_app(name) or (_running_bundle(bundle) if bundle else None)
         if found and _window(found[2]) is not None:
             return found
         time.sleep(0.25)
@@ -397,8 +490,8 @@ def type_text(pid, text, cancel):
         raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
     for ch in text:
         _check(cancel)
-        code = hotkeys.KEYS.get("space" if ch == " " else ch.lower(), 0)  # the text itself rides on the event
-        flags = Quartz.kCGEventFlagMaskShift if ch.isupper() else 0
+        code, shifted = keymap.type_key(ch, hotkeys.KEYS)  # the text itself rides on the event
+        flags = Quartz.kCGEventFlagMaskShift if shifted else 0
         _post(pid, code, True, flags, ch)
         _post(pid, code, False, flags, ch)
         time.sleep(0.012)

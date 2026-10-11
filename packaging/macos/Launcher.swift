@@ -62,10 +62,13 @@ func bundledRoot(_ support: String) -> String {
     // The first self-contained app kept a plain folder at code: keep it as an old copy.
     var isDir: ObjCBool = false
     if (try? fm.destinationOfSymbolicLink(atPath: link)) == nil, fm.fileExists(atPath: link, isDirectory: &isDir) {
-        if isDir.boolValue {
-            try? fm.moveItem(atPath: link, toPath: versions + "/0-legacy")
+        if isDir.boolValue {  // moved aside, never deleted: it may be the only copy of the code
+            var dest = versions + "/0-legacy", n = 1
+            while fm.fileExists(atPath: dest) { dest = versions + "/0-legacy-\(n)"; n += 1 }
+            do { try fm.moveItem(atPath: link, toPath: dest) } catch { fail("couldn't move \(link) aside: \(error)") }
+        } else {
+            try? fm.removeItem(atPath: link)
         }
-        try? fm.removeItem(atPath: link)
     }
 
     var current: String? = nil

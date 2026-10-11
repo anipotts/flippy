@@ -127,6 +127,7 @@ with open(out, "wb") as f:
         "CFBundleShortVersionString": version, "CFBundleVersion": version, "LSMinimumSystemVersion": minimum,
         "LSUIElement": True, "NSHighResolutionCapable": True, "LSArchitecturePriority": ["arm64"],
         "NSScreenCaptureUsageDescription": "Flippy sends a screenshot with each question so your tutor can see what you mean.",
+        "NSAppleEventsUsageDescription": "Flippy asks apps like Music, Notes and Safari to do things for you, only when you ask.",
         "FlippyBundled": True, "FlippyProfile": "default", "FlippyRuntime": runtime,
     }, f)
 PY

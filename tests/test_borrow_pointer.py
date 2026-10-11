@@ -36,7 +36,8 @@ class Borrow(unittest.TestCase):
         ws = SimpleNamespace(frontmostApplication=lambda: self.front[0])
         appkit = SimpleNamespace(NSWorkspace=SimpleNamespace(sharedWorkspace=lambda: ws),
                                  NSApplicationActivateIgnoringOtherApps=1)
-        ax = SimpleNamespace(running_app=lambda pid: self.target, _window=lambda pid: None, AX=SimpleNamespace())
+        ax = SimpleNamespace(running_app=lambda pid: self.target, _window=lambda pid: None, AX=SimpleNamespace(),
+                             _is_flippy=lambda app: app.processIdentifier() == 1)
         import flippy.mac as mac_pkg
         self._saved_ax = mac_pkg.__dict__.get("ax")  # the real flippy.mac.ax needs AppKit: never import it here
         self.ns = {"__name__": "flippy.mac.ui", "__package__": "flippy.mac", "Quartz": self.quartz, "AppKit": appkit,

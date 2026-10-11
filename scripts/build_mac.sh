@@ -14,7 +14,8 @@ PY="$ROOT/.venv/bin/python"
 [ -x "$PY" ] || { echo 'create .venv and install requirements-mac.txt first' >&2; exit 1; }
 ARCH="$(uname -m)"
 TARGET="$ARCH-apple-macosx13.0"
-HASH="$(shasum -a 256 "$ROOT/packaging/macos/Launcher.swift" | cut -d ' ' -f 1)-$TARGET"
+PLIST_REV=2  # bump when Info.plist below changes, so installed apps get rebuilt
+HASH="$(shasum -a 256 "$ROOT/packaging/macos/Launcher.swift" | cut -d ' ' -f 1)-$TARGET-$PLIST_REV"
 # Python-only changes do not rebuild a valid launcher or change its ad hoc identity.
 if "$PY" - "$APP" "$ROOT" "$ID" "$HASH" <<'PY'
 import os, plistlib, sys
@@ -48,6 +49,7 @@ with open(out, 'wb') as f:
         'CFBundleShortVersionString': version, 'CFBundleVersion': version, 'LSMinimumSystemVersion': '13.0',
         'LSUIElement': True, 'NSHighResolutionCapable': True,
         'NSScreenCaptureUsageDescription': 'Flippy sends a screenshot with each question so your tutor can see what you mean.',
+        'NSAppleEventsUsageDescription': 'Flippy asks apps like Music, Notes and Safari to do things for you, only when you ask.',
         'FlippyRoot': root, 'FlippyProfile': profile, 'FlippyLauncherHash': digest,
     }, f)
 PY

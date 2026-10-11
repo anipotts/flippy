@@ -578,7 +578,17 @@ class Platform:
     def start(self, command):
         """Hotkeys and the menu bar icon, once the controller exists."""
         self.command = command
+        from . import ax
+        ax.watch_front()
         self._bind_keys()
+        if not hotkeys.accessibility_trusted():
+            # The double-tap pause needs Accessibility; once it's granted, bind it without a restart.
+            def trust_granted():
+                if not hotkeys.accessibility_trusted():
+                    return True
+                self._bind_keys()
+                return False
+            loop.timeout_add(2000, trust_granted)
         settings.on_change(lambda section, key, value: section == "keys" and self._bind_keys())
         self._menu_bar()
         # setup opens by itself only on install, a new major version or a lost login (flippy/setup_gate.py,
@@ -587,8 +597,20 @@ class Platform:
     def open_setup(self):
         from .setup_window import SetupWindow
         if self.setup_win is None:
-            self.setup_win = SetupWindow(lambda: self.command("settings"), lambda: setattr(self, "setup_win", None))
+            self.setup_win = SetupWindow(lambda: self.command("settings"), self._setup_closed)
         self.setup_win.present()
+
+    def _setup_closed(self):
+        from . import ax
+        self.setup_win = None
+        if self.settings_win is None:
+            ax.give_back_front()
+
+    def _settings_closed(self):
+        from . import ax
+        self.settings_win = None
+        if self.setup_win is None:
+            ax.give_back_front()
 
     def _bind_keys(self):
         for hid, name in ((1, "ask"), (2, "draw"), (3, "video")):
@@ -796,7 +818,7 @@ class Platform:
     def open_settings(self, on_preview, on_reset):
         from .settings_window import SettingsWindow  # local: only built when asked for
         if self.settings_win is None:
-            self.settings_win = SettingsWindow(on_preview, on_reset, lambda: setattr(self, "settings_win", None),
+            self.settings_win = SettingsWindow(on_preview, on_reset, self._settings_closed,
                                                command=self.command)
         self.settings_win.present()
 
@@ -1020,8 +1042,9 @@ class Platform:
                     check()  # agent input can stop between characters or if focus changes
                 # The real key code where there is one (apps that read key codes, like GarageBand's
                 # shortcuts, would otherwise see "a"), no stray modifiers, and the text for the field.
-                code = hotkeys.KEYS.get("space" if ch == " " else ch.lower(), 0)
-                flags = Quartz.kCGEventFlagMaskShift if ch.isupper() else 0
+                from .keymap import type_key
+                code, shifted = type_key(ch, hotkeys.KEYS)
+                flags = Quartz.kCGEventFlagMaskShift if shifted else 0
                 self._check_physical_input(code=code)
                 try:
                     ev = Quartz.CGEventCreateKeyboardEvent(None, code, True)
@@ -1051,7 +1074,11 @@ class Platform:
         from . import ax
         from ..actions import ActionError
         if not ax.trusted() or not Quartz.CGPreflightPostEventAccess():
-            raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+            if not ax.ask_trust():
+                subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+            raise ActionError("Flippy needs the Accessibility permission to do things for you. Turn Flippy on in "
+                              "System Settings > Privacy & Security > Accessibility, then ask again. If it's already "
+                              "on, remove it with - and add it again.")
 
     def app_front(self):
         from . import ax
@@ -1169,7 +1196,7 @@ class Platform:
         finally:
             Quartz.CGWarpMouseCursorPosition(home)            # the pointer back where it was
             Quartz.CGAssociateMouseAndMouseCursorPosition(True)
-            if before is not None and before.processIdentifier() != pid:
+            if before is not None and before.processIdentifier() != pid and not ax._is_flippy(before):
                 before.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)  # and their app
 
     @staticmethod
