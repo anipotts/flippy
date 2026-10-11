@@ -17,7 +17,7 @@ Runs on **macOS 13+** (Apple Silicon or Intel) and on **Linux with COSMIC on Way
 - **Help when you're stuck, and tips.** Flippy can watch an app you're learning and offer a hand, or a tip, at the right moment (see below).
 - **Settings window** for model, effort, theme, pointer, sizes, timing, help mode and (on macOS) hotkeys.
 
-Ordinary questions and tips stay tool-free. An explicit `/act` request can use approved desktop tools (see below). Flippy uses your existing **Claude Pro/Max subscription** through the Claude Agent SDK; no API client or key is added.
+Ask Flippy to do something ("open Spotify and play some jazz") and it does it, asking you first; ask how and it shows you. Questions and tips never touch your apps (see below). Flippy uses your existing **Claude Pro/Max subscription** through the Claude Agent SDK; no API client or key is added.
 
 ## Install
 
@@ -93,7 +93,7 @@ For draw mode, press the draw hotkey (`⌃⇧Space` / `Super+Alt`), drag to circ
 
 ### Approved desktop tasks
 
-Put the app you want to use in front, open Flippy's question box, and type `/act <task>`, for example `/act type hello into this empty note`. Or run `flippy-ask act <task>`.
+Just ask Flippy to do it: open the question box and type what you want done, for example `open Spotify and play some jazz` or `write a haiku in this note`. Flippy tells a request to *do* something apart from a question about *how*, and starts a desktop task for the first. It starts in the app you were in; it can open and switch to other apps itself. To force a task, start with `/act` (`/act type hello into this empty note`), or run `flippy-ask act <task>`. Turn the automatic part off in Settings → Desktop tasks → **Do things when I ask** (`act.infer = false`); `/act` keeps working.
 
 Flippy takes a screenshot, proposes a click, short text entry, shortcut, scroll or drag, and shows the exact input and its reason. Non-ASCII and control characters are escaped; proposals too long to review are refused. **Allow once** permits only that input; **Stop** or leaving the card unanswered for 60 seconds ends the task. Every completed input returns a fresh screenshot to Claude. Press the ask hotkey again or run `flippy-ask dismiss` to cancel, including while typing or dragging. Cleanup releases only input posted by Flippy before another action can start.
 
@@ -105,7 +105,7 @@ On COSMIC, tasks work through the app's controls (AT-SPI, Linux's accessibility 
 
 ## Isolated local demo
 
-With the normal source dependencies installed in `.venv`, run `scripts/dev.sh build`, `run`, `ask <command>`, `stop` or `doctor`. `script/build_and_run.sh --verify` builds, launches and checks the demo socket. Builds never install login items or initiate authentication.
+With the normal source dependencies installed in `.venv`, run `scripts/dev.sh build`, `run`, `ask <command>`, `stop` or `doctor`. `scripts/dev.sh --verify` builds, launches and checks the demo socket. Builds never install login items or initiate authentication.
 
 To use the contribution as your normal app, run `scripts/dev.sh --app run`. This builds `~/Applications/Flippy.app` with the normal `dev.flippy.app` identity, configuration and hotkeys. `--app doctor` checks that profile; `--app stop` stops it only if this checkout owns the process. An existing app belonging to another checkout is never replaced. This is a local build of the contribution branch, not an upstream release.
 
@@ -185,6 +185,8 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `timing.wait_for_clicks` | `true` (default): tutorial steps wait until you click the thing |
 | `help.mode` | `off`, `quiet` (offer a hand when stuck), `tips` (that, plus cached tips) |
 | `help.apps`, `help.muted` | comma-separated app ids (macOS bundle ids, e.g. `com.ableton.live`; Wayland app ids on COSMIC, e.g. `io.lmms.LMMS`) |
+| `act.infer` | `true` (default): a request to do something ("open Spotify and play jazz") runs as a desktop task without `/act`; `false`: only `/act` does |
+| `act.mode` | `per_app` (default: approve each app once per task), `auto` (no approval cards) or `every_input` |
 | `automation.clicks` | `false` (default) or `true`: lets `flippy-ask click <x> <y> [double]` click on screen (macOS: needs the Accessibility permission; COSMIC: the remote desktop portal, which asks once). When on, any program running as you can make Flippy click. `/act` uses its separate per-input approval and does not enable scripted clicks. |
 | `updates.check` | `true` (default): look for a new release once a day |
 | `keys.pause` | `double-cmd` (default), `double-option`, `double-ctrl`, `double-shift` or `off`: pause/resume a walkthrough (macOS, needs the Accessibility permission; on COSMIC, bind `flippy-ask pause-toggle` to a shortcut) |
