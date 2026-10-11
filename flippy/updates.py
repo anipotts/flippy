@@ -62,6 +62,10 @@ def is_newer(latest, current):
 
 def repo_slug(root=ROOT):
     """owner/name of the GitHub repo this checkout came from (so forks check their own releases)."""
+    if not os.path.exists(os.path.join(root, ".git")):  # a file in a git worktree
+        # a release download or Flippy.app: no git to ask, and on a Mac without the Command Line Tools,
+        # /usr/bin/git would pop up their install dialog
+        return DEFAULT_REPO
     try:
         url = subprocess.run(["git", "-C", root, "config", "--get", "remote.origin.url"],
                              capture_output=True, text=True, timeout=5).stdout.strip()
@@ -179,7 +183,8 @@ def bundled():
     return os.environ.get("FLIPPY_BUNDLED") == "1"
 
 
-NEW_APP = "Flippy {version} needs the new app: download Flippy.dmg from github.com/kap-il/flippy/releases/latest"
+NEW_APP = ("Flippy {version} can't update this app in place: reinstall with the one-line install at "
+           "github.com/kap-il/flippy (Flippy.dmg isn't published anymore)")
 
 
 def requirements_file():

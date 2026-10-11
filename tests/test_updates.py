@@ -239,7 +239,7 @@ class TestBundledInstall(unittest.TestCase):
     def test_a_release_that_needs_a_different_runtime_asks_for_the_new_app(self):
         for rel, text in (("requirements-mac.txt", "a\nb\n"), ("packaging/macos/Launcher.swift", "// v2\n"),
                           ("packaging/macos/runtime.env", "PY_VERSION=3.14.0\n")):
-            with self.subTest(rel), self.assertRaisesRegex(updates.UpdateError, "Flippy.dmg"):
+            with self.subTest(rel), self.assertRaisesRegex(updates.UpdateError, "reinstall"):
                 self.install({**RUNTIME, rel: text, "flippy/video.py": "v\n"})
             self.assertEqual(self.current(), os.path.realpath(self.running))  # nothing switched
             self.assertEqual(self.tree(self.running), self.snapshot)
@@ -247,6 +247,6 @@ class TestBundledInstall(unittest.TestCase):
 
     def test_an_app_whose_launcher_predates_runtimes_asks_for_the_new_app(self):
         del os.environ["FLIPPY_RUNTIME"]
-        with self.assertRaisesRegex(updates.UpdateError, "Flippy.dmg"):
+        with self.assertRaisesRegex(updates.UpdateError, "reinstall"):
             self.install({**RUNTIME})
         self.assertEqual(self.current(), os.path.realpath(self.running))

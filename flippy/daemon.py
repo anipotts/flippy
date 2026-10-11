@@ -115,7 +115,7 @@ class Flippy:
         self.tour = onboarding.Tour(self)
         LISTENERS.append(self.tour.on_event)
         loop.timeout_add(3000, self._maybe_start_tour)
-        self._run(self.brain.start(), self._started)
+        self._run(self.brain.start(), self._started, provider_bound=True)
         self.connection_future = None
         loop.timeout_add(5000, self._connection_tick)
 
@@ -163,10 +163,13 @@ class Flippy:
             return True
         return self.tour.maybe_start()
 
-    def _run(self, coro, cb, timeout=None):
+    def _run(self, coro, cb, timeout=None, provider_bound=False):
+        """provider_bound: work for the current model/provider (the session start), stopped when they change.
+        The rest (tips, login checks) finishes, and picks up new settings on its next run."""
         if timeout:
             coro = asyncio.wait_for(coro, timeout)
         fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        fut.provider_bound = provider_bound
         self.background_futures.add(fut)
 
         def done(f):
@@ -412,7 +415,9 @@ class Flippy:
                     future.cancel()
             elif error or not path:
                 self._unlink(path)
-                future.set_exception(ActionError("Could not capture the screen. Check Screen Recording permission."))
+                future.set_exception(ActionError("Could not capture the screen. " + (
+                    "Check Screen Recording permission." if sys.platform == "darwin"
+                    else "Allow the screenshot when COSMIC asks.")))
             else:
                 future.set_result((path, target, logical))
         def begin():
@@ -1251,7 +1256,8 @@ class Flippy:
             if self.request and self.request.pending:
                 self.dismiss()
             for future in tuple(self.background_futures):
-                future.cancel()
+                if future.provider_bound:
+                    future.cancel()
             self._apply_claude_settings()
         elif section == "act" and key == "mode":
             if self.action_tools:

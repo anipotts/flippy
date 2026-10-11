@@ -26,7 +26,7 @@ from .usage_guard import GUARDS, PlanLimitReached
 
 ISOLATION_BLOCKED = "Codex could not isolate Flippy from other tools and settings."
 SUPPORTED_VERSION = "0.153.4"   # the oldest Codex whose app-server protocol Flippy speaks; newer ones are fine
-RUNTIME_UNAVAILABLE = "Codex is signed in, but its isolated runtime could not start on this Mac."
+RUNTIME_UNAVAILABLE = "Codex is signed in, but its isolated runtime could not start on this computer."
 
 # These are real capability switches in the 0.153.4 configuration schema.
 # environments=[] additionally removes exec_command, apply_patch and view_image.
@@ -127,6 +127,14 @@ def child_environment():
     return env
 
 
+def _log_rpc_error(method, error):
+    """Which request Codex refused and why (its code and the start of its message), so CODEX-FAILED is traceable.
+    Codex's error messages describe the request's shape, not the conversation."""
+    code = error.get("code") if isinstance(error, dict) else None
+    text = str(error.get("message", "")) if isinstance(error, dict) else str(error)
+    print(f"flippy: codex: {method} failed: code {code}: {text.splitlines()[0][:160] if text else ''}", flush=True)
+
+
 def login_command(executable):
     """The shell command Setup runs in a terminal: Codex's own ChatGPT browser sign-in, into Flippy's Codex home.
     Flippy never sees the tokens."""
@@ -221,6 +229,7 @@ class _RPC:
                     future = self.pending.pop(message["id"], None)
                     if future is not None and not future.done():
                         if "error" in message:
+                            _log_rpc_error(getattr(future, "method", "?"), message["error"])
                             future.set_exception(CodexError("Codex could not complete this request.", "CODEX-FAILED"))
                         else:
                             future.set_result(message.get("result", {}))
@@ -246,6 +255,7 @@ class _RPC:
         self.sequence += 1
         request_id = self.sequence
         future = asyncio.get_running_loop().create_future()
+        future.method = method  # named in the log if Codex answers with an error
         self.pending[request_id] = future
         try:
             await self.send({"id": request_id, "method": method, "params": params})
@@ -586,6 +596,7 @@ class CodexProvider:
                 self._rpc, self._thread, self._isolated = None, None, False
                 if isinstance(error, (CodexError, PlanLimitReached, asyncio.CancelledError)):
                     raise
+                print(f"flippy: codex: request failed: {type(error).__name__}", flush=True)  # the type, never content
                 raise CodexError("Codex could not complete this request. Try starting a new chat.", "CODEX-FAILED") from None
             finally:
                 self._active_task, self._active_turn, self._desktop, self._tool_request = None, None, None, None
