@@ -41,7 +41,7 @@ def _write(path, text):
 def install():
     """The app library entry and the icon (the same black-and-white pixel hand as Flippy.app's)."""
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    sys.path.insert(0, os.path.join(root, "packaging", "macos"))
+    sys.path.insert(0, os.path.join(root, "packaging"))
     from make_icon import draw
     for size in ICON_SIZES:
         path = os.path.join(DATA, "icons", "hicolor", f"{size}x{size}", "apps", APP_ID + ".png")

@@ -41,7 +41,7 @@ class TestRuntime(unittest.TestCase):
     def test_only_the_runtime_files_count(self):
         a = release(os.path.join(self.tmp.name, "a"), "0.3.0")
         b = release(os.path.join(self.tmp.name, "b"), "0.3.1", **{"flippy/video.py": "new\n",
-                                                                  "packaging/macos/make_icon.py": "icon\n"})
+                                                                  "packaging/make_icon.py": "icon\n"})
         self.assertEqual(bundle.runtime_id(a), bundle.runtime_id(b))
         for rel in bundle.RUNTIME_FILES:
             c = release(os.path.join(self.tmp.name, "c-" + rel.replace("/", "_")), "0.3.0", **{rel: "changed\n"})

@@ -29,6 +29,7 @@ build() {  # build <platform> <paths of the other platform...>
     test -f "$tmp/$name/flippy/daemon.py"
     test -f "$tmp/$name/bin/flippy-daemon"
     test -f "$tmp/$name/install.sh"
+    test -f "$tmp/$name/packaging/make_icon.py"  # both: Flippy.app's icon, and COSMIC's (flippy/linux/desktop.py)
     if [ "$plat" = macos ]; then
         test -f "$tmp/$name/packaging/macos/Launcher.swift"
         test -f "$tmp/$name/requirements-mac.txt"

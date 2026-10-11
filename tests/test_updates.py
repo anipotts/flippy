@@ -224,7 +224,7 @@ class TestBundledInstall(unittest.TestCase):
         return os.path.realpath(os.path.join(self.home, "code"))
 
     def test_a_release_on_the_same_runtime_becomes_a_new_current_copy(self):
-        res = self.install({**RUNTIME, "flippy/video.py": "v\n", "packaging/macos/make_icon.py": "new icon\n"})
+        res = self.install({**RUNTIME, "flippy/video.py": "v\n", "packaging/make_icon.py": "new icon\n"})
         self.assertEqual((res["from"], res["to"], res["version"], res["packages"], res["app"]),
                          ("0.2.1", "0.2.2", "0.2.2", False, False))  # app: an icon change never runs ./install.sh
         new = self.current()

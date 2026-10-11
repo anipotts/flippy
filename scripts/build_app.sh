@@ -116,7 +116,7 @@ echo "$RUNTIME" > "$RES/code/RUNTIME"
 say "Runtime $RUNTIME"
 xcrun --sdk macosx swiftc -module-cache-path "$WORK/modules" -target "arm64-apple-macosx$MACOSX_DEPLOYMENT_TARGET" -O \
     -o "$APP/Contents/MacOS/Flippy" "$RES/code/packaging/macos/Launcher.swift"
-"$PY" "$RES/code/packaging/macos/make_icon.py" "$RES/Flippy.icns"
+"$PY" "$RES/code/packaging/make_icon.py" "$RES/Flippy.icns"
 "$PY" - "$APP/Contents/Info.plist" "$VERSION" "$RUNTIME" "$MACOSX_DEPLOYMENT_TARGET" <<'PY'
 import plistlib, sys
 out, version, runtime, minimum = sys.argv[1:]

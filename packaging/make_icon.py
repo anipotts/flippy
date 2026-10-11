@@ -1,6 +1,7 @@
 """Draw Flippy's app icon (the black-and-white pixel hand with white click lines, no tile) and build Flippy.icns.
 
-Usage: python packaging/macos/make_icon.py <out.icns>
+Shared: Flippy.app's .icns, and the PNGs flippy/linux/desktop.py installs for COSMIC.
+Usage: python packaging/make_icon.py <out.icns>
 """
 import math
 import os
@@ -10,7 +11,7 @@ import tempfile
 
 import cairo
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from flippy import themes  # noqa: E402
 
 

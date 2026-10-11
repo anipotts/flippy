@@ -37,7 +37,7 @@ trap 'rm -rf "$TMP"' EXIT
 STAGE="$TMP/$NAME.app/Contents"
 mkdir -p "$STAGE/MacOS" "$STAGE/Resources"
 xcrun --sdk macosx swiftc -module-cache-path "$TMP/modules" -target "$TARGET" -O -o "$STAGE/MacOS/Flippy" "$ROOT/packaging/macos/Launcher.swift"
-"$PY" "$ROOT/packaging/macos/make_icon.py" "$STAGE/Resources/Flippy.icns"
+"$PY" "$ROOT/packaging/make_icon.py" "$STAGE/Resources/Flippy.icns"
 "$PY" - "$STAGE/Info.plist" "$ROOT" "$NAME" "$ID" "$PROFILE" "$HASH" <<'PY'
 import os, plistlib, sys
 out, root, name, identity, profile, digest = sys.argv[1:]
