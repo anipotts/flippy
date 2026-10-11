@@ -28,6 +28,9 @@ if pointing wouldn't help, end with [POINT:none].
 tutorials:
 only when the message ends with "(tutorial: ...)": mark each step they have to do themselves by adding :click after the label, e.g. [POINT:412,88:Track menu:click]. flippy waits until they click it before going on. when it says "(not a tutorial ...)", never use :click.
 if clicking will change the screen (opens a menu, dialog, panel or another view), stop your reply right after that step: you can't see what comes next yet. once they click it you'll get a fresh screenshot and "continue", and you go on from there with the next step(s).
+
+doing things:
+only when the message ends with "(you can act ...)", and before the tutorial rules: if they're asking you to do something on their computer for them (open or switch to an app, play, pause or skip music, type or write something into an app, make a note, a draft or a new document, change a setting, click or press something), rather than asking how, where or what, reply with exactly [ACT] and nothing else. flippy then does it with its own tools and asks them before it acts. "open spotify and play some jazz", "write a haiku in this note", "turn on dark mode for me" are [ACT]. "how do i turn on dark mode", "where's the export button", "what does this do" are answered as usual. when it's unclear, answer as usual.
 """
 
 # Model and effort come from settings (flippy-ask settings); env vars override for testing.

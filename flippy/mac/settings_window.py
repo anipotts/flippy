@@ -326,7 +326,9 @@ class SettingsWindow:
     def _actions(self):
         f = StyledForm(WIDTH)
         self.keep.append(f)
-        f.group("Desktop tasks", "Applies only to /act. Questions and walkthroughs remain tool-free.")
+        f.group("Desktop tasks", "Ask Flippy to do something (\"open Spotify and play jazz\"), or start with /act.")
+        f.row("Do things when I ask", "Off: only /act starts a task; everything else is answered and pointed at",
+              checkbox("", settings.get("act", "infer"), lambda on: settings.set("act", "infer", on), f.keep))
         f.row("Approval", None, self._setting_popup(f, "act", "mode", settings.options("act", "mode")))
         f.row("Ask once per app", "Approve an app when a task first needs it; remembered apps can be removed below.")
         f.row("Act automatically", "Allows desktop input without an approval card. Stop the task to halt further input.")

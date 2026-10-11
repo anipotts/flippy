@@ -348,7 +348,10 @@ class SettingsWindow(Gtk.Window):
             entry.set_text(settings.get("codex", "model"))
 
     def _actions(self):
-        tasks = group("Desktop tasks", "Applies only to /act. Questions and walkthroughs remain tool-free.")
+        tasks = group("Desktop tasks", "Ask Flippy to do something (\"open Spotify and play jazz\"), or start with "
+                                       "/act.")
+        tasks.add(check_row("Do things when I ask", "Off: only /act starts a task; everything else is answered and "
+                                                    "pointed at", "act", "infer"))
         tasks.add(combo_row("Approval", None, "act", "mode", settings.options("act", "mode")))
         tasks.add(row("Ask once per app", "Approve an app when a task first needs it; remembered apps can be removed "
                                           "below."))

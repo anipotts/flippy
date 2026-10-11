@@ -21,6 +21,7 @@ DEFAULTS = {
     "act": {
         "mode": "per_app",       # per_app | auto | every_input
         "allowed_apps": [],       # remembered macOS bundle IDs, approved from an action task
+        "infer": True,            # "open Spotify and play jazz" runs as a desktop task without typing /act
     },
     "claude": {
         "model": "default",     # default | opus | sonnet | haiku

@@ -91,6 +91,8 @@ class Flippy:
         self.action_future = None
         self.allowed_apps = set(settings.get("act", "allowed_apps"))
         self.tutorial = False    # the current answer is a tutorial: its ":click" steps wait for their click
+        self.act_hold = None     # the question could become a desktop task: the reply's start, held until it isn't [ACT]
+        self.act_question = None
         self.fade_id = 0
         self.fading = False
         self.last_ask = 0.0
@@ -328,6 +330,8 @@ class Flippy:
             return
         self.tutorial = wants_tutorial(question) if tutorial is None else tutorial
         event("ask", question=question, tutorial=self.tutorial)
+        offer_act = self._can_infer_act()
+        self.act_hold, self.act_question = ("", question) if offer_act else (None, None)
         req = self._begin_request("tutor")
         self.box.hide()
         keep_marks = self.marked
@@ -336,8 +340,16 @@ class Flippy:
                         "annotation, not part of the app.]\n" + question)
         question += ("\n\n(tutorial: mark the steps I have to do myself with :click)" if self.tutorial else
                      "\n\n(not a tutorial: just answer and point, no :click)")
+        if offer_act:
+            question += "\n(you can act: if I'm asking you to do this for me, reply [ACT] only)"
         self.marked = False
         self._run_request(req, self._ask(question, req, keep_marks=keep_marks), self._on_answer, ASK_TIMEOUT_S)
+
+    def _can_infer_act(self):
+        """Can a plain question turn into a desktop task ("play some jazz in Spotify"), without typing /act?
+        Not for questions about a drawn mark, or while a video is recording."""
+        return bool(settings.get("act", "infer") and hasattr(self.ui, "app_look") and not self.marked
+                    and not self.input_disabled and not getattr(getattr(self, "video", None), "recording", False))
 
     def _begin_request(self, mode):
         review = getattr(self, "video", None)
@@ -748,6 +760,7 @@ class Flippy:
         if not self._owns(owner):
             return
         if err:
+            self.act_hold = None
             self._stop_playback()
             shown, logged = errors.describe(err)
             log("error", logged)  # the code and the error's first line, never the question
@@ -755,8 +768,19 @@ class Flippy:
             self._open_setup_if(setup_gate.login_error, err)
             return
         raw, gen = result
+        held, self.act_hold = self.act_hold, None
+        if held is not None and raw.lstrip().startswith(ACT_TAG):
+            # They asked Flippy to do it, not how: the same words become a desktop task, with its approvals.
+            event("answer", outcome="act")
+            self._stop_playback()
+            status = self.act(self.act_question)
+            if self.action_tools is None:
+                self._fail(status)
+            return
         event("answer", outcome="completed")
         if self.play and self.play.gen == gen:
+            if held:
+                self.play.append(held)
             self.play.finish(raw)
 
     # --- playback: show the reply step by step, moving the hand to each point ---
@@ -779,8 +803,15 @@ class Flippy:
         self._resume_ticking()
 
     def _stream_text(self, gen, delta):
-        if self.play and self.play.gen == gen:
-            self.play.append(delta)
+        if not (self.play and self.play.gen == gen):
+            return
+        if self.act_hold is not None:
+            self.act_hold += delta
+            start = self.act_hold.lstrip()
+            if ACT_TAG.startswith(start) or start.startswith(ACT_TAG):
+                return  # could still be [ACT]: show nothing yet
+            delta, self.act_hold = self.act_hold, None
+        self.play.append(delta)
 
     def _stop_playback(self):
         if self.play:
@@ -1417,6 +1448,9 @@ TUTORIAL_RE = re.compile(r"\b(how (do|can|would|should|to) (i|you|we)|how to|wal
 DO_RE = re.compile(r"^(?:(?:ok|okay|now|then|next|and|also|cool|nice)[,!]?\s+)*(?:let'?s\s+|can you\s+)?"
                    r"(?:add|make|create|put|record|build|insert|set up|turn (?:on|up|down|off)|open|change|switch|"
                    r"start|bring in|layer)\b")
+
+
+ACT_TAG = "[ACT]"  # the tutor's whole reply when a question asks Flippy to do something (brain.SYSTEM_PROMPT)
 
 
 KEY_WORDS = (("⌘", "Cmd "), ("⇧", "Shift "), ("⌥", "Option "), ("⌃", "Ctrl "))
