@@ -614,6 +614,10 @@ class Flippy:
                 raise ActionError("Both drag endpoints must be inside the foreground window.")
         if scopeable and not policy.needs_approval(shot.target, remembered=settings.get("act", "allowed_apps")):
             return self._owns(req)
+        if name == "use_app" and policy.mode != "every_input":
+            # Opening or switching to an app sends no input to anything, even when the task started in a terminal or
+            # browser; what it then does in that app is approved by that app's own rules.
+            return self._owns(req)
         running = asyncio.get_running_loop()
         future = running.create_future()
         def chosen(allowed, remember=False):

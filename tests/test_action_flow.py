@@ -64,6 +64,25 @@ class TestApprovalFlow(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([label for label, _ in args[2]], ['Stop', 'Allow once'])
                 self.assertIn('"x": 90', args[1])
 
+    async def test_switching_apps_from_a_terminal_needs_no_card(self):
+        for mode in ('per_app', 'auto'):
+            with self.subTest(mode=mode):
+                obj, _ = controller(mode)
+                allowed = await asyncio.wait_for(obj._action_approve(
+                    'use_app', {'name': 'Spotify', 'reason': 'play a song'}, frame('com.apple.Terminal'),
+                    obj.request), 1)
+                self.assertTrue(allowed)
+                obj.ui.action_card.card.assert_not_called()
+        obj, _ = controller('every_input')
+        self.assertTrue(await self.approve_named(obj, 'use_app', {'name': 'Spotify', 'reason': 'r'}))
+        obj.ui.action_card.card.assert_called_once()
+
+    async def approve_named(self, obj, name, args, button='Allow once'):
+        def choose(title, text, buttons, **kwargs):
+            next(callback for label, callback in buttons if label == button)()
+        obj.ui.action_card.card.side_effect = choose
+        return await asyncio.wait_for(obj._action_approve(name, args, frame('com.apple.Terminal'), obj.request), 1)
+
     async def test_browser_never_bypasses_card_or_offers_persistent_grant(self):
         obj, _ = controller('auto', ['com.apple.Safari'])
         shot = frame('com.apple.Safari')

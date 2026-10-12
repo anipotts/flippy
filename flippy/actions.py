@@ -517,4 +517,12 @@ class AppFrame:
                          + (" with your pointer, when you pause" if args.get("real_pointer") else ""),
                 "scroll": f"scroll {args.get('direction')} at the marked spot", "drag": "drag along the marked line"
                 }.get(name, name)
-        return f"{line}\n{approval_text(name, args)}"
+        # The exact text where it matters (what gets typed, what a field is set to, an app action's values), escaped;
+        # otherwise the plain sentence and Claude's reason, not the tool's name and JSON.
+        values = {k: v for k, v in args.items() if k not in ("reason", "element", "real_pointer", "x", "y", "to_x",
+                                                              "to_y", "count", "direction", "lines", "name", "path",
+                                                              "combo")}
+        if name in ("type", "set_text") or (name == "app_action" and values.get("args")):
+            line += "\n" + json.dumps(values.get("text", values.get("args")), ensure_ascii=True)
+        reason = str(args.get("reason") or "").strip()
+        return f"{line}\n{reason}" if reason else line

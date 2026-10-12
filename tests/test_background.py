@@ -137,7 +137,9 @@ class Describe(unittest.TestCase):
         f = frame()
         self.assertTrue(f.describe("press", {"element": 2, "reason": "r"}).startswith("press 'Save'"))
         self.assertTrue(f.describe("menu", {"path": ["File", "New"], "reason": "r"}).startswith("choose File > New"))
-        self.assertIn('"text": "hi"', f.describe("type", {"text": "hi", "reason": "r"}))
+        self.assertIn('"hi"', f.describe("type", {"text": "hi", "reason": "r"}))
+        self.assertEqual(f.describe("use_app", {"name": "Spotify", "reason": "Play a song"}), "switch to Spotify\nPlay a song")
+        self.assertIn('"\\u202e', f.describe("type", {"text": "\u202e", "reason": "r"}))
 
 
 if __name__ == "__main__":
