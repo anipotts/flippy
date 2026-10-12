@@ -238,6 +238,7 @@ scripts/    the macOS and Linux installers, release.sh, package.sh (the per-plat
 tests/      python -m unittest discover tests
 docs/       linux-port.md: how the macOS features work on COSMIC;
             linux-0.3.0.md: instructions for bringing COSMIC up to macOS (/act, pointer input, glass, the new look);
+            linux-catch-up.md: what changed after 0.3.0 and how to update and check COSMIC;
             video-review.md: video review, and how to build it on macOS;
             errors.md: every error code Flippy shows, what it means and what to do
 ```
