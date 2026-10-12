@@ -4,26 +4,39 @@ An AI tutor that sits on top of your desktop. Press a hotkey, type a question ab
 
 Runs on **macOS 13+** (Apple Silicon or Intel) and on **Linux with COSMIC on Wayland** (Pop!_OS 24.04). Modeled on [farzaa/clicky](https://github.com/farzaa/clicky) (macOS), rewritten from scratch in Python. If you like what I made, Farza is the pioneer! go check out (and star his repo if you starred this) [heyclicky.com](https://www.heyclicky.com/)
 
-## What it does
-
-- **Ask about your screen.** A hotkey opens a box; Flippy screenshots the screen, sends it to Claude with your question, and shows the answer next to a pointer on the thing it means.
-- **Walkthroughs.** Multi-step answers play step by step: the pointer glides from point to point and the card follows. Pause, step back/forward, seek and change speed from the card.
-- **Circle and ask.** A second hotkey lets you draw on the screen to mark something, then ask about it ("what does this say?").
-- **Tutorials that wait for you.** When Claude walks you through doing something, the steps you have to do yourself wait until you click the thing (on COSMIC, Flippy infers the click from the mouse and the screen reacting; see [docs/linux-port.md](docs/linux-port.md#tutorials-that-wait-for-clicks)). If that click opens a menu or dialog Claude couldn't see yet, Flippy takes a fresh screenshot and Claude carries on from there. Next on the card skips a step. Turn it off with `timing.wait_for_clicks`.
-- **Follow-ups.** Questions share one session, so "and where's bluetooth?" works. `/new` starts fresh; sessions also reset after 15 idle minutes.
-- **Themes.** Midnight, Y2K Player, Media Player (a 2000s media player skin), Glass (a lock-screen style card), Terminal, and one that follows your system's accent color (macOS or COSMIC). On macOS 26+ and COSMIC Epoch 1.7+, Media Player and Glass sit on real glass.
-- **Custom pointers.** Built-in hand, ring, arrow and dot, or draw your own in the 20×24 pixel editor, or import an image and pick its tip.
-- **Check a video edit.** Press `⌃⌥V` on macOS or `Super+Shift+V` on COSMIC in your editor, play the edit back, press it again and ask ("is the cut at 0:12 clean?", "does the title stay up long enough?"). Flippy grabs the editor's window a few times a second, in memory only, finds the preview and the cuts, and shows Claude the frames that matter. Claude sees stills, not motion, and can't hear the audio. How it works: [docs/video-review.md](docs/video-review.md).
-- **Help when you're stuck, and tips.** Flippy can watch an app you're learning and offer a hand, or a tip, at the right moment (see below).
-- **Settings window** for model, effort, theme, pointer, sizes, timing, help mode and (on macOS) hotkeys.
-
-Ask Flippy to do something ("open Spotify and play some jazz") and it does it, asking you first; ask how and it shows you. Questions and tips never touch your apps (see below). Flippy uses your existing **Claude Pro/Max subscription** through the Claude Agent SDK; no API client or key is added.
-
 ## Install
 
 Flippy installs from source with one command. There's no `.dmg` or download to open: Flippy isn't notarized by Apple, so a downloaded app gets blocked by macOS. Building it on your own Mac avoids that.
 
-**You need:** a Claude Pro or Max subscription (or ChatGPT, through Codex), and about 5 minutes.
+**You need:** a Mac with macOS 13 or newer, or Linux with COSMIC (Pop!_OS 24.04); a Claude Pro or Max subscription (or ChatGPT, through Codex); about 10 minutes.
+
+### Easiest: let Claude or ChatGPT install it for you
+
+Not comfortable with Terminal? Let an AI coding assistant do it and talk you through the clicks.
+
+1. Open **Claude Code** (in the [Claude desktop app](https://claude.ai/download), or type `claude` in Terminal) or **Codex** (the [ChatGPT Codex app or CLI](https://developers.openai.com/codex/cli/)).
+2. Copy everything in the box below, paste it in, and press Return.
+3. Do what it asks. It will tell you when to type your password, what to click, and what to try at the end.
+
+```text
+Please install Flippy for me: https://github.com/kap-il/flippy
+I'm not technical, so explain each step in plain words before you do it, and tell me exactly what to click when you need me.
+
+1. Check my computer first. Flippy needs macOS 13 or newer, or Linux with the COSMIC desktop (Pop!_OS 24.04). If it's neither, stop and tell me.
+2. Read the "Install" section of that README and follow the steps for my system, using the official installer:
+   curl -fsSL https://raw.githubusercontent.com/kap-il/flippy/main/install.sh | bash
+3. If something it needs is missing (on a Mac: Homebrew, or the Xcode Command Line Tools), help me install it. When a step needs my password, give me the exact command to paste into Terminal myself, and remind me that the password doesn't show while I type it.
+4. When the installer finishes, walk me through Flippy's setup, one step at a time:
+   - connecting my Claude (or ChatGPT) account,
+   - on a Mac: turning Flippy on in System Settings > Privacy & Security > Screen & System Audio Recording, and in Accessibility, then restarting Flippy from its menu bar icon (Setup… > Restart),
+   - on Linux: adding the keyboard shortcuts with ~/.local/bin/flippy-ask setup.
+5. Don't change anything else on my computer. Don't set ANTHROPIC_API_KEY or OPENAI_API_KEY: Flippy uses my subscription, not an API key.
+6. At the end, tell me the shortcut that opens Flippy, and give me one question and one "do this for me" request to try.
+```
+
+If anything goes wrong, paste the error back into the same chat and ask it to fix it.
+
+**Or do it yourself**, with the steps for your system below.
 
 ### macOS
 
@@ -76,6 +89,21 @@ The installer puts the code in `~/flippy`, builds gtk4-layer-shell into `~/.loca
 - **Somewhere other than `~/flippy`:** `curl -fsSL https://raw.githubusercontent.com/kap-il/flippy/main/install.sh | FLIPPY_DIR=~/code/flippy bash`
 - **Read it first:** `git clone https://github.com/kap-il/flippy && cd flippy && ./install.sh` does the same thing.
 - Single monitor only for now, on both platforms.
+
+## What it does
+
+- **Ask about your screen.** A hotkey opens a box; Flippy screenshots the screen, sends it to Claude with your question, and shows the answer next to a pointer on the thing it means.
+- **Walkthroughs.** Multi-step answers play step by step: the pointer glides from point to point and the card follows. Pause, step back/forward, seek and change speed from the card.
+- **Circle and ask.** A second hotkey lets you draw on the screen to mark something, then ask about it ("what does this say?").
+- **Tutorials that wait for you.** When Claude walks you through doing something, the steps you have to do yourself wait until you click the thing (on COSMIC, Flippy infers the click from the mouse and the screen reacting; see [docs/linux-port.md](docs/linux-port.md#tutorials-that-wait-for-clicks)). If that click opens a menu or dialog Claude couldn't see yet, Flippy takes a fresh screenshot and Claude carries on from there. Next on the card skips a step. Turn it off with `timing.wait_for_clicks`.
+- **Follow-ups.** Questions share one session, so "and where's bluetooth?" works. `/new` starts fresh; sessions also reset after 15 idle minutes.
+- **Themes.** Midnight, Y2K Player, Media Player (a 2000s media player skin), Glass (a lock-screen style card), Terminal, and one that follows your system's accent color (macOS or COSMIC). On macOS 26+ and COSMIC Epoch 1.7+, Media Player and Glass sit on real glass.
+- **Custom pointers.** Built-in hand, ring, arrow and dot, or draw your own in the 20×24 pixel editor, or import an image and pick its tip.
+- **Check a video edit.** Press `⌃⌥V` on macOS or `Super+Shift+V` on COSMIC in your editor, play the edit back, press it again and ask ("is the cut at 0:12 clean?", "does the title stay up long enough?"). Flippy grabs the editor's window a few times a second, in memory only, finds the preview and the cuts, and shows Claude the frames that matter. Claude sees stills, not motion, and can't hear the audio. How it works: [docs/video-review.md](docs/video-review.md).
+- **Help when you're stuck, and tips.** Flippy can watch an app you're learning and offer a hand, or a tip, at the right moment (see below).
+- **Settings window** for model, effort, theme, pointer, sizes, timing, help mode and (on macOS) hotkeys.
+
+Ask Flippy to do something ("open Spotify and play some jazz") and it does it, asking you first; ask how and it shows you. Questions and tips never touch your apps (see below). Flippy uses your existing **Claude Pro/Max subscription** through the Claude Agent SDK; no API client or key is added.
 
 ## Updates
 
