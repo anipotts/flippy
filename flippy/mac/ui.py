@@ -632,13 +632,16 @@ class Platform:
             ax.give_back_front()
 
     def _bind_keys(self):
+        self.key_errors = {}
         for hid, name in ((1, "ask"), (2, "draw"), (3, "video")):
             err = hotkeys.register(hid, settings.get("keys", name), lambda n=name: self.command(f"hotkey {n}"))
+            self.key_errors[name] = err
             if err:
                 print(f"flippy: hotkey for {name}: {err}", flush=True)
         pause = settings.get("keys", "pause")
         err = self.double_tap.set(None if pause == "off" else pause[len("double-"):],
                                   lambda: self.command("hotkey pause"))
+        self.key_errors["pause"] = err
         if err:
             print(f"flippy: pause shortcut: {err}", flush=True)
         if getattr(self, "menu_items", None):
@@ -674,6 +677,7 @@ class Platform:
 
     def refresh_help_menu(self):
         """The menu is opening: the app in front is the one they're working in (Flippy never activates)."""
+        self._label_menu()  # a shortcut can break or get fixed while Flippy runs (Accessibility, a new app)
         app, name, pid = sensors.frontmost()
         self.menu_front = (app, name) if app and pid != os.getpid() else None
         mode = settings.get("help", "mode")
@@ -780,6 +784,24 @@ class Platform:
         img.setAccessibilityDescription_("Flippy")
         self.status.button().setImage_(img)
 
+    def shortcut_problems(self):
+        """{name: why it won't work, or None} for flippy/shortcuts.py NAMES (the tour, the menu)."""
+        from .. import shortcuts
+        errors = getattr(self, "key_errors", {})
+        system = shortcuts.system_shortcuts()
+        out = {name: shortcuts.mac_problem(settings.get("keys", name), hotkeys.parse, errors.get(name), system)
+               for name in ("ask", "draw", "video")}
+        pause = settings.get("keys", "pause")
+        out["pause"] = None if pause == "off" else errors.get("pause") or (
+            None if hotkeys.accessibility_trusted() else "double-tap shortcuts need the Accessibility permission")
+        return out
+
+    def change_shortcuts(self):
+        """Where to change them: Settings, on its Hotkeys page."""
+        self.command("settings")
+        if self.settings_win is not None:
+            self.settings_win._show_tab("Hotkeys")
+
     def key_label(self, name):
         """For the tour's cards: "⇧⌘Space", "double-tap ⌘", or None if it's off."""
         combo = settings.get("keys", name)
@@ -794,8 +816,11 @@ class Platform:
         return needs_setup() or self.setup_win is not None
 
     def _label_menu(self):
+        problems = self.shortcut_problems()
         for key, (item, title) in self.menu_items.items():
-            item.setTitle_(f"{title}    {hotkeys.pretty(settings.get('keys', key))}")
+            warn = problems.get(key)
+            item.setTitle_(f"{title}    {hotkeys.pretty(settings.get('keys', key))}" + ("  ⚠" if warn else ""))
+            item.setToolTip_(f"This shortcut won't work: {warn}. Change it in Settings → Hotkeys." if warn else None)
 
     def listen(self, path, handle):
         """Serve the flippy-ask socket: one command line in, handle(cmd) -> one reply line out."""

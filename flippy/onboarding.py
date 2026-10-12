@@ -1,5 +1,6 @@
 """The first-run tour: Flippy teaches itself, one thing at a time, and waits for you to do each one.
 
+  your shortcuts (only if one won't work: why, and Change…) ->
   ask (with a question filled in for you) -> pause and resume while it talks -> a follow-up (it remembers),
   skip ahead and change the speed -> a walkthrough that waits for your clicks -> circle something and ask ->
   video review (optional) -> ends in Settings, on the look.
@@ -12,6 +13,7 @@ Every card can skip its step or end the tour. Shown once after setup (onboarding
 import sys
 
 from . import loop, settings
+from .shortcuts import TITLES
 
 SUGGEST = {
     "ask": "Give me a quick tour of what's on my screen, one thing at a time.",
@@ -20,6 +22,7 @@ SUGGEST = {
     "draw": "What's this, and what can I do with it?",
 }
 PREFILL_MS = 150    # after the box opens, before filling in the suggestion
+RECHECK_MS = 1500   # on the shortcuts step: how often to look again while they change one
 
 
 def key_label(ui, name):
@@ -32,7 +35,7 @@ def key_label(ui, name):
 class Tour:
     """flippy: the controller (flippy/daemon.py Flippy)."""
 
-    STEPS = ("welcome", "ask", "pause", "followup", "skip", "follow", "draw", "video", "settings")
+    STEPS = ("welcome", "keys", "ask", "pause", "followup", "skip", "follow", "draw", "video", "settings")
 
     def __init__(self, flippy):
         self.flippy = flippy
@@ -95,32 +98,37 @@ class Tour:
         if step == "welcome":
             self._card("Hi, I'm Flippy", "Want a one-minute tour? I'll show you each thing, you try it, and "
                        "I'll wait for you.", [("Not now", self._later), ("Let's go", self.next)])
+        elif step == "keys":
+            if not self._show_problems():
+                return self.next()  # every shortcut works: nothing to show
+            loop.timeout_add(RECHECK_MS, self._recheck)
         elif step == "ask":
             self.prefill = SUGGEST["ask"]
-            self._card(f"Press {k('ask')}", "That's how you call me, from any app. Try it now.")
+            self._key_card("ask", f"Press {k('ask')}", "That's how you call me, from any app. Try it now.")
         elif step == "pause":
             self.sub = "wait_point"
             self._card("Here I go", "I answer one step at a time, pointing as I talk.")
         elif step == "followup":
             self.prefill = SUGGEST["followup"]
-            self._card(f"Ask a follow-up: {k('ask')}", "I remember what we just talked about, so you can keep "
-                       "going.")
+            self._key_card("ask", f"Ask a follow-up: {k('ask')}", "I remember what we just talked about, so you can "
+                           "keep going.")
         elif step == "skip":
             self.sub = "wait_point"
             self._card("Watch the panel", "It has buttons to step through my answer.")
         elif step == "follow":
             self.prefill = SUGGEST["follow"]
             self.sub = "ask"
-            self._card(f"Follow along: {k('ask')}", "Ask me how to do something, and I'll walk you through it, "
-                       "waiting for each of your clicks.")
+            self._key_card("ask", f"Follow along: {k('ask')}", "Ask me how to do something, and I'll walk you "
+                           "through it, waiting for each of your clicks.")
         elif step == "draw":
             self.sub = "start"
-            self._card(f"Circle something: {k('draw')}", "Draw around anything on screen, let go, and ask about it.")
+            self._key_card("draw", f"Circle something: {k('draw')}", "Draw around anything on screen, let go, and ask "
+                           "about it.")
         elif step == "video":
             self.sub = "offer"
-            self._card(f"Check a video edit: {k('video')}",
-                       "In your video editor, press it, play your edit back, press it again and ask. Try it now if "
-                       "an editor is open, or later.", [("End tour", self.stop), ("Next", self.next)])
+            self._key_card("video", f"Check a video edit: {k('video')}",
+                           "In your video editor, press it, play your edit back, press it again and ask. Try it now "
+                           "if an editor is open, or later.", [("End tour", self.stop), ("Next", self.next)])
         elif step == "settings":
             self.flippy.open_settings()
             self._card("Make me yours", "Themes, pointers, speed and shortcuts are all in Settings. Replay this "
@@ -224,6 +232,48 @@ class Tour:
         else:
             self.sub = "rest"
             self._card("Nice", "Let me finish, then we'll keep going.")
+
+    # --- shortcuts that won't work (flippy/shortcuts.py): say so and offer to change them, instead of waiting
+    def _problems(self):
+        try:
+            return self.ui.shortcut_problems() if hasattr(self.ui, "shortcut_problems") else {}
+        except Exception as e:  # a check that can't run never blocks the tour
+            _log(f"tour: shortcut check failed: {e}")
+            return {}
+
+    def _show_problems(self):
+        """The shortcuts step's card, listing what won't work. False when everything works."""
+        bad = [(name, why) for name, why in self._problems().items() if why]
+        if not bad:
+            return False
+        lines = "; ".join(f"{TITLES[name]} ({self.ui.key_label(name) or 'no shortcut'}): {why}"
+                          if hasattr(self.ui, "key_label") else f"{TITLES[name]}: {why}" for name, why in bad)
+        head = "A shortcut won't work" if len(bad) == 1 else f"{len(bad)} shortcuts won't work"
+        self._card(head, f"{lines}. Change it and I'll notice.", [("Skip", self.next), ("Change…", self._change)])
+        return True
+
+    def _recheck(self):
+        """While on the shortcuts step: move on as soon as they've all been fixed (a loop.timeout_add source)."""
+        if self.step != "keys":
+            return False
+        if self._show_problems():
+            return True
+        self._card("All set", "Your shortcuts work now.")
+        loop.timeout_add(1200, lambda: (self.step == "keys" and self.next()) and False)
+        return False
+
+    def _key_card(self, name, head, detail, buttons=None):
+        """A step's card, or, when the shortcut it uses won't work, why and a way to change it."""
+        why = self._problems().get(name)
+        if why:
+            self._card(f"{TITLES[name]} shortcut won't work", f"{why[0].upper() + why[1:]}. Change it, or use the "
+                       "menu bar icon instead.", [("Skip", self.next), ("Change…", self._change)])
+        else:
+            self._card(head, detail, buttons)
+
+    def _change(self):
+        if hasattr(self.ui, "change_shortcuts"):
+            self.ui.change_shortcuts()
 
     # --- helpers
     def _fill(self, text):

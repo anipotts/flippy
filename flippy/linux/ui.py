@@ -402,6 +402,17 @@ class Platform:
         w, h, stride, mode, data = img
         return Image.frombuffer("RGBA" if mode in ("RGBA", "BGRA") else "RGBX", (w, h), data, "raw", mode, stride, 1)
 
+    def shortcut_problems(self):
+        """{name: why it won't work, or None} for flippy/shortcuts.py NAMES: unbound, or keys COSMIC also uses."""
+        from .. import shortcuts
+        from .settings_window import SHORTCUTS
+        system = [shortcuts.read(p) for p in (*shortcuts.COSMIC_DEFAULTS, shortcuts.COSMIC_SYSTEM)]
+        return shortcuts.cosmic_problems(shortcuts.read(SHORTCUTS), system)
+
+    def change_shortcuts(self):
+        """Flippy's setup adds the missing ones; COSMIC Settings changes keys. Setup shows both."""
+        self.open_setup()
+
     def key_label(self, name):
         """For the tour's cards: the COSMIC shortcut that runs it ("Super+Shift+Space"), or None if there isn't one."""
         from .settings_window import flippy_shortcuts, pretty_accel

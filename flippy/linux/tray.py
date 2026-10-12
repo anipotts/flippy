@@ -240,10 +240,17 @@ class Tray:
         return self.platform.command(cmd)
 
     def shortcuts(self):
-        from .settings_window import flippy_shortcuts, pretty_accel
+        from .. import shortcuts
+        from .settings_window import SHORTCUTS, flippy_shortcuts, pretty_accel
         out = {}
         for accel, args in flippy_shortcuts():
             out.setdefault({"": "ask"}.get(args, args), pretty_accel(accel))
+        # a shortcut COSMIC also uses gets a warning sign next to it
+        clashes = shortcuts.cosmic_problems(shortcuts.read(SHORTCUTS), [shortcuts.read(p) for p in
+                                            (*shortcuts.COSMIC_DEFAULTS, shortcuts.COSMIC_SYSTEM)])
+        for name, label in list(out.items()):
+            if clashes.get({"pause-toggle": "pause"}.get(name, name)):
+                out[name] = label + "  ⚠"
         return out
 
     def opening(self):

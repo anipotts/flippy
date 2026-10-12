@@ -70,6 +70,53 @@ class TestTour(unittest.TestCase):
         buttons = dict(self.f.ui.nudge.cards[-1][2])
         buttons[title]()
 
+    def test_shortcuts_that_work_skip_the_check(self):
+        self.f.ui.shortcut_problems = lambda: {"ask": None, "draw": None, "video": None, "pause": None}
+        self.tour.start()
+        self.press("Let's go")
+        self.assertEqual(self.tour.step, "ask")
+
+    def test_broken_shortcut_is_shown_changed_and_rechecked(self):
+        problems = {"ask": None, "draw": "macOS uses it for Previous input source", "video": None, "pause": None}
+        self.f.ui.shortcut_problems = lambda: dict(problems)
+        self.f.ui.change_shortcuts = mock.Mock()
+        with mock.patch.object(onboarding.loop, "timeout_add", lambda ms, fn: None):  # rechecks by hand below
+            self.tour.start()
+            self.press("Let's go")
+            self.assertEqual(self.tour.step, "keys")
+            head, detail, _ = self.f.ui.nudge.cards[-1]
+            self.assertEqual(head, "A shortcut won't work")
+            self.assertIn("Circle (⌃⇧Space): macOS uses it for Previous input source", detail)
+            self.press("Change…")
+            self.f.ui.change_shortcuts.assert_called_once_with()
+            self.assertTrue(self.tour._recheck())       # still broken: keep looking
+            problems["draw"] = None                      # they picked another combo
+            self.assertFalse(self.tour._recheck())
+            self.assertEqual(self.f.ui.nudge.head, "All set")
+        self.tour.next()
+        self.assertEqual(self.tour.step, "ask")
+
+    def test_a_step_whose_shortcut_is_broken_offers_change_instead_of_waiting(self):
+        self.f.ui.shortcut_problems = lambda: {"ask": None, "draw": "it isn't set up yet", "video": None,
+                                               "pause": None}
+        self.f.ui.change_shortcuts = mock.Mock()
+        self.tour.start()
+        self.tour._go("draw")
+        head, detail, buttons = self.f.ui.nudge.cards[-1]
+        self.assertEqual(head, "Circle shortcut won't work")
+        self.assertIn("It isn't set up yet", detail)
+        self.assertEqual([b for b, _ in buttons], ["Skip", "Change…"])
+        self.press("Skip")
+        self.assertEqual(self.tour.step, "video")
+
+    def test_a_failing_check_never_blocks_the_tour(self):
+        def broken():
+            raise OSError("no plist")
+        self.f.ui.shortcut_problems = broken
+        self.tour.start()
+        self.press("Let's go")
+        self.assertEqual(self.tour.step, "ask")
+
     def test_whole_tour(self):
         self.assertFalse(self.tour.maybe_start())
         self.assertEqual(self.tour.step, "welcome")

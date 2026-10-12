@@ -43,7 +43,7 @@ Flippy installs from source with one command. There's no `.dmg` or download to o
    - **Open at login** (optional).
 5. **Take the tour.** It takes a minute and shows each feature. Replay it any time from the menu bar icon → **Take the tour**.
 
-Default hotkeys: `⇧⌘Space` asks, `⌃⇧Space` circles something, `⌃⌥V` records a video edit to check, double-tap `⌘` pauses a walkthrough. Change them in Settings → Hotkeys.
+Default hotkeys: `⇧⌘Space` asks, `⌃⇧Space` circles something, `⌃⌥V` records a video edit to check, double-tap `⌘` pauses a walkthrough. Change them in Settings → Hotkeys. If one can't work (another app took it, macOS uses it for Spotlight or input sources, or double-tap needs Accessibility), the tour says so first and offers **Change…**, and the menu marks it with ⚠.
 
 **If a permission is on but Flippy still says it's missing:** in that System Settings list, select Flippy, click **−** to remove it, then add `~/Applications/Flippy.app` again with **+** and restart Flippy. macOS remembers the exact build it approved, and an older Flippy (from a previous install or `Flippy.dmg`) can hold the entry. Delete any old copy first: `rm -rf /Applications/Flippy.app`.
 
@@ -67,7 +67,7 @@ Needs COSMIC on Wayland (Pop!_OS 24.04) and Python 3.11+. For `/act` desktop tas
    | `Super+P` (optional) | `~/.local/bin/flippy-ask pause-toggle` |
    | `Super+Shift+V` (optional) | `~/.local/bin/flippy-ask video` |
 
-4. **Press `Super+Shift+Space`.** Flippy starts on the first press and its icon appears in the panel. To start it at login, turn on **Open Flippy at login** in `flippy-ask setup`.
+4. **Press `Super+Shift+Space`.** Flippy starts on the first press and its icon appears in the panel. To start it at login, turn on **Open Flippy at login** in `flippy-ask setup`. A shortcut that isn't set up, or whose keys COSMIC also uses, gets a ⚠ in the panel menu, and the tour offers to fix it.
 
 The installer puts the code in `~/flippy`, builds gtk4-layer-shell into `~/.local` (Pop!_OS doesn't package it), links `flippy-ask` and `flippy-daemon` into `~/.local/bin`, and adds **Flippy** to the app library. If you put gtk4-layer-shell somewhere else, set `FLIPPY_LAYER_SHELL_LIB` to its library folder. The first time a task needs the pointer, COSMIC asks once to allow remote desktop. [docs/linux-port.md](docs/linux-port.md) explains how it all works there.
 
