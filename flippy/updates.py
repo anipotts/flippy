@@ -317,5 +317,6 @@ def install(root=ROOT, log=print):
         if r.returncode != 0:
             raise UpdateError("installing packages failed: " + (r.stderr.strip().splitlines() or ["?"])[-1])
     return {"from": before[:7], "to": after[:7], "version": current_version_at(root), "packages": packages,
-            "app": any(f.startswith("packaging/macos/") or f == "packaging/make_icon.py" for f in changed)}
+            "app": any(f.startswith("packaging/macos/") or f in ("packaging/make_icon.py", "scripts/build_mac.sh")
+                       for f in changed)}
 

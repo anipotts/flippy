@@ -109,7 +109,7 @@ Ask Flippy to do something ("open Spotify and play some jazz") and it does it, a
 
 Flippy checks GitHub for a new release once a day and shows a card (**Install / Later / What's new**). **Install** updates your copy and restarts Flippy. Check any time from the menu bar or panel icon (**Check for updates…**) or with `flippy-ask update`. You can also run the install command again; it pulls the latest code and rebuilds. Turn the daily check off with `updates.check = false`. If you've edited Flippy's files yourself, it won't overwrite them: update with `git pull` instead.
 
-On macOS, rebuilding the app can make macOS ask for Screen Recording again (Flippy is signed ad hoc, not notarized).
+On macOS, Flippy is signed with a certificate the installer makes on your Mac (kept in `~/.config/flippy-signing`), so rebuilds and updates keep its permissions. If that certificate can't be made, Flippy is signed ad hoc and macOS may ask for permissions again after a rebuild.
 
 Releasing (for maintainers): `scripts/release.sh 0.3 "what changed"` bumps `VERSION`, tags, pushes and publishes the GitHub Release. The notes' first line is what the update card shows.
 
@@ -139,7 +139,7 @@ To use the contribution as your normal app, run `scripts/dev.sh --app run`. This
 
 Setup shows the exact running app and a draggable icon for adding it to macOS permission lists. Use the direct Screen Recording and Accessibility links; if a pane does not accept a drop, reveal the app in Finder and select it using the pane’s `+` button. macOS owns permission approval. Restart Flippy afterward and let its live checks confirm access.
 
-The separate `~/Applications/Flippy Demo.app` uses `dev.flippy.demo`, `~/.config/flippy-demo`, its own socket, logs and caches. Updates and autostart are disabled. Its defaults are `⌘⌥⇧Space` to ask, `⌃⌥⇧Space` to draw, `⌃⌥⇧V` for video and double-Option to pause. Native permission prompts may appear after ad hoc signing. The normal app is not stopped or replaced.
+The separate `~/Applications/Flippy Demo.app` uses `dev.flippy.demo`, `~/.config/flippy-demo`, its own socket, logs and caches. Updates and autostart are disabled. Its defaults are `⌘⌥⇧Space` to ask, `⌃⌥⇧Space` to draw, `⌃⌥⇧V` for video and double-Option to pause. It's signed with the same local certificate as the normal app, so its permissions also survive rebuilds. The normal app is not stopped or replaced.
 
 For acceptance, `scripts/action_fixture.py` provides a disposable native window, and `tests/fixtures/desktop.html` provides a deterministic browser page. Test approval/refusal, focus and pixel changes, typing/drag cancellation and released input. Automated tests do not prove live macOS permissions or input. Release decisions are tracked in [issue #2](https://github.com/kap-il/flippy/issues/2).
 
@@ -241,6 +241,7 @@ flippy-ask quit
 rm -rf ~/Applications/Flippy.app ~/Library/LaunchAgents/dev.flippy.app.plist ~/.local/bin/flippy-ask
 rm -rf /Applications/Flippy.app ~/Library/Application\ Support/Flippy   # an old Flippy.dmg install, if you had one
 rm -rf ~/.config/flippy   # settings and custom pointers, if you want them gone too
+security delete-keychain ~/.config/flippy-signing/flippy-signing.keychain-db; rm -rf ~/.config/flippy-signing   # Flippy's local signing certificate
 ```
 
 Linux (then remove Flippy's shortcuts in COSMIC Settings → Keyboard):
@@ -250,6 +251,7 @@ flippy-ask quit
 rm -f ~/.local/bin/flippy-ask ~/.local/bin/flippy-daemon ~/.local/share/applications/dev.flippy.daemon.desktop \
       ~/.config/autostart/dev.flippy.daemon.desktop ~/.local/share/icons/hicolor/*/apps/dev.flippy.daemon.png
 rm -rf ~/.config/flippy   # settings and custom pointers, if you want them gone too
+security delete-keychain ~/.config/flippy-signing/flippy-signing.keychain-db; rm -rf ~/.config/flippy-signing   # Flippy's local signing certificate
 ```
 
 ## Project layout

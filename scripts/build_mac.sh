@@ -15,8 +15,37 @@ PY="$ROOT/.venv/bin/python"
 ARCH="$(uname -m)"
 TARGET="$ARCH-apple-macosx13.0"
 PLIST_REV=2  # bump when Info.plist below changes, so installed apps get rebuilt
-HASH="$(shasum -a 256 "$ROOT/packaging/macos/Launcher.swift" | cut -d ' ' -f 1)-$TARGET-$PLIST_REV"
-# Python-only changes do not rebuild a valid launcher or change its ad hoc identity.
+
+# Sign with a certificate made once on this Mac, in its own keychain (~/.config/flippy-signing), so macOS ties
+# Flippy's permissions to the app id and that certificate, and rebuilds keep them. An ad hoc signature ties them to
+# one exact build. If the certificate can't be made or used, the app is signed ad hoc as before.
+SIGN_DIR="$HOME/.config/flippy-signing"
+KEYCHAIN="$SIGN_DIR/flippy-signing.keychain-db"
+signing_identity() {  # prints the certificate's SHA-1, or nothing
+  if [ ! -f "$KEYCHAIN" ]; then
+    local tmp; tmp="$(mktemp -d)"
+    mkdir -p "$SIGN_DIR" && chmod 700 "$SIGN_DIR" &&
+      /usr/bin/openssl rand -hex 24 > "$SIGN_DIR/password" && chmod 600 "$SIGN_DIR/password" &&
+      printf '%s\n' '[req]' 'distinguished_name=dn' 'prompt=no' 'x509_extensions=ext' '[dn]' 'CN=Flippy Local Signing' \
+        '[ext]' 'basicConstraints=critical,CA:false' 'keyUsage=critical,digitalSignature' \
+        'extendedKeyUsage=critical,codeSigning' > "$tmp/cfg" &&
+      /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 36500 -config "$tmp/cfg" \
+        -keyout "$tmp/key.pem" -out "$tmp/cert.pem" 2>/dev/null &&
+      /usr/bin/openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" -out "$tmp/id.p12" -passout pass:x \
+        -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 &&
+      security create-keychain -p "$(cat "$SIGN_DIR/password")" "$KEYCHAIN" &&
+      security set-keychain-settings "$KEYCHAIN" &&  # never locks itself
+      security import "$tmp/id.p12" -k "$KEYCHAIN" -P x -T /usr/bin/codesign >/dev/null &&
+      security set-key-partition-list -S apple-tool:,apple: -s -k "$(cat "$SIGN_DIR/password")" "$KEYCHAIN" >/dev/null ||
+      { security delete-keychain "$KEYCHAIN" 2>/dev/null; rm -f "$KEYCHAIN" "$SIGN_DIR/password"; }
+    rm -rf "$tmp"
+  fi
+  [ -f "$KEYCHAIN" ] && security unlock-keychain -p "$(cat "$SIGN_DIR/password")" "$KEYCHAIN" 2>/dev/null &&
+    security find-identity -p codesigning "$KEYCHAIN" | awk '/"Flippy Local Signing"/ { print $2; exit }'
+}
+SIGN="$(signing_identity 2>/dev/null || true)"
+HASH="$(shasum -a 256 "$ROOT/packaging/macos/Launcher.swift" | cut -d ' ' -f 1)-$TARGET-$PLIST_REV-${SIGN:-adhoc}"
+# Python-only changes do not rebuild a valid launcher or change its identity.
 if "$PY" - "$APP" "$ROOT" "$ID" "$HASH" <<'PY'
 import os, plistlib, sys
 app, root, identity, digest = sys.argv[1:]
@@ -53,7 +82,12 @@ with open(out, 'wb') as f:
         'FlippyRoot': root, 'FlippyProfile': profile, 'FlippyLauncherHash': digest,
     }, f)
 PY
-codesign --force --sign - "$TMP/$NAME.app"
+if [ -n "$SIGN" ]; then
+  codesign --force --sign "$SIGN" --keychain "$KEYCHAIN" "$TMP/$NAME.app"
+else
+  echo 'flippy: signing ad hoc (no local certificate), so macOS may ask for permissions again after rebuilds' >&2
+  codesign --force --sign - "$TMP/$NAME.app"
+fi
 codesign --verify --strict "$TMP/$NAME.app"
 "$PY" - "$APP" "$ROOT" "$ID" <<'PY'
 import os, plistlib, sys
