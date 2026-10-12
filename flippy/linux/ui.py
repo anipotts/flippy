@@ -30,6 +30,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
 
 from .. import loop, pointers, settings, themes  # noqa: E402
+from ..history import PROMPTS  # noqa: E402
 from ..overlay import OverlayBase  # noqa: E402
 from . import act, pointer_editor, preload, sensors, wl  # noqa: E402
 from .notice import Notice, NoticeLayer  # noqa: E402
@@ -281,6 +282,7 @@ class InputBox:
         if self.win:
             self.win.present()
             return
+        PROMPTS.reset()
         theme = themes.get(settings.get("look", "theme"))
         win = Gtk.Window(application=self.app, title="Flippy", decorated=False, resizable=False)
         win.set_titlebar(Gtk.Box(visible=False))  # client-side "no titlebar", so COSMIC doesn't add its own
@@ -289,7 +291,7 @@ class InputBox:
         card.add_css_class("flippy-card")
         card.set_size_request(560, -1)
         entry = Gtk.Entry(placeholder_text=theme.placeholder)
-        hint = Gtk.Label(label="Enter to ask · Esc to close · /new fresh session · /settings", xalign=0)
+        hint = Gtk.Label(label="Enter to ask or get it done · ↑ earlier · Esc to close · /new · /settings", xalign=0)
         hint.add_css_class("flippy-hint")
         card.append(entry)
         card.append(hint)
@@ -297,7 +299,7 @@ class InputBox:
         # grab anywhere outside the text field to move it
         handle = Gtk.WindowHandle(child=card)
         win.set_child(handle)
-        entry.connect("activate", lambda e: self.on_submit(e.get_text().strip()))
+        entry.connect("activate", lambda e: self.submit(e.get_text()))
         keys = Gtk.EventControllerKey()
         keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self._on_key)
@@ -312,7 +314,21 @@ class InputBox:
         if keyval == Gdk.KEY_Escape:
             self.on_cancel()
             return True
+        if keyval in (Gdk.KEY_Up, Gdk.KEY_Down):  # one line, so Up and Down only ever mean history
+            self.recall(older=keyval == Gdk.KEY_Up)
+            return True
         return False
+
+    def submit(self, text):
+        PROMPTS.add(text)
+        self.on_submit(text.strip())
+
+    def recall(self, older):
+        current = self.entry.get_text()
+        text = PROMPTS.older(current) if older else PROMPTS.newer(current)
+        if text is not None:
+            self.entry.set_text(text)
+            self.entry.set_position(-1)  # cursor at the end, like a shell
 
     def hide(self):
         if self.win:

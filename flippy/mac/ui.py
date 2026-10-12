@@ -36,6 +36,7 @@ from PyObjCTools import AppHelper
 from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 
 from .. import loop, settings, themes
+from ..history import PROMPTS
 from ..overlay import OverlayBase
 from . import hotkeys, sensors, statusicon
 from .nudge import Nudge
@@ -370,10 +371,13 @@ class BoxDelegate(NSObject, protocols=[objc.protocolNamed("NSTextFieldDelegate")
     def control_textView_doCommandBySelector_(self, control, text_view, sel):
         sel = sel.decode() if isinstance(sel, bytes) else str(sel)
         if sel == "insertNewline:":
-            self.box.on_submit(str(control.stringValue()).strip())
+            self.box.submit(str(control.stringValue()))
             return True
         if sel == "cancelOperation:":
             self.box.on_cancel()
+            return True
+        if sel in ("moveUp:", "moveDown:"):  # one line, so Up and Down only ever mean history
+            self.box.recall(older=sel == "moveUp:")
             return True
         return False
 
@@ -393,10 +397,25 @@ class InputBox:
     def visible(self):
         return self.panel is not None
 
+    def submit(self, text):
+        PROMPTS.add(text)
+        self.on_submit(text.strip())
+
+    def recall(self, older):
+        current = str(self.entry.stringValue())
+        text = PROMPTS.older(current) if older else PROMPTS.newer(current)
+        if text is None:
+            return
+        self.entry.setStringValue_(text)
+        editor = self.entry.currentEditor()
+        if editor is not None:
+            editor.setSelectedRange_((len(text), 0))  # cursor at the end, like a shell
+
     def show(self):
         if self.panel:
             self.panel.makeKeyAndOrderFront_(None)
             return
+        PROMPTS.reset()
         theme = themes.get(settings.get("look", "theme"))
         st = box_style(theme)
         font, hint_font = _font(st["font"]), _font(st["hint_font"])
@@ -447,7 +466,7 @@ class InputBox:
         entry.cell().setScrollable_(True)
         entry.setDelegate_(self.delegate)
         field_box.addSubview_(entry)
-        hint = NSTextField.labelWithString_("Enter to ask · /act <task> to act · Esc to close · /new · /settings")
+        hint = NSTextField.labelWithString_("Enter to ask or get it done · ↑ earlier · Esc to close · /new · /settings")
         hint.setFont_(hint_font)
         hint.setTextColor_(st["hint"])
         if st.get("hint_shadow"):  # white hint on light frost: a soft shadow keeps it readable
@@ -485,7 +504,7 @@ class InputBox:
             self.entry.setStringValue_(text)
 
     def activate(self):
-        self.on_submit(str(self.entry.stringValue()).strip())
+        self.submit(str(self.entry.stringValue()))
 
 
 # --------------------------------------------------------------------------- screenshots
