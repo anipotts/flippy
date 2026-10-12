@@ -176,77 +176,11 @@ class TestLinuxPackageInstall(TestPackageInstall):
     runtime_platform = "linux"
 
 
-RUNTIME = {"requirements-mac.txt": "a\n", "packaging/macos/Launcher.swift": "// launcher\n",
-           "packaging/macos/runtime.env": "PY_VERSION=3.13.15\n"}
+class TestBundledApp(unittest.TestCase):
+    """An app from the old Flippy.dmg can't update itself; it's told to reinstall from source."""
 
-
-class TestBundledInstall(unittest.TestCase):
-    """The self-contained Flippy.app: an update becomes a new copy of the code next to the running one
-    (flippy/bundle.py), and only when it needs the runtime the app has."""
-
-    def setUp(self):
-        from flippy import bundle
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.base = self.tmp.name
-        self.home = os.path.join(self.base, "Application Support", "Flippy")
-        # what the launcher sets up: the running copy, current, checked against this app's runtime
-        old = package(self.base, "flippy-0.2.1-macos", "macos", {"VERSION": "0.2.1\n", **RUNTIME})
-        self.running = os.path.join(self.home, "versions", "1-0.2.1")
-        os.makedirs(os.path.dirname(self.running))
-        updates._extract(old, os.path.join(self.base, "x"))
-        os.rename(os.path.join(self.base, "x", "flippy-0.2.1-macos"), self.running)
-        self.runtime = bundle.runtime_id(self.running)
-        os.symlink("versions/1-0.2.1", os.path.join(self.home, "code"))
-        env = {"FLIPPY_BUNDLED": "1", "FLIPPY_CODE_HOME": self.home, "FLIPPY_RUNTIME": self.runtime}
-        patch = mock.patch.dict(os.environ, env)
-        patch.start()
-        self.addCleanup(patch.stop)
-        self.snapshot = self.tree(self.running)
-
-    def tree(self, root):
-        out = {}
-        for d, _, names in os.walk(root):
-            for n in names:
-                with open(os.path.join(d, n)) as f:
-                    out[os.path.relpath(os.path.join(d, n), root)] = f.read()
-        return out
-
-    def install(self, files, version="0.2.2"):
-        new = package(self.base, f"flippy-{version}-macos", "macos", {"VERSION": version + "\n", **files})
-        with mock.patch.object(updates, "latest_release", return_value=published(new, version)), serve(new), \
-                mock.patch("subprocess.run") as run:
-            res = updates.install(root=self.running, log=lambda *a: None)
-        self.assertFalse(run.called)  # never pip, never ./install.sh
-        return res
-
-    def current(self):
-        return os.path.realpath(os.path.join(self.home, "code"))
-
-    def test_a_release_on_the_same_runtime_becomes_a_new_current_copy(self):
-        res = self.install({**RUNTIME, "flippy/video.py": "v\n", "packaging/make_icon.py": "new icon\n"})
-        self.assertEqual((res["from"], res["to"], res["version"], res["packages"], res["app"]),
-                         ("0.2.1", "0.2.2", "0.2.2", False, False))  # app: an icon change never runs ./install.sh
-        new = self.current()
-        self.assertNotEqual(new, os.path.realpath(self.running))
-        self.assertEqual(updates.current_version_at(new), "0.2.2")
-        self.assertTrue(os.path.exists(os.path.join(new, "flippy", "video.py")))
-        self.assertEqual(open(os.path.join(new, "RUNTIME")).read().strip(), self.runtime)
-        self.assertEqual(self.tree(self.running), self.snapshot)  # the running copy is untouched
-        self.assertEqual(os.readlink(os.path.join(self.home, "code")),
-                         os.path.join("versions", os.path.basename(new)))  # relative: the folder can move
-
-    def test_a_release_that_needs_a_different_runtime_asks_for_the_new_app(self):
-        for rel, text in (("requirements-mac.txt", "a\nb\n"), ("packaging/macos/Launcher.swift", "// v2\n"),
-                          ("packaging/macos/runtime.env", "PY_VERSION=3.14.0\n")):
-            with self.subTest(rel), self.assertRaisesRegex(updates.UpdateError, "reinstall"):
-                self.install({**RUNTIME, rel: text, "flippy/video.py": "v\n"})
-            self.assertEqual(self.current(), os.path.realpath(self.running))  # nothing switched
-            self.assertEqual(self.tree(self.running), self.snapshot)
-            self.assertEqual(os.listdir(os.path.join(self.home, "versions")), ["1-0.2.1"])  # nothing left behind
-
-    def test_an_app_whose_launcher_predates_runtimes_asks_for_the_new_app(self):
-        del os.environ["FLIPPY_RUNTIME"]
-        with self.assertRaisesRegex(updates.UpdateError, "reinstall"):
-            self.install({**RUNTIME})
-        self.assertEqual(self.current(), os.path.realpath(self.running))
+    def test_asks_for_a_reinstall(self):
+        with mock.patch.dict(os.environ, {"FLIPPY_BUNDLED": "1"}):
+            self.assertIn("reinstall", updates.blocked())
+            with self.assertRaisesRegex(updates.UpdateError, "reinstall"):
+                updates.install(log=lambda *a: None)

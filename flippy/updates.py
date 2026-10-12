@@ -23,7 +23,6 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from . import bundle
 from .profile import current
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -166,6 +165,8 @@ def package_platform(root=ROOT):
 
 def blocked(root=ROOT):
     """Why this copy can't update itself, or None."""
+    if bundled():
+        return NEW_APP
     if not os.path.isdir(os.path.join(root, ".git")):
         if package_platform(root):
             return None
@@ -178,13 +179,13 @@ def blocked(root=ROOT):
 
 
 def bundled():
-    """The self-contained Flippy.app (scripts/build_app.sh): its Python and packages are inside the app, so an
-    update installs a new copy of the code (flippy/bundle.py) and only when it needs the same runtime."""
+    """The self-contained Flippy.app from the old Flippy.dmg (its launcher sets FLIPPY_BUNDLED). It can't update
+    itself: Flippy.dmg isn't published anymore."""
     return os.environ.get("FLIPPY_BUNDLED") == "1"
 
 
-NEW_APP = ("Flippy {version} can't update this app in place: reinstall with the one-line install at "
-           "github.com/kap-il/flippy (Flippy.dmg isn't published anymore)")
+NEW_APP = ("this Flippy.app came from Flippy.dmg, which isn't published anymore: delete it and reinstall with the "
+           "one-line install at github.com/kap-il/flippy")
 
 
 def requirements_file():
@@ -294,8 +295,6 @@ def install(root=ROOT, log=print):
             archive = os.path.join(tmp, name)
             _download(url, archive)
             _verify(archive, rel.get("digests", {}).get(name))
-            if bundled():
-                return _install_bundled(archive, before, log)
             changed = unpack(archive, root, log)
         after = current_version_at(root)
     else:
@@ -320,22 +319,3 @@ def install(root=ROOT, log=print):
     return {"from": before[:7], "to": after[:7], "version": current_version_at(root), "packages": packages,
             "app": any(f.startswith("packaging/macos/") or f == "packaging/make_icon.py" for f in changed)}
 
-
-def _install_bundled(archive, before, log):
-    """The self-contained app: the release becomes a new copy of the code next to the running one (flippy/bundle.py),
-    so nothing the running Flippy uses is touched and a restart picks it up. A release that needs a different
-    runtime (packages, launcher, Python) is refused: that takes a new Flippy.dmg."""
-    home, runtime = os.environ.get("FLIPPY_CODE_HOME"), os.environ.get("FLIPPY_RUNTIME")
-    with tempfile.TemporaryDirectory() as tmp:
-        src = _extract(archive, tmp)
-        version = current_version_at(src)
-        if package_platform(src) != "macos":
-            raise UpdateError(f"the update is for {package_platform(src)}, this copy is macos")
-        if not home or not runtime:  # started by an older launcher that doesn't know about runtimes
-            raise UpdateError(NEW_APP.format(version=version))
-        try:
-            slot = bundle.activate(home, src, runtime)
-        except bundle.BundleError:
-            raise UpdateError(NEW_APP.format(version=version)) from None
-    log(f"update: installed {version} at {slot}")
-    return {"from": before, "to": version, "version": version, "packages": False, "app": False}
