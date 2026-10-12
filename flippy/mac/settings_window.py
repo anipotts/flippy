@@ -331,7 +331,8 @@ class SettingsWindow:
               checkbox("", settings.get("act", "infer"), lambda on: settings.set("act", "infer", on), f.keep))
         f.row("Approval", None, self._setting_popup(f, "act", "mode", settings.options("act", "mode")))
         f.row("Ask once per app", "Approve an app when a task first needs it; remembered apps can be removed below.")
-        f.row("Act automatically", "Allows desktop input without an approval card. Stop the task to halt further input.")
+        f.row("Act automatically", "No approval cards, browsers included. Terminals, settings and password managers "
+                                    "still ask. Stop the task to halt further input.")
         f.row("Ask before every input", "Shows each proposed click, text entry, key, scroll or drag for approval.")
         strict, automatic = settings.ACT_LIMITS["every_input"], settings.ACT_LIMITS["auto"]
         f.row("Task bounds", f"Every input: {strict.max_actions} inputs, {strict.timeout_seconds // 60} minutes. "

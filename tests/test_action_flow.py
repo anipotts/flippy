@@ -83,13 +83,19 @@ class TestApprovalFlow(unittest.IsolatedAsyncioTestCase):
         obj.ui.action_card.card.side_effect = choose
         return await asyncio.wait_for(obj._action_approve(name, args, frame('com.apple.Terminal'), obj.request), 1)
 
-    async def test_browser_never_bypasses_card_or_offers_persistent_grant(self):
-        obj, _ = controller('auto', ['com.apple.Safari'])
+    async def test_browser_asks_without_persistent_grant_except_in_auto(self):
+        obj, _ = controller('per_app', ['com.apple.Safari'])
         shot = frame('com.apple.Safari')
         obj.action_policy.grant(shot.target)
         self.assertTrue(await self.approve(obj, shot, (30, 30)))
         self.assertEqual([label for label, _ in obj.ui.action_card.card.call_args.args[2]],
                          ['Stop', 'Allow once'])
+        obj, _ = controller('auto')
+        self.assertTrue(await self.approve(obj, frame('com.apple.Safari'), (30, 30)))
+        obj.ui.action_card.card.assert_not_called()
+        obj, _ = controller('auto')
+        self.assertTrue(await self.approve(obj, frame('com.apple.Terminal'), (30, 30)))
+        obj.ui.action_card.card.assert_called_once()
 
     async def test_remembered_app_bypasses_only_inside_scope(self):
         obj, _ = controller(remembered=['com.apple.TextEdit'])

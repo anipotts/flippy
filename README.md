@@ -101,7 +101,7 @@ This uses custom tools inside the existing Agent SDK, with the same configured m
 
 The first version supports one display, at most 12 inputs per task and 160 characters per text entry, with a five-minute task timeout. Scroll uses 1–10 native wheel lines; drag follows a straight path for 0.6 seconds within the foreground window. Before dispatch, Flippy hides its preview, checks the original target geometry and compares the screen's decoded pixels with the proposed frame. Any difference stops the task, including blinking carets or animation. During drag, intentional window movement is allowed while the app, window and display must remain the same. These checks cannot eliminate the final dispatch race. Actions can affect documents or submit forms, so review every approval. Browser interaction uses your visible desktop and session; there is no browser extension or DOM driver.
 
-On COSMIC, tasks work through the app's controls (AT-SPI, Linux's accessibility layer) without bringing it in front. Keys it can't send that way, and clicks on spots that aren't controls, wait until you pause for a second, bring the app forward for a moment and give your window back. Terminals, settings, browsers and password managers always ask before each input. How it works: [docs/linux-port.md](docs/linux-port.md#desktop-tasks-act).
+On COSMIC, tasks work through the app's controls (AT-SPI, Linux's accessibility layer) without bringing it in front. Keys it can't send that way, and clicks on spots that aren't controls, wait until you pause for a second, bring the app forward for a moment and give your window back. Terminals, settings and password managers always ask before each input; browsers do too, except in **Act automatically** mode. How it works: [docs/linux-port.md](docs/linux-port.md#desktop-tasks-act).
 
 ## Isolated local demo
 
@@ -186,7 +186,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `help.mode` | `off`, `quiet` (offer a hand when stuck), `tips` (that, plus cached tips) |
 | `help.apps`, `help.muted` | comma-separated app ids (macOS bundle ids, e.g. `com.ableton.live`; Wayland app ids on COSMIC, e.g. `io.lmms.LMMS`) |
 | `act.infer` | `true` (default): a request to do something ("open Spotify and play jazz") runs as a desktop task without `/act`; `false`: only `/act` does |
-| `act.mode` | `per_app` (default: approve each app once per task), `auto` (no approval cards) or `every_input` |
+| `act.mode` | `per_app` (default: approve each app once per task), `auto` (no approval cards, browsers included) or `every_input`. Terminals, settings and password managers ask before every input in every mode |
 | `automation.clicks` | `false` (default) or `true`: lets `flippy-ask click <x> <y> [double]` click on screen (macOS: needs the Accessibility permission; COSMIC: the remote desktop portal, which asks once). When on, any program running as you can make Flippy click. `/act` uses its separate per-input approval and does not enable scripted clicks. |
 | `updates.check` | `true` (default): look for a new release once a day |
 | `keys.pause` | `double-cmd` (default), `double-option`, `double-ctrl`, `double-shift` or `off`: pause/resume a walkthrough (macOS, needs the Accessibility permission; on COSMIC, bind `flippy-ask pause-toggle` to a shortcut) |

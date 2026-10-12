@@ -85,12 +85,20 @@ class ApprovalPolicy:
         "com.apple.terminal", "com.googlecode.iterm2", "com.apple.scripteditor2", "com.apple.automator",
         "dev.warp.warp-stable", "com.mitchellh.ghostty", "net.kovidgoyal.kitty",
         "org.alacritty", "com.github.wez.wezterm",
-        "com.apple.safari", "com.google.chrome", "org.chromium.chromium", "org.mozilla.firefox",
-        "com.microsoft.edgemac", "com.brave.browser", "com.operasoftware.opera", "company.thebrowser.browser",
-        "com.vivaldi.vivaldi", "com.agilebits.onepassword7", "com.1password.1password",
+        "com.agilebits.onepassword7", "com.1password.1password",
         "com.bitwarden.desktop", "org.keepassxc.keepassxc", "com.keepassxc.keepassxc",
         "com.dashlane.dashlane", "com.enpass.enpass", "com.lastpass.lastpass",
     })
+    # Browsers ask in Ask once per app and Ask before every input; Act automatically covers them too.
+    BROWSERS = frozenset({
+        "com.apple.safari", "com.google.chrome", "org.chromium.chromium", "org.mozilla.firefox",
+        "com.microsoft.edgemac", "com.brave.browser", "com.operasoftware.opera", "company.thebrowser.browser",
+        "com.vivaldi.vivaldi",
+        "firefox", "google-chrome", "chromium", "chromium-browser", "brave-browser", "microsoft-edge",
+        "vivaldi-stable", "app.zen_browser.zen", "librewolf", "io.gitlab.librewolf-community", "org.gnome.epiphany",
+    })
+    BROWSER_WORDS = ("browser", "chrome", "chromium", "firefox", "safari", "vivaldi", "opera", "zen", "brave",
+                     "edge", "librewolf", "epiphany")
     # COSMIC targets (Wayland app ids, lowercased): terminals, settings, browsers, password managers, and the
     # windows that ask for passwords or install software
     LINUX_SENSITIVE = frozenset({
@@ -116,24 +124,40 @@ class ApprovalPolicy:
         self._granted = set()
 
     @staticmethod
-    def sensitive(target):
+    def browser(target):
+        app = app_id(target)
+        if app is None:
+            return False
+        words = ApprovalPolicy.BROWSER_WORDS if wayland(target) else ApprovalPolicy.BROWSER_WORDS[:7]
+        return (app in ApprovalPolicy.BROWSERS or any(word in app for word in words)
+                or any(app.startswith(prefix + ".") for prefix in ApprovalPolicy.BROWSERS))
+
+    @staticmethod
+    def always_asks(target):
+        """Terminals, settings, password managers and system prompts: every input asks, in every mode."""
         app = app_id(target)
         if app is None:
             return True
         if wayland(target) and (app in ApprovalPolicy.LINUX_SENSITIVE
                                 or any(word in app for word in ApprovalPolicy.LINUX_WORDS)):
-            return True
+            return not ApprovalPolicy.browser(target)
         return (app in ApprovalPolicy.SENSITIVE
                 or any(word in app for word in ("password", "keychain", "bitwarden", "1password", "onepassword",
-                                                "keepass", "lastpass", "dashlane", "enpass", "terminal", "browser",
-                                                "chrome", "chromium", "firefox", "safari", "vivaldi", "opera"))
+                                                "keepass", "lastpass", "dashlane", "enpass", "terminal"))
                 or any(app.startswith(prefix + ".") for prefix in ApprovalPolicy.SENSITIVE))
 
+    @staticmethod
+    def sensitive(target):
+        """Never granted per app or remembered: the always-ask apps and browsers."""
+        return ApprovalPolicy.always_asks(target) or ApprovalPolicy.browser(target)
+
     def needs_approval(self, target, remembered=()):
-        if self.mode == "every_input" or self.sensitive(target):
+        if self.mode == "every_input":
             return True
         if self.mode == "auto":
-            return False
+            return self.always_asks(target)
+        if self.sensitive(target):
+            return True
         app = app_id(target)
         if not isinstance(remembered, (list, tuple, set, frozenset)):
             remembered = ()

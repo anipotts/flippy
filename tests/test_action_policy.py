@@ -31,7 +31,22 @@ class TestPolicy(unittest.TestCase):
                     policy=ApprovalPolicy(mode)
                     policy.grant(target(app))
                     self.assertTrue(policy.sensitive(target(app)))
-                    self.assertTrue(policy.needs_approval(target(app),remembered=[app.lower()]))
+                    browser = ApprovalPolicy.browser(target(app))
+                    # Act automatically covers browsers; everything else here asks in every mode
+                    self.assertEqual(policy.needs_approval(target(app),remembered=[app.lower()]),
+                                     not (mode == 'auto' and browser))
+
+    def test_browsers_are_told_apart_from_always_ask_apps(self):
+        for app in ('com.apple.Safari','com.google.Chrome','org.mozilla.firefoxdeveloperedition',
+                    'company.thebrowser.Browser','com.brave.Browser'):
+            with self.subTest(app=app):
+                self.assertTrue(ApprovalPolicy.browser(target(app)))
+                self.assertFalse(ApprovalPolicy.always_asks(target(app)))
+        for app in ('com.apple.Terminal','com.1password.1password','com.apple.systempreferences',
+                    'com.example.PasswordVault'):
+            with self.subTest(app=app):
+                self.assertFalse(ApprovalPolicy.browser(target(app)))
+                self.assertTrue(ApprovalPolicy.always_asks(target(app)))
 
     def test_auto_only_bypasses_known_native_identifier_and_every_input_never_bypasses(self):
         self.assertFalse(ApprovalPolicy('auto').needs_approval(target()))

@@ -355,8 +355,8 @@ class SettingsWindow(Gtk.Window):
         tasks.add(combo_row("Approval", None, "act", "mode", settings.options("act", "mode")))
         tasks.add(row("Ask once per app", "Approve an app when a task first needs it; remembered apps can be removed "
                                           "below."))
-        tasks.add(row("Act automatically", "Allows desktop input without an approval card. Stop the task to halt "
-                                           "further input."))
+        tasks.add(row("Act automatically", "No approval cards, browsers included. Terminals, settings and password "
+                                           "managers still ask. Stop the task to halt further input."))
         tasks.add(row("Ask before every input", "Shows each proposed click, text entry, key, scroll or drag for "
                                                 "approval."))
         strict, automatic = settings.ACT_LIMITS["every_input"], settings.ACT_LIMITS["auto"]
