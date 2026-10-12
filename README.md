@@ -87,7 +87,7 @@ Releasing (for maintainers): `scripts/release.sh 0.3 "what changed"` bumps `VERS
 
 ## Usage
 
-Press the ask hotkey (`⇧⌘Space` on macOS, `Super+Shift+Space` on COSMIC), type, hit Enter. `Up`/`Down` bring back earlier questions, like a terminal (kept in memory only, never on disk). `Esc` closes the box; answers fade on their own (or `flippy-ask dismiss`). Type `/new` for a fresh session or `/settings` for the settings window.
+Press the ask hotkey (`⇧⌘Space` on macOS, `Super+Shift+Space` on COSMIC), type, hit Enter. `Up`/`Down` bring back earlier questions, like a terminal (kept in memory only, never on disk). The usual editing keys work in the box: `⌘A` `⌘C` `⌘X` `⌘V` `⌘Z` `⇧⌘Z` on macOS (`Ctrl` on COSMIC), word and line jumps with `⌥`/`⌘` and the arrows, `⌥⌫` and `⌘⌫`. `Esc` closes the box; answers fade on their own (or `flippy-ask dismiss`). Type `/new` for a fresh session or `/settings` for the settings window.
 
 For draw mode, press the draw hotkey (`⌃⇧Space` / `Super+Alt`), drag to circle something, release, then type your question. Esc, right-click, the hotkey again, or 60 s of nothing cancels it.
 

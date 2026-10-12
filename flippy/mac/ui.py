@@ -110,6 +110,41 @@ def main_screen():
     return NSScreen.screens()[0]  # the one with the menu bar; single display for now
 
 
+# ⌘ shortcuts a text field normally gets from the app's Edit menu: (key, shift, option) -> action. Flippy has no
+# menu bar (a menu bar icon app), and its question box doesn't activate it, so install_edit_keys() answers them.
+EDIT_KEYS = {("a", False, False): "selectAll:", ("c", False, False): "copy:", ("x", False, False): "cut:",
+             ("v", False, False): "paste:", ("v", True, True): "pasteAsPlainText:", ("z", False, False): "undo:",
+             ("z", True, False): "redo:"}
+_edit_monitor = None
+
+
+def edit_action(event):
+    """The Edit action for a ⌘ key event ("copy:"), or None."""
+    flags = event.modifierFlags()
+    if not flags & AppKit.NSEventModifierFlagCommand or flags & AppKit.NSEventModifierFlagControl:
+        return None
+    key = str(event.charactersIgnoringModifiers() or "").lower()
+    return EDIT_KEYS.get((key, bool(flags & AppKit.NSEventModifierFlagShift),
+                          bool(flags & AppKit.NSEventModifierFlagOption)))
+
+
+def install_edit_keys():
+    """⌘A/C/X/V/Z (and ⇧⌘Z, ⌥⇧⌘V) in every Flippy text field: the question box, Settings, setup, the goal prompt.
+    A hidden Edit menu isn't enough: macOS only uses an app's menu while it's the active app."""
+    global _edit_monitor
+    if _edit_monitor is not None:
+        return
+
+    def handle(event):
+        action = edit_action(event)
+        win = NSApp.keyWindow()
+        if action and win is not None and isinstance(win.firstResponder(), AppKit.NSText) \
+                and NSApp.sendAction_to_from_(action, None, win):
+            return None  # done: the event goes no further
+        return event
+    _edit_monitor = AppKit.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(AppKit.NSEventMaskKeyDown, handle)
+
+
 class KeyPanel(NSPanel):
     """A borderless panel that can still take the keyboard (without activating the app)."""
 
@@ -486,6 +521,7 @@ class InputBox:
         editor = entry.currentEditor()
         if editor is not None:
             editor.setInsertionPointColor_(st["fg"])
+            editor.setAllowsUndo_(True)  # ⌘Z / ⇧⌘Z
 
     def hide(self):
         if self.panel:
@@ -1489,6 +1525,7 @@ def run(make_app):
         return
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)  # no Dock icon
+    install_edit_keys()
     global PLATFORM
     platform = PLATFORM = Platform()
     flippy = make_app(platform)
