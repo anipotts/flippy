@@ -82,15 +82,20 @@ class TestSetupRedesign(unittest.TestCase):
         self.assertEqual(window.marks['accessibility'].accessibilityLabel(), 'accessibility permission enabled')
 
     def test_permission_buttons_open_correct_panes_only_on_user_action(self):
-        with mock.patch.object(setup.subprocess, 'Popen') as launch, mock.patch.object(setup, 'CGRequestScreenCaptureAccess') as request:
+        from flippy.mac import ax
+        with mock.patch.object(setup.subprocess, 'Popen') as launch, \
+                mock.patch.object(setup, 'CGRequestScreenCaptureAccess') as request, \
+                mock.patch.object(ax, 'ask_trust', return_value=True) as ask_trust:  # never the real prompt in tests
             window = self.build()
             launch.assert_not_called()
             request.assert_not_called()
             self.click(window.screen_button)
             request.assert_called_once_with()
             launch.assert_called_with(['open', setup.SCREEN_PANE])
+            ask_trust.assert_not_called()
             self.click(window.accessibility_button)
-            launch.assert_called_with(['open', setup.ACCESSIBILITY_PANE])
+            ask_trust.assert_called_once_with()
+            launch.assert_called_with(['open', setup.ACCESSIBILITY_PANE])  # even when already allowed
 
     def test_buddy_and_finder_use_exact_installed_app(self):
         window = self.build()

@@ -87,8 +87,8 @@ def ask_screen():
 
 def ask_accessibility():
     from . import ax
-    if not ax.ask_trust():
-        subprocess.Popen(["open", ACCESSIBILITY_PANE])
+    ax.ask_trust()  # macOS's prompt, and Flippy added to the list
+    subprocess.Popen(["open", ACCESSIBILITY_PANE])
 
 
 def restart():
