@@ -230,10 +230,6 @@ class PinTiming(unittest.TestCase):
         timeout_add.assert_not_called()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 @unittest.skipUnless(sys.platform == "darwin", "macOS Accessibility")
 class FocusedArea(unittest.TestCase):
     """flippy/mac/ax.py focused_area: what counts as the text you're working in."""
@@ -263,3 +259,7 @@ class FocusedArea(unittest.TestCase):
 
     def test_not_text(self):
         self.assertIsNone(self.area({"list": {"AXRole": "AXOutline", "frame": (0, 0, 500, 500)}}, "list"))
+
+
+if __name__ == "__main__":
+    unittest.main()

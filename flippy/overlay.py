@@ -68,7 +68,8 @@ class OverlayBase:
             self.card_t0 = time.monotonic()
         self.card = themes.Card(text=text, error=error, header=header, follow=bool(follow and self.target),
                                 meta=self.meta, pinned=self.pinned, **card_fields)
-        if themes.pin_shown(self.card) and self.docks():
+        place = settings.get("look", "card_place")  # auto: docks when they're learning something on screen
+        if themes.pin_shown(self.card) and (place == "corner" or place == "auto" and self.learning):
             self.card_mode = "dock"
         elif self.card.follow:
             self.card_mode = "follow"
@@ -143,11 +144,6 @@ class OverlayBase:
             cx = (W - cw) / 2
             cy = H - ch - self.card_margin_bottom if self.card_mode == "bottom" else self.card_margin_top
         return cx, cy, cw, ch
-
-    def docks(self):
-        """Does this answer dock? (look.card_place: auto = when they're learning something on screen)"""
-        place = settings.get("look", "card_place")
-        return place == "corner" or (place == "auto" and self.learning)
 
     def _dock_rect(self, W, H, cw, ch):
         """Where the docked answer is: its spot is picked once, then held by the edges nearest the screen's, so the

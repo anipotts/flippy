@@ -208,10 +208,11 @@ def focused_area():
     Only the part inside its window: an editor's text area can be the whole document."""
     root = _working_app() if trusted() else None
     el = _attr(root, "AXFocusedUIElement") if root is not None else None
-    if el is None or _attr(el, "AXRole") not in TEXT_ROLES:
+    role = _attr(el, "AXRole") if el is not None else None
+    if role not in TEXT_ROLES:
         return None
     frame = _frame(el)
-    if _attr(el, "AXRole") == "AXTextArea":
+    if role == "AXTextArea":
         for _ in range(6):  # VS Code focuses a hidden one-line field at the cursor: use the editor around it
             if not frame or frame[2] >= EDITOR_MIN[0] and frame[3] >= EDITOR_MIN[1]:
                 break

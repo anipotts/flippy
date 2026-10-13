@@ -3,8 +3,8 @@
 When you're learning something on screen, Claude marks what you need to keep seeing ([LEARN:...], flippy/point.py)
 and the answer docks away from it. The spot is scored on the screenshot: covering Claude's box costs the most,
 then the text you're working in and the rest of its window (the platform's work_area), then busy pixels (text,
-icons, edges), so blank margins, empty panels, the desktop and apps in the background win. Spots near the screen's edges are preferred over
-the middle. Pure: no windows, so it's tested directly (tests/test_dock_pin.py).
+icons, edges), so blank margins, empty panels, the desktop and apps in the background win. Spots near the
+screen's edges are preferred over the middle. Pure: no windows, so it's tested directly (tests/test_dock_pin.py).
 """
 from PIL import Image, ImageFilter
 

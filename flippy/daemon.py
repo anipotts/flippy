@@ -56,6 +56,10 @@ def event(name, **data):
             log("event listener failed")
 
 
+def _rounded(rect):
+    return tuple(round(v) for v in rect) if rect else None
+
+
 class Flippy:
     def __init__(self, ui):
         self.instance = Instance(PROFILE).acquire()
@@ -273,7 +277,7 @@ class Flippy:
     def _show_box(self):
         event("box")
         if hasattr(self.ui, "prime_focused_area"):
-            self.ui.prime_focused_area()  # overlay._in_the_way
+            self.ui.prime_focused_area()
         # Read before the box takes the keyboard: Electron apps (VS Code) stop reporting their focus once it does.
         self.focus_at_open = self.ui.work_area() if hasattr(self.ui, "work_area") else None
         self.box.show()
@@ -724,7 +728,7 @@ class Flippy:
                        show_seconds=settings.get("timing", "show_seconds"),
                        max_show_seconds=settings.get("timing", "max_show_seconds"))
 
-    def _note_focus(self, detail=None):
+    def _note_focus(self, detail):
         """What a docked answer should stay off (flippy/placement.py): the text you were working in, as the box
         opened, else now (flippy-ask q has no box); and the screenshot's busy parts."""
         found, self.focus_at_open = getattr(self, "focus_at_open", None), None
@@ -732,21 +736,19 @@ class Flippy:
             found = self.ui.work_area()
         area, window = found or (None, None)
         self.overlay.avoid, self.overlay.window, self.overlay.detail = area, window, detail
-        rect = lambda r: tuple(round(v) for v in r) if r else None
-        log(f"placement: work area {rect(area)}, window {rect(window)}")
+        log(f"placement: work area {_rounded(area)}, window {_rounded(window)}")
 
     def _note_learning(self, pl):
         """The reply says they're learning something on screen ([LEARN]): the answer docks away from its box."""
         ov = self.overlay
-        found = None if getattr(ov, "learning", True) else pl.learn()  # (True: an overlay without docking)
-        if found is None:
+        if getattr(ov, "learning", True) or (found := pl.learn()) is None:  # (True: an overlay without docking)
             return
         ov.learning = True
         if found.box:
             x1, y1, x2, y2 = found.box
             (ax, ay), (bx, by) = self._play_coords(Point(x1, y1, "")), self._play_coords(Point(x2, y2, ""))
             ov.keep = (min(ax, bx), min(ay, by), abs(bx - ax), abs(by - ay))
-        log(f"placement: learning, keep {tuple(round(v) for v in ov.keep) if ov.keep else None}")
+        log(f"placement: learning, keep {_rounded(ov.keep)}")
 
     def _start_playback(self, gen, img_size, shot_size, frame=None):
         if gen != self.gen:

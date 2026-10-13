@@ -87,8 +87,7 @@ def pin_shown(card):
     return card.controls and card.phase != "thinking" and not card.error
 
 
-PIN = 7      # the pushpin's half-height
-PIN_ROOM = 22  # kept free of text beside it
+PIN_ROOM = 22  # kept free of text beside the pushpin
 
 
 def pin_glyph(cr, cx, cy, s, rgba, pinned):
@@ -496,7 +495,7 @@ class Theme:
 
     # the pushpin (pin_shown): each theme says where it goes, its sizes keep text out from under it
     pin_rgba = (1, 1, 1, 0.85)
-    pin_size = PIN
+    pin_size = 7  # half-height
 
     def pin_spot(self, card, x, y, w, h, opts):
         return x + w - 18, y + 18
