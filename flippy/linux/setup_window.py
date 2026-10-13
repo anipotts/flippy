@@ -74,10 +74,22 @@ def _in_terminal(cmd, shown, after=""):
 
 
 def open_login_terminal():
-    """Run `claude` in a terminal so they can /login with their Pro/Max account."""
+    """Fallback when the background sign-in can't start: run `claude` in a terminal so they can /login."""
     cli = shlex.quote(claude_cli())
     return _in_terminal(f"unset ANTHROPIC_API_KEY; {cli}; exec $SHELL", f"env -u ANTHROPIC_API_KEY {cli}",
                         "Then type /login and sign in with your Pro/Max account.")
+
+
+def sign_in_claude():
+    """Claude's browser sign-in with no terminal (flippy/claude_signin.py); a terminal only if that can't start.
+    Returns claude_signin.ALREADY when connected, so the window can ask before signing in again."""
+    from .. import claude_signin
+    return claude_signin.start(fallback=open_login_terminal)
+
+
+def sign_in_claude_again():
+    from .. import claude_signin
+    return claude_signin.start(force=True, fallback=open_login_terminal)
 
 
 def open_codex_login():
@@ -190,7 +202,7 @@ class SetupWindow(Gtk.Window):
 
         body.append(style.section(1, "Connect", "Use the subscription you've already got."))
         cards = Gtk.Box(spacing=12, homogeneous=True, margin_top=16)
-        cards.append(self._provider_card("claude", "Claude", "claude.png", lambda: self._login(open_login_terminal)))
+        cards.append(self._provider_card("claude", "Claude", "claude.png", self._sign_in_claude))
         cards.append(self._provider_card("codex", "ChatGPT", "openai.png", lambda: self._login(open_codex_login)))
         body.append(cards)
         use = Gtk.Box(spacing=12, margin_top=14)
@@ -323,7 +335,7 @@ class SetupWindow(Gtk.Window):
 
     def _login(self, open_terminal):
         try:
-            open_terminal()
+            return open_terminal()
         except NoTerminal as e:
             command, after = e.args
             dlg = Adw.MessageDialog(transient_for=self, heading="No terminal app found",
@@ -332,6 +344,17 @@ class SetupWindow(Gtk.Window):
             dlg.get_extra_child().set_selectable(True)
             dlg.add_response("ok", "OK")
             dlg.present()
+
+    def _sign_in_claude(self, *_):
+        from ..claude_signin import ALREADY
+        if self._login(sign_in_claude) != ALREADY:
+            return
+        dlg = Adw.MessageDialog(transient_for=self, heading="You're already signed in to Claude",
+                                body="Sign in again? Your browser opens the Claude sign-in page.")
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("again", "Sign In Again")
+        dlg.connect("response", lambda d, resp: resp == "again" and self._login(sign_in_claude_again))
+        dlg.present()
 
     def _add(self, which):
         try:

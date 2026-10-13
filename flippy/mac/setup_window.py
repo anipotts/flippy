@@ -62,10 +62,26 @@ def terminal_env():
 
 
 def open_login_terminal():
-    """Run `claude` in Terminal so the user can /login with their Pro/Max account."""
+    """Fallback when the background sign-in can't start: run `claude` in Terminal so the user can /login."""
     cmd = f"unset ANTHROPIC_API_KEY; '{claude_cli()}'"
     script = f'tell application "Terminal" to do script "{cmd}"\ntell application "Terminal" to activate'
     subprocess.Popen(["osascript", "-e", script], env=terminal_env())
+
+
+def sign_in_claude():
+    """Claude's browser sign-in with no terminal (flippy/claude_signin.py); Terminal only if that can't start.
+    Already connected (the "Reconnect…" button): ask first instead of quietly starting a new login."""
+    from .. import claude_signin
+    if claude_signin.start(fallback=open_login_terminal) != claude_signin.ALREADY:
+        return
+    from AppKit import NSAlert, NSAlertFirstButtonReturn
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_("You're already signed in to Claude.")
+    alert.setInformativeText_("Sign in again? Your browser opens the Claude sign-in page.")
+    alert.addButtonWithTitle_("Sign In Again")
+    alert.addButtonWithTitle_("Cancel")
+    if alert.runModal() == NSAlertFirstButtonReturn:
+        claude_signin.start(force=True, fallback=open_login_terminal)
 
 
 def open_codex_login():
@@ -148,7 +164,7 @@ class SetupWindow:
 
         style.section(b, 1, "Connect", "Use the subscription you've already got.", 100, WIDTH)
         self.cards = {}
-        self._provider_card("claude", "Claude", "claude.png", 24, 148, open_login_terminal)  # centered in its row
+        self._provider_card("claude", "Claude", "claude.png", 24, 148, sign_in_claude)  # centered in its row
         self._provider_card("codex", "ChatGPT", "openai.png", 286, 148, open_codex_login)
         style.text(b, "Use", 24, 222, 130, 12, bold=True)
         style.text(b, "Auto picks the only connected subscription.", 24, 240, 265, 10, muted=True)
