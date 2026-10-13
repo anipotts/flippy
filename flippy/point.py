@@ -9,6 +9,12 @@ TAG_RE = re.compile(r"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(
 TAG_PREFIX = "[POINT:"
 PUNCT = ".,;:!?"
 
+# Flippy's: at the very start of a reply, "they're learning something on screen; this box is what they need to keep
+# seeing" (x1,y1,x2,y2 in screenshot pixels, optional). The answer then docks where it blocks the least
+# (flippy/placement.py).
+LEARN_RE = re.compile(r"\s*\[LEARN(?::\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*)?\]")
+LEARN_PREFIX = "[LEARN"
+
 # Screenshot size sent to Claude. Clicky used 1024x768/1280x800/1366x768 for older models;
 # with Opus 5.x, pointing was equally accurate at full res in our tests (~2px), and the
 # bigger image makes small tray icons recognizable. Costs ~2x the image tokens of 1366.
@@ -43,6 +49,24 @@ def match_tag(text: str, i: int):
 
 
 @dataclass
+class Learn:
+    box: "tuple[int, int, int, int] | None"  # x1, y1, x2, y2 in screenshot-image pixels
+
+
+def split_learn(raw: str, done: bool):
+    """(Learn, the rest) for a reply starting with a LEARN tag; ("wait", "") while one may still be streaming in;
+    else (None, raw)."""
+    m = LEARN_RE.match(raw)
+    if m:
+        box = tuple(int(g) for g in m.groups()) if m.group(1) else None
+        return Learn(box), raw[m.end():]
+    start = raw.lstrip()
+    if not done and "]" not in start and (LEARN_PREFIX.startswith(start) or start.startswith(LEARN_PREFIX)):
+        return "wait", ""
+    return None, raw
+
+
+@dataclass
 class Segment:
     text: str             # the words for this step (tags removed)
     point: "Point | None"  # where the hand goes for this step (None = stay put)
@@ -57,6 +81,7 @@ def segments(raw: str, done: bool) -> list[Segment]:
     """
     segs: list[Segment] = []
     pos = 0
+    _, raw = split_learn(raw, done)
     for m in TAG_RE.finditer(raw):
         pt = _point(m)
         end = m.end()

@@ -1,12 +1,15 @@
-"""Where answers show (flippy/overlay.py: next to the pointer, or a corner) and the card's pushpin (flippy/themes.py)."""
+"""Where answers show (flippy/overlay.py, flippy/placement.py: by the pointer, or docked out of the way) and the card's pushpin (flippy/themes.py)."""
+import os
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import MagicMock, patch
 
 import cairo
 
-from flippy import daemon, overlay, settings, themes
+from flippy import daemon, overlay, placement, playback, point, settings, themes
+from flippy.frames import prepare_frame
 
 W, H = 1440, 900
 SHORT = "Click Save."
@@ -40,42 +43,46 @@ class Base(unittest.TestCase):
 
 
 class Placement(Base):
-    def test_a_short_answer_stays_by_the_pointer(self):
-        x, y, w, h = self.answer(SHORT)
+    def learn(self, keep=None):
+        self.ov.learning, self.ov.keep = True, keep
+
+    def test_a_quick_question_stays_by_the_pointer(self):
+        x, y, w, h = self.answer(LONG)
         self.assertEqual(self.ov.card_mode, "follow")
-        self.assertFalse(self.ov.docked)
         self.assertLess(abs(x - 400), 80)
 
-    def test_a_big_answer_goes_to_the_top_right_and_stays_there(self):
-        x, y, w, h = self.answer(LONG)
-        self.assertTrue(self.ov.docked)
-        self.assertEqual((x + w, y), (W - overlay.CORNER_GAP, overlay.OverlayBase.card_margin_top))
-        x2, y2, w2, h2 = self.answer(SHORT, at=(600, 500))  # the next step of the walkthrough: no jumping back
-        self.assertEqual((x2 + w2, y2), (W - overlay.CORNER_GAP, overlay.OverlayBase.card_margin_top))
-
-    def test_an_answer_with_nothing_to_point_at_goes_to_a_corner(self):
-        self.answer(SHORT, at=None)
-        self.assertEqual(self.ov.card_mode, "dock")
-
-    def test_an_answer_over_the_text_you_are_working_in_moves(self):
-        self.ov.avoid = (0, 0, 900, H)  # an editor on the left of the screen
+    def test_learning_docks_away_from_what_they_need_to_see(self):
+        code = (0, 0, 1000, H)  # Claude's box: the code on the left
+        self.learn(code)
         x, y, w, h = self.answer(SHORT, at=(300, 300))
-        self.assertTrue(self.ov.docked)
-        self.assertGreater(x, 900)  # the corner off the editor
+        self.assertEqual(self.ov.card_mode, "dock")
+        self.assertEqual(placement.overlap((x, y, w, h), code), 0)
 
-    def test_text_elsewhere_doesnt_move_it(self):
-        self.ov.avoid = (1000, 600, 300, 200)
-        self.answer(SHORT, at=(300, 300))
-        self.assertFalse(self.ov.docked)
+    def test_and_away_from_the_text_you_are_working_in(self):
+        self.ov.avoid = (W - 700, 0, 700, H)  # the editor on the right
+        self.learn()
+        x, y, w, h = self.answer(SHORT)
+        self.assertEqual(placement.overlap((x, y, w, h), self.ov.avoid), 0)
+
+    def test_it_prefers_an_empty_part_of_the_screen(self):
+        busy = [1.0] * (8 * 5)
+        for c in range(8):
+            busy[4 * 8 + c] = 0.0  # only the bottom row of the screen is empty
+        self.ov.detail = placement.Detail(busy, 8, 5, (W, H))
+        self.learn()
+        x, y, w, h = self.answer(SHORT)
+        self.assertGreater(y + h, H * 0.75)
 
     def test_a_docked_card_ignores_the_pointer(self):
-        x, y, w, h = self.answer(LONG, at=(300, 300))
-        self.assertTrue(self.ov.docked)
+        self.learn((0, 0, 700, H))
+        first = self.answer(SHORT, at=(300, 300))
+        spot = self.ov.spot
         for at in ((W - 60, 120), (60, 120), (W - 60, H - 150)):  # wherever the walkthrough points next, under it too
-            x2, y2, w2, h2 = self.answer(SHORT, at=at)
-            self.assertEqual((x2 + w2, y2), (x + w, y))  # same top-right corner
+            self.assertEqual(self.answer(SHORT, at=at), first)
+        self.assertEqual(self.ov.spot, spot)
 
     def test_the_pointer_is_drawn_over_the_card(self):
+        self.learn()
         self.answer(LONG, at=(W - 60, 120))
         calls = []
         theme = self.ov.theme
@@ -86,28 +93,75 @@ class Placement(Base):
 
     def test_the_setting(self):
         settings.set("look", "card_place", "pointer")
-        self.answer(LONG)
-        self.assertFalse(self.ov.docked)
-        self.answer(SHORT, at=None)
-        self.assertNotEqual(self.ov.card_mode, "dock")
+        self.learn()
+        self.answer(SHORT)
+        self.assertEqual(self.ov.card_mode, "follow")
         self.ov.clear()
         settings.set("look", "card_place", "corner")
-        self.answer(SHORT)
-        self.assertTrue(self.ov.docked)
+        self.answer(SHORT)  # not learning: docked anyway
+        self.assertEqual(self.ov.card_mode, "dock")
 
     def test_notices_and_thinking_stay_where_they_were(self):
+        self.learn()
         self.ov.show_text("thinking…", phase="thinking")
         self.assertEqual(self.ov.card_mode, "top")
         self.ov.show_text("Couldn't answer.", error=True)
         self.assertEqual(self.ov.card_mode, "top")
 
     def test_a_new_answer_starts_over(self):
-        self.answer(LONG)
+        self.learn((0, 0, 100, 100))
+        self.answer(SHORT)
         self.ov.pinned = True
         self.ov.clear()
-        self.assertFalse(self.ov.docked or self.ov.pinned)
-        self.answer(SHORT)
-        self.assertFalse(self.ov.docked)
+        self.assertFalse(self.ov.learning or self.ov.pinned or self.ov.keep or self.ov.spot)
+
+
+class LearnTag(unittest.TestCase):
+    def test_parsed_and_hidden(self):
+        raw = "[LEARN:10,20,300,400] Rust starts in main [POINT:5,5:fn main]."
+        found, rest = point.split_learn(raw, True)
+        self.assertEqual(found.box, (10, 20, 300, 400))
+        self.assertEqual([s.text for s in point.segments(raw, True)], ["Rust starts in main."])
+
+    def test_without_a_box(self):
+        self.assertIsNone(point.split_learn("[LEARN] hi", True)[0].box)
+
+    def test_nothing_shows_while_it_streams_in(self):
+        for partial in ("[", "[LEA", "[LEARN:10,20,3"):
+            self.assertEqual(point.segments(partial, False), [])
+
+    def test_other_replies(self):
+        self.assertIsNone(point.split_learn("Click [POINT:1,2:Save].", True)[0])
+        self.assertIsNone(point.split_learn("[LEARNING is fun]", True)[0])
+
+    def test_playback(self):
+        pl = playback.Playback(0)
+        pl.append("[LEARN:1,2,3,4] main")
+        self.assertEqual(pl.learn().box, (1, 2, 3, 4))
+
+
+class Spot(unittest.TestCase):
+    def test_never_on_what_to_keep_when_theres_room(self):
+        keep = (200, 100, 800, 600)
+        x, y = placement.best_spot(W, H, 360, 180, keep=keep)
+        self.assertEqual(placement.overlap((x, y, 360, 180), keep), 0)
+
+    def test_near_an_edge_on_an_empty_screen(self):
+        x, y = placement.best_spot(W, H, 360, 180)
+        self.assertEqual(min(x, W - 360 - x, y, H - 180 - y), placement.GAP)
+
+    def test_detail_from_a_screenshot(self):
+        from PIL import Image, ImageDraw
+        img = Image.new("RGB", (640, 400), "white")
+        draw = ImageDraw.Draw(img)
+        for i in range(0, 200, 8):
+            draw.text((10, i), "fn main() { println!(x); }" * 2, fill="black")  # text on the top half
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "screen.png")
+            img.save(path)
+            frame = prepare_frame(path, 640, logical_size=(W, H))  # the frame an ask really makes
+        detail = placement.Detail.from_frame(frame)
+        self.assertGreater(detail.mean((0, 0, W / 2, H / 3)), detail.mean((0, H * 0.7, W, H * 0.3)))
 
 
 class Pushpin(Base):
@@ -130,7 +184,7 @@ class Pushpin(Base):
                     self.assertTrue(x <= px and px + pw <= x + w and y <= py and py + ph <= y + h)
                     for name, rect in hits.items():
                         if name != "pin":
-                            self.assertEqual(overlay._overlap(hits["pin"], rect), 0, name)
+                            self.assertEqual(placement.overlap(hits["pin"], rect), 0, name)
 
     def test_only_on_answers(self):
         for fields in ({"phase": "thinking"}, {"error": True}, {}):

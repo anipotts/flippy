@@ -2,7 +2,7 @@
 import math
 import re
 from dataclasses import dataclass
-from .point import segments
+from .point import Learn, segments, split_learn
 
 HOLD = {'slow': (3.5, .07), 'normal': (2.2, .045), 'fast': (1.2, .025)}
 
@@ -34,6 +34,11 @@ class Playback:
     def finish(self, raw=None):
         if raw is not None: self.raw = raw
         self.done = True
+
+    def learn(self):
+        """The reply's LEARN tag (point.Learn), or None."""
+        found, _ = split_learn(self.raw, self.done)
+        return found if isinstance(found, Learn) else None
 
     def known(self):
         return [s for s in segments(self.raw, self.done) if s.complete]

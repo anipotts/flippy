@@ -265,7 +265,7 @@ class SettingsWindow:
         f.row("Tint color", None, self._setting_popup(f, "look", "glass_color", TINT_COLORS))
         f.row("Playback controls", "Clickable play/pause/step buttons on the answer panel",
               self._setting_popup(f, "look", "controls", CONTROLS))
-        f.row("Answer position", "Automatic: next to the pointer, or a corner when the answer is long or covers your work",
+        f.row("Answer position", "Automatic: out of the way when you're learning something on screen, else by the pointer",
               self._setting_popup(f, "look", "card_place", CARD_PLACES))
         f.row("Media Player reflections", "Windows Media Player gloss bars on its Liquid Glass, or plain glass",
               self._setting_popup(f, "look", "player_shine", SHINES))

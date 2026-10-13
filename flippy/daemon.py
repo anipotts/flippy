@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 
-from . import act_memory, errors, loop, onboarding, settings, setup_gate, themes, tips, updates, video, watch
+from . import act_memory, errors, loop, onboarding, placement, settings, setup_gate, themes, tips, updates, video, watch
 from .providers import Brain
 from .frames import prepare_frame
 from .requests import Request
@@ -22,7 +22,7 @@ from .usage_guard import PlanLimitReached
 from .profile import current, Instance
 from .actions import (BACKGROUND_CATALOG, BACKGROUND_PROMPT, ActionError, AppFrame, ApprovalPolicy, DesktopTools,
                       app_id, approval_text)
-from .point import image_to_logical
+from .point import Point, image_to_logical
 from .playback import Playback, Options
 from .diagnostics import Diagnostics
 from . import demos
@@ -275,7 +275,7 @@ class Flippy:
         if hasattr(self.ui, "prime_focused_area"):
             self.ui.prime_focused_area()  # overlay._in_the_way
         # Read before the box takes the keyboard: Electron apps (VS Code) stop reporting their focus once it does.
-        self.focus_at_open = self.ui.focused_area() if hasattr(self.ui, "focused_area") else None
+        self.focus_at_open = self.ui.work_area() if hasattr(self.ui, "work_area") else None
         self.box.show()
 
     def submit(self, question, tutorial=None):
@@ -675,7 +675,8 @@ class Flippy:
 
     async def _ask(self, question, req, keep_marks=False):
         frame = await self._capture_frame(req, keep_marks=keep_marks)
-        await self._action_main(lambda: (self._note_focus(), self.overlay.show_text("thinking…", phase="thinking"),
+        detail = placement.Detail.from_frame(frame)  # off the main thread: where a docked answer can go
+        await self._action_main(lambda: (self._note_focus(detail), self.overlay.show_text("thinking…", phase="thinking"),
                                          event("thinking")), req)
         if self.brain.dirty or (self.last_ask and time.monotonic() - self.last_ask > IDLE_RESET_S):
             await self.brain.reset()
@@ -723,14 +724,29 @@ class Flippy:
                        show_seconds=settings.get("timing", "show_seconds"),
                        max_show_seconds=settings.get("timing", "max_show_seconds"))
 
-    def _note_focus(self):
-        """Where the text you were working in is, so the answer can stay off it (overlay._in_the_way): as the box
-        opened, else now (flippy-ask q has no box)."""
-        area, self.focus_at_open = getattr(self, "focus_at_open", None), None
-        if area is None and hasattr(self.ui, "focused_area"):
-            area = self.ui.focused_area()
-        self.overlay.avoid = area
-        log(f"placement: work area {tuple(round(v) for v in area) if area else None}")
+    def _note_focus(self, detail=None):
+        """What a docked answer should stay off (flippy/placement.py): the text you were working in, as the box
+        opened, else now (flippy-ask q has no box); and the screenshot's busy parts."""
+        found, self.focus_at_open = getattr(self, "focus_at_open", None), None
+        if not (found and any(found)) and hasattr(self.ui, "work_area"):
+            found = self.ui.work_area()
+        area, window = found or (None, None)
+        self.overlay.avoid, self.overlay.window, self.overlay.detail = area, window, detail
+        rect = lambda r: tuple(round(v) for v in r) if r else None
+        log(f"placement: work area {rect(area)}, window {rect(window)}")
+
+    def _note_learning(self, pl):
+        """The reply says they're learning something on screen ([LEARN]): the answer docks away from its box."""
+        ov = self.overlay
+        found = None if getattr(ov, "learning", True) else pl.learn()  # (True: an overlay without docking)
+        if found is None:
+            return
+        ov.learning = True
+        if found.box:
+            x1, y1, x2, y2 = found.box
+            (ax, ay), (bx, by) = self._play_coords(Point(x1, y1, "")), self._play_coords(Point(x2, y2, ""))
+            ov.keep = (min(ax, bx), min(ay, by), abs(bx - ax), abs(by - ay))
+        log(f"placement: learning, keep {tuple(round(v) for v in ov.keep) if ov.keep else None}")
 
     def _start_playback(self, gen, img_size, shot_size, frame=None):
         if gen != self.gen:
@@ -787,7 +803,8 @@ class Flippy:
                 if kind == "finish":
                     event("answer_done")
                     ov = self.overlay
-                    log(f"placement: answer shown {'in a corner' if ov.docked or ov.card_mode == 'dock' else ov.card_mode}")
+                    log(f"placement: answer shown {ov.card_mode}" + (f" at {tuple(round(v) for v in ov.spot if v is not None)}"
+                                                                      if ov.card_mode == "dock" and ov.spot else ""))
                 if self.play and not self.play.paused:
                     self._schedule_fade(payload)
             elif kind == "cancel_fade":
@@ -813,6 +830,7 @@ class Flippy:
         return True
 
     def _render_step(self, pl, now):
+        self._note_learning(pl)
         card = pl.card(now, self._play_options())
         if card:
             card["at_bottom"] = self._card_at_bottom(pl.known())

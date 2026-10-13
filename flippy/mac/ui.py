@@ -1398,14 +1398,15 @@ subprocess.run(sys.argv[2:], check=False)
         except Exception as e:
             print(f"flippy: prime_focused_area: {type(e).__name__}", flush=True)
 
-    def focused_area(self):
-        """The text you were working in, for keeping answers off it (overlay._in_the_way), or None."""
+    def work_area(self):
+        """(the text you were working in, its window), each (x, y, w, h) or None: a docked answer stays off them
+        (flippy/placement.py)."""
         from . import ax
         try:
-            return ax.focused_area()
+            return ax.focused_area(), ax.focused_window()
         except Exception as e:  # never in the way of an answer
-            print(f"flippy: focused_area: {type(e).__name__}", flush=True)
-            return None
+            print(f"flippy: work_area: {type(e).__name__}", flush=True)
+            return None, None
 
     def screen_size(self):
         f = main_screen().frame()

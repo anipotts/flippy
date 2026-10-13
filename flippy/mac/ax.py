@@ -194,6 +194,15 @@ def prime_focused_area():
         AX.AXUIElementSetAttributeValue(root, "AXManualAccessibility", True)
 
 
+def focused_window():
+    """(x, y, w, h) in screen points of the window you're working in, or None. Apps that report no text area
+    (browsers) still report this."""
+    root = _working_app() if trusted() else None
+    window = _attr(root, "AXFocusedWindow") if root is not None else None
+    frame = _frame(window) if window is not None else None
+    return frame if frame and frame[2] > 0 and frame[3] > 0 else None
+
+
 def focused_area():
     """(x, y, w, h) in screen points of the text you're working in (an editor, a terminal, a document), or None.
     Only the part inside its window: an editor's text area can be the whole document."""

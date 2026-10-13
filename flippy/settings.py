@@ -37,7 +37,8 @@ DEFAULTS = {
         "glass_tint": 0.5,      # 0-1: how strongly Liquid Glass (Glass and Media Player themes, the ask box) is tinted
         "glass_color": "smoke", # smoke | blue | purple | pink | red | orange | green | teal: the tint's color
         "controls": "all",      # all | players (playback controls on every theme, or only Media Player/Y2K)
-        "card_place": "auto",   # auto | pointer | corner: where answers show (auto: a corner when they'd be in the way)
+        "card_place": "auto",   # auto | pointer | corner: auto docks answers out of the way when you're learning
+                                # something on screen; corner always does; pointer never (flippy/placement.py)
         "player_shine": "wmp",  # wmp | none: gloss bars on the Media Player theme's Liquid Glass (macOS), or plain
         "frosted": True,        # COSMIC: the compositor blurs behind the Glass and Media Player cards; off: painted
                                 # glass, and card_opacity applies to it like to the other themes
@@ -98,7 +99,7 @@ _OPTIONS = {
     ('look', 'pointer'): [('theme', 'Theme default'), ('hand', 'Pixel hand'), ('arrow', 'Pixel arrow'), ('ring', 'Ring'), ('dot', 'Dot'), ('glass', 'Liquid glass lens'), ('glasshand', 'Liquid glass hand')],
     ('timing', 'step_pace'): [('slow', 'Slow'), ('normal', 'Normal'), ('fast', 'Fast')],
     ('look', 'controls'): [('all', 'On every theme'), ('players', 'Only Media Player and Y2K')],
-    ('look', 'card_place'): [('auto', 'Automatic'), ('pointer', 'Next to the pointer'), ('corner', 'In a corner')],
+    ('look', 'card_place'): [('auto', 'Automatic'), ('pointer', 'Next to the pointer'), ('corner', 'Always out of the way')],
     ('look', 'player_shine'): [('wmp', 'WMP gloss'), ('none', 'Plain glass')],
     ('look', 'glass_color'): [('smoke', 'Smoke'), ('blue', 'Blue'), ('purple', 'Purple'), ('pink', 'Pink'), ('red', 'Red'), ('orange', 'Orange'), ('green', 'Green'), ('teal', 'Teal')],
     ('keys', 'pause'): [('double-cmd', '⌘ ⌘  (double-tap)'), ('double-option', '⌥ ⌥  (double-tap)'), ('double-ctrl', '⌃ ⌃  (double-tap)'), ('double-shift', '⇧ ⇧  (double-tap)'), ('off', 'Off')],
