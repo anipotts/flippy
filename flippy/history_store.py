@@ -26,7 +26,7 @@ def _conn():
         os.makedirs(os.path.dirname(PATH), exist_ok=True)
         fd = os.open(PATH, os.O_CREAT | os.O_RDWR, 0o600)  # created owner-only before sqlite opens it
         os.close(fd)
-        _db = sqlite3.connect(PATH, check_same_thread=False)
+        _db = sqlite3.connect(PATH, check_same_thread=False, timeout=5)  # waits out another writer (a standalone window)
         _db.execute("PRAGMA journal_mode=WAL")
         _db.execute("""CREATE TABLE IF NOT EXISTS entries (
             id INTEGER PRIMARY KEY, ts REAL NOT NULL, kind TEXT NOT NULL, question TEXT NOT NULL,
@@ -62,7 +62,9 @@ def _changed():
 
 
 def _prune(db):
-    db.execute("DELETE FROM entries WHERE ts < ?", (time.time() - settings.get("history", "days") * 86400,))
+    """Drop entries older than history.days. Committed here, so a read never leaves a write open (or undone)."""
+    with db:
+        db.execute("DELETE FROM entries WHERE ts < ?", (time.time() - settings.get("history", "days") * 86400,))
 
 
 def add(kind, question, answer="", steps=(), app="", provider="", outcome="completed", detail="", ts=None):
@@ -71,11 +73,11 @@ def add(kind, question, answer="", steps=(), app="", provider="", outcome="compl
         return None
     db = _conn()
     _prune(db)
-    cur = db.execute(
-        "INSERT INTO entries (ts, kind, question, answer, steps, app, provider, outcome, detail) VALUES (?,?,?,?,?,?,?,?,?)",
-        (ts or time.time(), kind, question.strip()[:MAX_TEXT], (answer or "").strip()[:MAX_TEXT],
-         json.dumps([s[:500] for s in steps][:50]), (app or "")[:200], (provider or "")[:100], outcome, (detail or "")[:500]))
-    db.commit()
+    with db:  # commits, or rolls back if the insert fails
+        cur = db.execute(
+            "INSERT INTO entries (ts, kind, question, answer, steps, app, provider, outcome, detail) VALUES (?,?,?,?,?,?,?,?,?)",
+            (ts or time.time(), kind, question.strip()[:MAX_TEXT], (answer or "").strip()[:MAX_TEXT],
+             json.dumps([s[:500] for s in steps][:50]), (app or "")[:200], (provider or "")[:100], outcome, (detail or "")[:500]))
     _changed()
     return cur.lastrowid
 
@@ -104,14 +106,14 @@ def count():
 
 def delete(entry_id):
     db = _conn()
-    db.execute("DELETE FROM entries WHERE id = ?", (int(entry_id),))
-    db.commit()
+    with db:
+        db.execute("DELETE FROM entries WHERE id = ?", (int(entry_id),))
     _changed()
 
 
 def clear():
     db = _conn()
-    db.execute("DELETE FROM entries")
-    db.commit()
+    with db:
+        db.execute("DELETE FROM entries")
     db.execute("VACUUM")
     _changed()

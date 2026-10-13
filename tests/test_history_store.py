@@ -102,3 +102,27 @@ class DaemonRemembers(unittest.TestCase):
         self.assertEqual((args[2], args[4], args[7]), ("Playing jazz.", "Spotify", "2 inputs"))
         remember(None, NS(identity=3), "task", tools=tools, result="x")  # a request with nothing to save
         self.assertEqual(self.store.add.call_count, 1)
+
+
+class HistoryTransactions(HistoryStore):
+    """Reading prunes old entries durably and leaves no write open (a second writer isn't blocked)."""
+    def test_list_commits_its_pruning(self):
+        import sqlite3
+        settings.set("history", "days", 1)
+        history_store.add("ask", "old", ts=time.time() - 3 * 86400)
+        settings.set("history", "days", 2)  # add() pruned with days=1 already; make the read do it instead
+        history_store.close()
+        raw = sqlite3.connect(history_store.PATH)
+        with raw:
+            raw.execute("INSERT INTO entries (ts, kind, question) VALUES (?, 'ask', 'stale')", (time.time() - 5 * 86400,))
+        raw.close()
+        history_store.list_entries()
+        self.assertFalse(history_store._conn().in_transaction)
+        history_store.close()  # nothing pending to undo
+        other = sqlite3.connect(history_store.PATH, timeout=0.2)
+        self.assertEqual(other.execute("SELECT count(*) FROM entries WHERE question='stale'").fetchone()[0], 0)
+        history_store.list_entries()
+        with other:  # a second connection can write right after a read
+            other.execute("INSERT INTO entries (ts, kind, question) VALUES (?, 'ask', 'from elsewhere')", (time.time(),))
+        other.close()
+        self.assertIn("from elsewhere", [e["question"] for e in history_store.list_entries()])
