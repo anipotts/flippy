@@ -16,7 +16,6 @@ from gi.repository import Gdk, Gtk, Pango, PangoCairo  # noqa: E402
 from .. import themes  # noqa: E402
 
 # the same values as flippy/mac/setup_style.py
-BACKGROUND = (0, 0, 0)
 OUTLINE = (0.50, 0.50, 0.52)   # buttons, cards, keycaps
 BORDER = (0.22, 0.22, 0.23)    # dividers
 PRESSED = (0.16, 0.16, 0.17)
@@ -52,7 +51,6 @@ window.flippy-ui .heading {{ font-size: 13px; font-weight: 600; }}
 window.flippy-ui .section-title {{ font-size: 16px; font-weight: 600; }}
 window.flippy-ui .small {{ font-size: 11px; }}
 window.flippy-ui .tiny {{ font-size: 10px; }}
-window.flippy-ui .bright {{ color: {T}; }}
 
 /* outlined, sharp controls */
 window.flippy-ui button, window.flippy-ui dropdown > button, window.flippy-ui menubutton > button {{
@@ -170,12 +168,12 @@ def set_selected(btn, on):
     (btn.add_css_class if on else btn.remove_css_class)("selected")
 
 
-def rule(vertical=False):
-    return Gtk.Box(css_classes=["rule"], hexpand=not vertical, vexpand=vertical)
+def rule():
+    return Gtk.Box(css_classes=["rule"], hexpand=True)
 
 
-def card(orientation=Gtk.Orientation.HORIZONTAL, spacing=0):
-    return Gtk.Box(orientation=orientation, spacing=spacing, css_classes=["card"])
+def card():
+    return Gtk.Box(css_classes=["card"])
 
 
 def keycaps(tokens):

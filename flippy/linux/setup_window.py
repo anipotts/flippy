@@ -24,7 +24,6 @@ from .settings_window import SHORTCUTS, flippy_shortcuts, pretty_accel  # noqa: 
 from .. import settings  # noqa: E402
 from ..profile import current  # noqa: E402
 
-ASK = os.path.expanduser("~/.local/bin/flippy-ask")
 # COSMIC's own terminal first; each takes the command to run after these
 TERMINALS = (["cosmic-term", "-e"], ["gnome-terminal", "--"], ["x-terminal-emulator", "-e"], ["kgx", "--"],
              ["xterm", "-e"])
@@ -36,11 +35,6 @@ WANTED = [("Ask about the screen", "", ["Super", "Shift"], "space"),
           ("Circle something, then ask", "draw", ["Super", "Alt"], None),
           ("Check a video edit", "video", ["Super", "Shift"], "v"),
           ("Pause / resume a walkthrough", "pause-toggle", ["Super"], "p")]
-
-
-def claude_logged_in():
-    from ..providers import CONNECTION_STATUS
-    return CONNECTION_STATUS["claude"] is True
 
 
 def needs_setup():
@@ -99,7 +93,7 @@ def _entry(mods, key, args):
     lines.append("        ],\n")
     if key:
         lines.append(f'        key: "{key}",\n')
-    lines.append(f'    ): Spawn("{(ASK + " " + args).strip()}"),\n')
+    lines.append(f'    ): Spawn("{(desktop.ASK + " " + args).strip()}"),\n')
     return "".join(lines)
 
 
@@ -345,7 +339,7 @@ class SetupWindow(Gtk.Window):
     # ---- state
     def _refresh(self):
         from ..providers import CONNECTION_STATUS
-        claude = claude_logged_in()
+        claude = CONNECTION_STATUS["claude"] is True
         codex = CONNECTION_STATUS["codex"] is True
         for key, ok, connect in (("claude", claude, "Log in…"), ("codex", codex, "Sign in…")):
             self.marks[key].set_label("Connected" if ok else "Not connected")

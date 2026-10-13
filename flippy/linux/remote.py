@@ -179,8 +179,8 @@ class RemoteDesktop:
         ky = sh / screen_size[1] if sh else 1
         self._notify("NotifyPointerMotionAbsolute", "udd", node, float(sx + x * kx), float(sy + y * ky))
 
-    def button(self, down, button=BTN_LEFT):
-        self._notify("NotifyPointerButton", "iu", button, 1 if down else 0)
+    def button(self, down):
+        self._notify("NotifyPointerButton", "iu", BTN_LEFT, 1 if down else 0)
 
     def scroll(self, direction, lines):
         axis = AXIS_VERTICAL if direction in ("up", "down") else AXIS_HORIZONTAL

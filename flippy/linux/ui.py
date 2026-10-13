@@ -32,7 +32,7 @@ from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
 from .. import loop, pointers, settings, themes  # noqa: E402
 from ..history import PROMPTS  # noqa: E402
 from ..overlay import OverlayBase  # noqa: E402
-from . import act, pointer_editor, preload, sensors, wl  # noqa: E402
+from . import act, keyboard, pointer_editor, preload, sensors, wl  # noqa: E402
 from .notice import Notice, NoticeLayer  # noqa: E402
 from .screenshot import Screenshotter  # noqa: E402
 from .settings_window import SettingsWindow  # noqa: E402
@@ -392,15 +392,11 @@ class Platform:
         return tl, sensors.app_name(tl.app_id)
 
     def video_frame(self, tl):
-        from PIL import Image
         conn = wl.connection()
         if conn is None or tl.ext_id not in conn.toplevels:
             return None  # closed
         img = conn.capture_window(tl)
-        if img is None:
-            return None
-        w, h, stride, mode, data = img
-        return Image.frombuffer("RGBA" if mode in ("RGBA", "BGRA") else "RGBX", (w, h), data, "raw", mode, stride, 1)
+        return sensors.image(img) if img else None
 
     def shortcut_problems(self):
         """{name: why it won't work, or None} for flippy/shortcuts.py NAMES: unbound, or keys COSMIC also uses."""
@@ -432,7 +428,6 @@ class Platform:
 
     def ask_goal(self, app_id, name):
         """What do they want to do in this app? Steers its tips (the panel menu's "Set a goal for <app>…")."""
-        import gi
         gi.require_version("Adw", "1")
         from gi.repository import Adw
         from .. import tips
@@ -538,7 +533,7 @@ class Platform:
         """press / set_text / focus / type / key / menu / media / app_action / click... in the frame's app. Runs on
         the task's worker thread."""
         from ..actions import ActionError, RetryableActionError
-        from . import atspi, keyboard
+        from . import atspi
         target = frame.target
         if cancel.is_set():
             raise ActionError("Task canceled.")
@@ -680,15 +675,12 @@ class Platform:
         return "ok"
 
     def type_text(self, text, on_key=None):
-        from . import keyboard
         return keyboard.type_text(text, on_key)
 
     def key(self, combo):
-        from . import keyboard
         return keyboard.key(combo)
 
     def tap(self, mod, times):
-        from . import keyboard
         return keyboard.tap(mod, times)
 
     def start_recording(self, path):

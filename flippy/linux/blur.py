@@ -17,7 +17,6 @@ import ctypes
 import math
 
 MANAGER = b"ext_background_effect_manager_v1"
-CAPABILITY_BLUR = 1
 DISPLAY_GET_REGISTRY, REGISTRY_BIND = 1, 0
 COMPOSITOR_CREATE_REGION = 1
 REGION_DESTROY, REGION_ADD = 0, 1

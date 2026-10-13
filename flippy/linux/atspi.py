@@ -139,10 +139,6 @@ def _children(el):
             yield child
 
 
-def _has(states, *names):
-    return all(states.contains(getattr(S, n)) for n in names)
-
-
 def _extents(el):
     """(x, y, w, h) in WINDOW coordinates, or None for something not laid out (GTK reports those at -2^31)."""
     try:
@@ -156,11 +152,14 @@ def _extents(el):
 
 def _actions(el):
     """[(index, name)] of the actions that press it, most direct first."""
+    return sorted(((i, n) for i, n in _all_actions(el) if n in PRESS_ACTIONS), key=lambda a: PRESS_ACTIONS.index(a[1]))
+
+
+def _all_actions(el):
     try:
-        names = [(Atspi.Action.get_action_name(el, i) or "").lower() for i in range(Atspi.Action.get_n_actions(el))]
+        return [(i, (Atspi.Action.get_action_name(el, i) or "").lower()) for i in range(Atspi.Action.get_n_actions(el))]
     except (GLib.Error, TypeError, AttributeError):
         return []
-    return sorted(((i, n) for i, n in enumerate(names) if n in PRESS_ACTIONS), key=lambda a: PRESS_ACTIONS.index(a[1]))
 
 
 def _text(el, limit=VALUE_CHARS + 1):
@@ -228,15 +227,11 @@ def match_app(app_id, title, candidates, exec_names=()):
 
 
 def _exec_names(app_id):
-    for cand in (app_id, app_id.lower()):
-        try:
-            info = Gio.DesktopAppInfo.new(cand + ".desktop")
-        except TypeError:
-            info = None
-        if info:
-            exe = os.path.basename(info.get_executable() or "")
-            return [n for n in (exe, info.get_startup_wm_class()) if n and n != "flatpak"]
-    return []
+    info = sensors.desktop_info(app_id)
+    if info is None:
+        return []
+    exe = os.path.basename(info.get_executable() or "")
+    return [n for n in (exe, info.get_startup_wm_class()) if n and n != "flatpak"]
 
 
 def _apps():
@@ -301,6 +296,11 @@ def front_app():
     tl = before_flippy(conn.toplevels.values() if conn else ())
     if tl is None:
         raise ActionError("Put the app you want Flippy to work in in front, then start /act again.")
+    return _target(tl)
+
+
+def _target(tl):
+    """(app id, name, handle) of that window's app."""
     _, pid = _find(tl.app_id, tl.title)
     return tl.app_id, sensors.app_name(tl.app_id), _handle(tl.app_id, pid)
 
@@ -325,8 +325,7 @@ def find_app(name):
         if not tl.app_id or tl.app_id == wl.SELF_APP_ID:
             continue
         if want in (sensors.app_name(tl.app_id).lower(), tl.app_id.lower(), tl.app_id.rsplit(".", 1)[-1].lower()):
-            _, pid = _find(tl.app_id, tl.title)
-            return tl.app_id, sensors.app_name(tl.app_id), _handle(tl.app_id, pid)
+            return _target(tl)
     return None
 
 
@@ -380,8 +379,7 @@ def open_app(name, cancel):
     # its window, with no new one to wait for
     tl = running_window(conn.toplevels.values(), ids)
     if tl is not None:
-        _, pid = _find(tl.app_id, tl.title)
-        return tl.app_id, sensors.app_name(tl.app_id), _handle(tl.app_id, pid)
+        return _target(tl)
     before, known = conn.active(), set(conn.toplevels)
     try:
         info.launch([], None)
@@ -457,12 +455,8 @@ def _origin(frame, geometry):
 
 def _capture(conn, tl):
     """That window alone, as a PIL image (other windows on top don't show), or None."""
-    from PIL import Image
     img = conn.capture_window(tl)
-    if img is None:
-        return None
-    w, h, stride, mode, data = img
-    return Image.frombuffer("RGBA" if mode in ("RGBA", "BGRA") else "RGBX", (w, h), data, "raw", mode, stride, 1)
+    return sensors.image(img) if img else None
 
 
 def look(app_id, name, handle):
@@ -785,13 +779,6 @@ def background_key(frame, handle, combo):
 
 
 BACKGROUND_KEYS = ("return", "delete", "ctrl+a", "ctrl+c", "ctrl+x", "ctrl+v")
-
-
-def _all_actions(el):
-    try:
-        return [(i, (Atspi.Action.get_action_name(el, i) or "").lower()) for i in range(Atspi.Action.get_n_actions(el))]
-    except (GLib.Error, TypeError, AttributeError):
-        return []
 
 
 def _shown_items(frame):

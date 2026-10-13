@@ -44,7 +44,6 @@ OUTPUT_SOURCE_CREATE, TOPLEVEL_SOURCE_CREATE = 0, 0
 SOURCE_DESTROY = 0
 SESSION_CREATE_FRAME, SESSION_DESTROY = 0, 1
 FRAME_DESTROY, FRAME_ATTACH_BUFFER, FRAME_DAMAGE_BUFFER, FRAME_CAPTURE = 0, 1, 2, 3
-CURSOR_SESSION_DESTROY = 0
 VK_CREATE = 0
 VK_KEYMAP, VK_KEY, VK_MODIFIERS = 0, 1, 2
 KEYMAP_XKB_V1 = 1
@@ -128,11 +127,9 @@ class Wayland:
         self.by_cosmic = {}
         self.serial = 0
         self.idle_since = None      # monotonic time input went idle (None = busy right now)
-        self.last_input = time.monotonic()
         self.resumes = 0            # idle -> busy flips so far
         self.cursor_buffer_px = None  # (x, y) of the mouse on the first output, in its buffer px, or None
         self.motions = 0            # mouse moves so far (counted like macOS counts input events, never read)
-        self.shm_formats = set()
         self.alive = True
 
         reg = self._new(self._registry_event)
@@ -218,7 +215,7 @@ class Wayland:
     # ---- setup
     def _bind_all(self):
         self.seat = self._bind("wl_seat")
-        self.shm = self._bind("wl_shm", self._shm_event)
+        self.shm = self._bind("wl_shm")
         self.output = self._bind("wl_output")  # the first one: single monitor, like the rest of Flippy
         self.cosmic_info = self._bind("zcosmic_toplevel_info_v1")  # v2+: events come per ext handle we ask about
         self.toplevel_list = self._bind("ext_foreign_toplevel_list_v1", self._list_event)
@@ -237,18 +234,11 @@ class Wayland:
         if self.capture and self.output_sources and self.output and self.seat:
             self._watch_cursor()
 
-    def _shm_event(self, op, r):
-        if op == 0:
-            self.shm_formats.add(r.u())
-
     def _idle_event(self, op, r):
-        now = time.monotonic()
         if op == 0:  # idled: the last input was IDLE_MS ago
-            self.idle_since = now - IDLE_MS / 1000
-            self.last_input = self.idle_since
+            self.idle_since = time.monotonic() - IDLE_MS / 1000
         elif op == 1:  # resumed
             self.idle_since = None
-            self.last_input = now
             self.resumes += 1
 
     def idle_s(self):
@@ -308,8 +298,8 @@ class Wayland:
         self._send(self.seat, WL_SEAT_GET_POINTER, struct.pack("<I", pointer))
         source = self._new(lambda op, r: None)
         self._send(self.output_sources, OUTPUT_SOURCE_CREATE, struct.pack("<II", source, self.output))
-        self.cursor_session = self._new(self._cursor_event)
-        self._send(self.capture, CAPTURE_CREATE_POINTER_CURSOR_SESSION, struct.pack("<III", self.cursor_session, source, pointer))
+        session = self._new(self._cursor_event)
+        self._send(self.capture, CAPTURE_CREATE_POINTER_CURSOR_SESSION, struct.pack("<III", session, source, pointer))
 
     def _cursor_event(self, op, r):
         if op == 1:  # leave

@@ -5,7 +5,6 @@ never affected), white with a dark outline for COSMIC's panel (flippy/linux/tray
 scaled nearest-neighbour so they stay crisp; round pointers (dot, ring, glass
 lens) get rays off their top and left.
 """
-import io
 import math
 
 import cairo
@@ -147,13 +146,6 @@ def mask(style=None, scale=S):
         _rays(cr, tip[0], tip[1], angles, 2.2, 2.8)
     surf.flush()
     return surf
-
-
-def render(style=None):
-    """PNG bytes (@2x) of the black icon for `style`."""
-    buf = io.BytesIO()
-    mask(style).write_to_png(buf)
-    return buf.getvalue()
 
 
 def light(style=None, px=22, ink=(1, 1, 1), outline=(0, 0, 0, 0.75)):
