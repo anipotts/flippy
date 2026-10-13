@@ -288,9 +288,7 @@ def look(bundle, name, pid):
     No window, or one that's minimized or can't be captured, isn't a dead end: its controls (if any) and the
     app's menus are still listed, and menus and media keys work without a window."""
     # The app by its bundle id first (a process id can go stale), the process id only when there's no bundle id
-    current = _relaunched(bundle, pid) if bundle else (pid if running_app(pid) is not None else None)
-    if current is None and running_app(pid) is not None:
-        current = pid
+    current = (_relaunched(bundle, pid) if bundle else None) or (pid if running_app(pid) is not None else None)
     if current is None:
         running = [(str(a.bundleIdentifier()), a.processIdentifier(), a.isTerminated())
                    for a in AppKit.NSWorkspace.sharedWorkspace().runningApplications()
@@ -388,14 +386,18 @@ def _menus(pid):
     return "\n".join(out) or "  (none)"
 
 
+def _can_post():
+    if not Quartz.CGPreflightPostEventAccess():
+        raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+
+
 NX_KEYS = {"play_pause": 16, "next": 17, "previous": 18}   # NX_KEYTYPE_PLAY / NEXT / PREVIOUS
 
 
 def media(action):
     """The keyboard's media keys: they go to whatever is playing (Spotify, Music, a video in a browser), with no
     window, pointer or focus involved."""
-    if not Quartz.CGPreflightPostEventAccess():
-        raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+    _can_post()
     key = NX_KEYS[action]
     for flags in (0xA00, 0xB00):  # key down, key up
         ev = AppKit.NSEvent.otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2_(
@@ -486,8 +488,7 @@ def type_text(pid, text, cancel):
         if err == 0:
             return
         _gone(err)
-    if not Quartz.CGPreflightPostEventAccess():
-        raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+    _can_post()
     for ch in text:
         _check(cancel)
         code, shifted = keymap.type_key(ch, hotkeys.KEYS)  # the text itself rides on the event
@@ -503,8 +504,7 @@ NAV_KEYS = {"return": 36, "tab": 48, "space": 49, "delete": 51, "escape": 53, "l
 
 
 def key(pid, combo, flags_by_mod):
-    if not Quartz.CGPreflightPostEventAccess():
-        raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+    _can_post()
     parts = [p.strip().lower() for p in combo.split("+")]
     code = NAV_KEYS.get(parts[-1], hotkeys.KEYS.get(parts[-1]))
     if code is None:
@@ -546,8 +546,7 @@ def _press_at(pid, x, y):
 def click(pid, wid, x, y, count, cancel):
     if count == 1 and _press_at(pid, x, y):
         return "pressed"
-    if not Quartz.CGPreflightPostEventAccess():
-        raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+    _can_post()
     for n in range(1, count + 1):
         _check(cancel)
         _mouse(pid, wid, Quartz.kCGEventLeftMouseDown, x, y, n)
@@ -558,8 +557,7 @@ def click(pid, wid, x, y, count, cancel):
 
 
 def scroll(pid, wid, x, y, direction, lines):
-    if not Quartz.CGPreflightPostEventAccess():
-        raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+    _can_post()
     dy = lines if direction == "up" else -lines if direction == "down" else 0
     dx = lines if direction == "left" else -lines if direction == "right" else 0
     ev = Quartz.CGEventCreateScrollWheelEvent(None, Quartz.kCGScrollEventUnitLine, 2, dy, dx)
@@ -570,8 +568,7 @@ def scroll(pid, wid, x, y, direction, lines):
 
 
 def drag(pid, wid, x, y, to_x, to_y, cancel, steps=24, seconds=0.6):
-    if not Quartz.CGPreflightPostEventAccess():
-        raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
+    _can_post()
     _mouse(pid, wid, Quartz.kCGEventLeftMouseDown, x, y)
     try:
         for i in range(1, steps + 1):

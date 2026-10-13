@@ -74,7 +74,7 @@ def window_exists(wid):
     return bool(info) and info[0].get("kCGWindowIsOnscreen", True)
 
 
-def sample(want_thumb=True):
+def sample():
     app, name, pid = frontmost()
     if pid == _SELF:  # our own windows (settings, the prompt) aren't the app being learned
         return Sample(time.monotonic(), None)
@@ -83,6 +83,6 @@ def sample(want_thumb=True):
         t=time.monotonic(), app=app, app_name=name,
         idle_s=Quartz.CGEventSourceSecondsSinceLastEventType(st, anyev),
         events=Quartz.CGEventSourceCounterForEventType(st, anyev),
-        thumb=thumbnail() if want_thumb else None,
+        thumb=thumbnail(),
         windows=windows(pid) if pid else None,
     )

@@ -1,9 +1,11 @@
 """The setup and settings windows' look: black, gray outlines, sharp corners. Controls keep their normal behavior."""
-from AppKit import (NSButton, NSColor, NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSImage,
-                    NSImageView, NSView, NSFontWeightMedium, NSFontWeightSemibold)
+from AppKit import (NSAppearance, NSBackingStoreBuffered, NSButton, NSColor, NSFont, NSFontAttributeName,
+                    NSForegroundColorAttributeName, NSImage, NSImageView, NSWindow, NSWindowStyleMaskClosable,
+                    NSWindowStyleMaskTitled, NSFontWeightMedium, NSFontWeightSemibold)
 import objc
 from Foundation import NSAttributedString, NSMakeRect
-from .widgets import label, target
+from . import hotkeys
+from .widgets import FlippedView, label, target
 
 # Black, with white-ish gray outlines; buttons and cards have sharp corners.
 BACKGROUND = (0, 0, 0)
@@ -19,12 +21,7 @@ def color(rgb):
     return NSColor.colorWithSRGBRed_green_blue_alpha_(*rgb, 1)
 
 
-class Canvas(NSView):
-    def isFlipped(self):
-        return True
-
-
-class Diamond(Canvas):
+class Diamond(FlippedView):
     """A rhombus outline (the section numbers sit inside one)."""
     def drawRect_(self, rect):
         from AppKit import NSBezierPath
@@ -41,7 +38,7 @@ class Diamond(Canvas):
 
 
 def panel(width, height, surface=BACKGROUND, radius=0, outline=None):
-    view = Canvas.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
+    view = FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
     view.setWantsLayer_(True)
     view.layer().setBackgroundColor_(color(surface).CGColor())
     view.layer().setCornerRadius_(radius)
@@ -49,6 +46,20 @@ def panel(width, height, surface=BACKGROUND, radius=0, outline=None):
         view.layer().setBorderWidth_(1)
         view.layer().setBorderColor_(color(outline).CGColor())
     return view
+
+
+def window(title, width, height, content, extra_style=0):
+    """A titled, closable window in this look (dark, black), centered, showing content."""
+    win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+        NSMakeRect(0, 0, width, height), NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | extra_style,
+        NSBackingStoreBuffered, False)
+    win.setTitle_(title)
+    win.setReleasedWhenClosed_(False)
+    win.setAppearance_(NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua"))
+    win.setBackgroundColor_(color(BACKGROUND))
+    win.setContentView_(content)
+    win.center()
+    return win
 
 
 def card(width, height):
@@ -237,8 +248,7 @@ def section(parent, number, title, subtitle, y, width):
 
 def shortcut_tokens(combo):
     """Display keycaps in macOS modifier order, including double-tap shortcuts."""
-    names = {'cmd': '⌘', 'shift': '⇧', 'option': '⌥', 'opt': '⌥', 'alt': '⌥',
-             'ctrl': '⌃', 'control': '⌃'}
+    names = hotkeys.SYMBOLS
     if combo == 'off':
         return ['Off']
     if combo.startswith('double-'):

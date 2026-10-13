@@ -30,7 +30,7 @@ from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyAccessory
                     NSTrackingInVisibleRect, NSTrackingMouseMoved, NSVariableStatusItemLength, NSView,
                     NSWindowCollectionBehaviorCanJoinAllSpaces, NSWindowCollectionBehaviorFullScreenAuxiliary,
                     NSWindowCollectionBehaviorIgnoresCycle, NSWindowCollectionBehaviorStationary,
-                    NSWindowStyleMaskBorderless, NSWindowStyleMaskNonactivatingPanel, NSFloatingWindowLevel)
+                    NSWindowStyleMaskBorderless, NSWindowStyleMaskNonactivatingPanel)
 from Foundation import NSAttributedString, NSMakeRect, NSObject
 from PyObjCTools import AppHelper
 from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
@@ -349,9 +349,8 @@ class Overlay(OverlayBase):
 
 def box_style(theme):
     """The question box's look per theme (the macOS counterpart of Theme.box_css)."""
-    sys_font = (None, 16)
     st = {"bg": _rgba(24 / 255, 24 / 255, 28 / 255, 0.94), "border": _rgba(90 / 255, 160 / 255, 1, 0.55),
-          "border_w": 1, "radius": 14, "fg": _hex("f2f2f2"), "font": sys_font, "field_bg": None,
+          "border_w": 1, "radius": 14, "fg": _hex("f2f2f2"), "font": (None, 16), "field_bg": None,
           "field_border": None, "field_radius": 0, "hint": _rgba(1, 1, 1, 0.5), "hint_font": (None, 12)}
     if theme.key == "mono":
         st.update(bg=_rgba(0, 0, 0, 0.96), border=_rgba(*theme.outline), radius=0, fg=_rgba(*theme.fg),
@@ -371,12 +370,11 @@ def box_style(theme):
                   hint=_hex("7dffa9"), hint_font=(themes.PIXEL_FONT, 16))
     elif theme.key == "mediaplayer" and GLASS:  # Liquid Glass box; the field is a frostier, smokier pane
         st.update(glass=True, bg=None, border=_rgba(1, 1, 1, 0.35), radius=theme.LIQUID_R, fg=_hex("ffffff"),
-                  font=(None, 16), field_bg=glass_tint("field"), field_border=_rgba(1, 1, 1, 0.3),
+                  field_bg=glass_tint("field"), field_border=_rgba(1, 1, 1, 0.3),
                   field_radius=12, hint=_rgba(1, 1, 1, 0.9), hint_shadow=True)
     elif theme.key == "glass" and GLASS:  # same glass box, the lock screen's rounder corners
         st.update(glass=True, bg=None, border=_rgba(1, 1, 1, 0.3), radius=theme.R, fg=_hex("ffffff"),
-                  font=(None, 16), field_bg=_rgba(1, 1, 1, 0.12), field_border=None,
-                  field_radius=12, hint=_rgba(1, 1, 1, 0.75), hint_shadow=True)
+                  field_bg=_rgba(1, 1, 1, 0.12), field_radius=12, hint=_rgba(1, 1, 1, 0.75), hint_shadow=True)
     elif theme.key == "glass":  # (no Liquid Glass on this macOS)
         st.update(bg=_rgba(40 / 255, 40 / 255, 46 / 255, 0.85), border=_rgba(1, 1, 1, 0.3), radius=theme.R,
                   field_bg=_rgba(1, 1, 1, 0.12), field_radius=12)
@@ -652,19 +650,14 @@ class Platform:
     def open_setup(self):
         from .setup_window import SetupWindow
         if self.setup_win is None:
-            self.setup_win = SetupWindow(lambda: self.command("settings"), self._setup_closed)
+            self.setup_win = SetupWindow(lambda: self.command("settings"), lambda: self._closed("setup_win"))
         self.setup_win.present()
 
-    def _setup_closed(self):
+    def _closed(self, which):
+        """Setup or Settings closed: with neither left open, give the app you were in back the front."""
         from . import ax
-        self.setup_win = None
-        if self.settings_win is None:
-            ax.give_back_front()
-
-    def _settings_closed(self):
-        from . import ax
-        self.settings_win = None
-        if self.setup_win is None:
+        setattr(self, which, None)
+        if self.setup_win is None and self.settings_win is None:
             ax.give_back_front()
 
     def _bind_keys(self):
@@ -772,13 +765,10 @@ class Platform:
         """That one window as a PIL image (nothing above it, so Flippy's cards stay out), or None if it closed.
         Called from the recording thread."""
         from PIL import Image
-        img = Quartz.CGWindowListCreateImage(
-            Quartz.CGRectNull, Quartz.kCGWindowListOptionIncludingWindow, wid,
-            Quartz.kCGWindowImageBoundsIgnoreFraming | Quartz.kCGWindowImageNominalResolution)
-        if img is not None and Quartz.CGImageGetWidth(img) > 1:
-            w, h = Quartz.CGImageGetWidth(img), Quartz.CGImageGetHeight(img)
-            data = Quartz.CGDataProviderCopyData(Quartz.CGImageGetDataProvider(img))
-            return Image.frombuffer("RGBA", (w, h), bytes(data), "raw", "BGRA", Quartz.CGImageGetBytesPerRow(img), 1)
+        from .ax import _capture
+        img = _capture(wid)
+        if img is not None:
+            return img
         if not sensors.window_exists(wid):
             return None
         # CGWindowListCreateImage is deprecated (macOS 14+): if it stops returning frames, screencapture still can
@@ -898,7 +888,7 @@ class Platform:
     def open_settings(self, on_preview, on_reset):
         from .settings_window import SettingsWindow  # local: only built when asked for
         if self.settings_win is None:
-            self.settings_win = SettingsWindow(on_preview, on_reset, self._settings_closed,
+            self.settings_win = SettingsWindow(on_preview, on_reset, lambda: self._closed("settings_win"),
                                                command=self.command)
         self.settings_win.present()
 
@@ -908,15 +898,12 @@ class Platform:
         from .. import pixelart, pointers
         ed = pointer_editor.PixelEditor(lambda n: None)
         ed.present()
-        def set_tool(key):
-            ed.tool = key
-            ed.seg.setSelectedSegment_(ed.tools.index(key))
 
         def done():
             ed.name.setStringValue_(name)
             ed._save()
             on_saved(pointers.PREFIX + name)
-        pixelart.demo_paint(ed.art, ed._redraw, set_tool, lambda col: setattr(ed, "color", col), done)
+        pixelart.demo_paint(ed.art, ed._redraw, ed._set_tool, lambda col: setattr(ed, "color", col), done)
 
     # --- demo recording (scripts/demo_mac.py): run as Flippy's children, so they use its Screen Recording ---
     def screenshot_to(self, path):
@@ -1290,14 +1277,6 @@ class Platform:
                     and b.get("Y", 0) <= y < b.get("Y", 0) + b.get("Height", 0):
                 return win.get("kCGWindowOwnerPID")
         return None
-
-    def action_preflight(self):
-        """Check task eligibility before inference without inspecting foreground focus."""
-        from ..actions import ActionError
-        if len(NSScreen.screens()) != 1:
-            raise ActionError("Desktop tasks require one display. Disconnect extra displays before /act.")
-        if not Quartz.CGPreflightPostEventAccess():
-            raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
 
     def action_state(self):
         """Identity and geometry of the foreground target. One display, like the tutor."""
