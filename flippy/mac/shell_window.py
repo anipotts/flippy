@@ -61,6 +61,7 @@ class MacHost(Host):
     def __init__(self, window):
         self.window = window
         self.sampler = None
+        self.buddy = None
 
     def copy_text(self, text):
         pb = NSPasteboard.generalPasteboard()
@@ -114,6 +115,26 @@ class MacHost(Host):
 
     def close(self):
         self.window.win.performClose_(None)
+
+    def drag_target(self, rect):
+        """A native, draggable Flippy.app icon over the page's spot for it: System Settings' permission lists
+        take a dragged app, which a web page can't offer."""
+        from . import setup
+        web = self.window.web
+        if web is None:
+            return
+        if rect is None or not setup.installed():
+            if self.buddy is not None:
+                self.buddy.removeFromSuperview()
+                self.buddy = None
+            return
+        if self.buddy is None:
+            from .permission_buddy import app_icon
+            self.buddy = app_icon(setup.APP)
+            web.addSubview_(self.buddy)
+        h = web.bounds().size.height
+        y = rect["y"] if web.isFlipped() else h - rect["y"] - rect["h"]
+        self.buddy.setFrame_(NSMakeRect(rect["x"], y, rect["w"], rect["h"]))
 
 
 class AppWindow:

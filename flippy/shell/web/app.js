@@ -337,8 +337,7 @@ F.render = (route, focusId) => {
     } else if (kind === "setup" && F.renderSetup) {
       view = F.renderSetup();
     } else {
-      view = emptyPage("History", "history", "No conversations yet",
-        "Your questions and desktop tasks will show here, newest first, kept for 30 days. Screenshots are never saved.");
+      view = F.renderHistory()
     }
   }
   page.replaceChildren(view);

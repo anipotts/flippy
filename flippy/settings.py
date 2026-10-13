@@ -56,6 +56,10 @@ DEFAULTS = {
         "apps": "",             # comma-separated app ids to watch (macOS bundle ids)
         "muted": "",            # apps where you chose "don't ask"
     },
+    "history": {
+        "keep": True,             # save what you ask and what Flippy did (text only, never screenshots)
+        "days": 30,               # then it's deleted
+    },
     "window": {
         "mode": "system",       # the app window (history, setup, settings): system | light | dark
     },
@@ -120,6 +124,7 @@ _BOUNDS = {
     ('timing', 'max_show_seconds'): (5, 120, 1, 0),
     ('timing', 'speed'): (0.5, 2.0, 0.05, 2),
     ('timing', 'glide_seconds'): (0.2, 2.0, 0.1, 1),
+    ('history', 'days'): (1, 365, 1, 0),
 }
 SETTINGS = {
     (section, key): Setting(value, tuple(_OPTIONS.get((section, key), ())),

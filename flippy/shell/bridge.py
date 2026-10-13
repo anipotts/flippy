@@ -8,7 +8,7 @@ platform's own open and save panels (Host).
 import os
 import time
 
-from .. import settings
+from .. import history_store, settings
 from . import appearance, schema, setup
 
 COMMANDS = {"preview", "reset", "tour", "update"}  # daemon commands the page may ask for
@@ -62,6 +62,9 @@ class Host:
     def close(self):
         """Close the window (Setup's Done)."""
 
+    def drag_target(self, rect):
+        """Where the page shows the app icon you can drag into System Settings ({x, y, w, h} in page px), or None."""
+
 
 class Bridge:
     def __init__(self, push=lambda event, data: None, command=lambda cmd: None, log=lambda msg: None, host=None):
@@ -77,9 +80,14 @@ class Bridge:
         self.demo = None
         self._mark = None
         settings.on_change(self._changed)
+        history_store.on_change(self._history_changed)
 
     def close(self):
         settings.off_change(self._changed)
+        history_store.off_change(self._history_changed)
+
+    def _history_changed(self):
+        self.push("history", None)
 
     def _changed(self, section, key, *_):
         if (section, key) in settings.SETTINGS and (f := schema.field(section, key)) is not None:
@@ -150,6 +158,23 @@ class Bridge:
             raise ValueError("bad mode")
         self.host.set_chrome(mode)
 
+    # ---- history (flippy/history_store.py)
+    def op_history_list(self, offset=0, limit=50, query=None):
+        return {"entries": history_store.list_entries(offset, limit, query), "keep": settings.get("history", "keep"),
+                "days": settings.get("history", "days")}
+
+    def op_history_delete(self, id):  # noqa: A002
+        history_store.delete(id)
+
+    def op_copy(self, text):
+        if not isinstance(text, str) or len(text) > 200_000:
+            raise ValueError("bad text")
+        if not self.host.copy_text(text):
+            raise ValueError("Couldn't copy.")
+
+    def op_history_clear(self):
+        history_store.clear()
+
     def op_route(self, route):
         self.current = str(route)[:100]
 
@@ -163,6 +188,11 @@ class Bridge:
     def op_setup_action(self, name):
         self.host.setup_action(str(name))
         return self.op_setup_state()
+
+    def op_drag_target(self, rect=None):
+        if rect is not None:
+            rect = {k: float(rect[k]) for k in ("x", "y", "w", "h")}
+        self.host.drag_target(rect)
 
     def op_close(self):
         self.host.close()

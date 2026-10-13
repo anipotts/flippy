@@ -10,7 +10,7 @@ from .. import settings
 
 # page id, title, icon, and its groups: (group title or None, [sections])
 PAGES = [
-    ("general", "General", "gear", [(None, ["provider", "updates"]), ("Scripting", ["automation"])]),
+    ("general", "General", "gear", [(None, ["provider", "updates"]), ("History", ["history"]), ("Scripting", ["automation"])]),
     ("appearance", "Appearance", "sun", [(None, ["window", "look"])]),  # laid out by the page (appearance.js)
     ("models", "Models", "sparkle", [("Claude", ["claude"]), ("Codex / ChatGPT", ["codex"])]),
     ("tasks", "Desktop tasks", "cursor", [(None, ["act"])]),
@@ -26,6 +26,8 @@ LABELS = {
     ("provider", "mode"): ("Use", "Automatic picks the only connected subscription.", None),
     ("updates", "check"): ("Check for updates", "Look for a new release once a day and offer to install it.", None),
     ("automation", "clicks"): ("Let scripts click", "Allow flippy-ask click to click on screen.", ("darwin",)),
+    ("history", "keep"): ("Keep history", "Save what you ask and what Flippy did, as text. Never screenshots.", None),
+    ("history", "days"): ("Keep for", "Days, then it's deleted.", None),
     ("window", "mode"): ("Mode", "This window follows the system, or stays light or dark.", None),
     ("look", "theme"): ("Theme", "How answer cards look.", None),
     ("look", "pointer"): ("Pointer", None, None),
@@ -67,7 +69,7 @@ WHEN = {
 # Two-value choices shown as a switch: (value when on, value when off).
 SWITCHES = {("look", "controls"): ("all", "players")}
 UNITS = {("look", "text_size"): "pt", ("timing", "show_seconds"): "s", ("timing", "max_show_seconds"): "s",
-         ("timing", "glide_seconds"): "s", ("timing", "speed"): "×", ("look", "pointer_size"): "×"}
+         ("timing", "glide_seconds"): "s", ("history", "days"): "days", ("timing", "speed"): "×", ("look", "pointer_size"): "×"}
 
 
 def platform():
