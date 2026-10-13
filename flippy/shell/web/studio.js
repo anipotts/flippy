@@ -364,7 +364,7 @@ F.openStudio = (data, host, onDone) => {
   const title = data.editing ? `Edit “${data.editing}”` : S.mode === "image" ? "Pick the tip" : "Draw a pointer";
   const studio = el("section", { class: "studio", "aria-label": "Pointer studio" },
     el("div", { class: "bar" }, el("strong", {}, title),
-      S.mode === "image" ? null : el("span", { class: "keys-hint" }, "P pencil, F fill, T tip, M mirror, \u2318Z undo"),
+      S.mode === "image" ? null : el("span", { class: "keys-hint" }, `P pencil, F fill, T tip, M mirror, ${F.state.platform === "darwin" ? "\u2318Z" : "Ctrl+Z"} undo`),
       sbtn("Close", () => close(), { class: "sbtn quiet" })),
     el("div", { class: "body" }, el("div", { class: "board-wrap" }, board), side));
   studio.tabIndex = -1;
