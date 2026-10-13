@@ -42,7 +42,7 @@ PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
 say "Building $APP"
 FLIPPY_PROFILE=default "$ROOT/bin/flippy-ask" stop-owned >/dev/null
 FLIPPY_PROFILE=default "$ROOT/.venv/bin/python" "$ROOT/scripts/wait_stopped.py"
-"$ROOT/scripts/build_mac.sh" "$APP" default
+"$ROOT/scripts/build_mac.sh" "$APP" default || die "building $APP failed; the lines above say why. Please report it: https://github.com/kap-il/flippy/issues"
 
 # 4. flippy-ask on PATH (scripting, and `flippy-ask setup` / `settings`).
 mkdir -p "$BIN_DIR"
