@@ -134,6 +134,17 @@ class Setup(unittest.TestCase):
         self.assertIsInstance(e.exception, ValueError)  # the bridge shows it as the action's error
         self.assertIn("No terminal app found. Open a terminal and run: env -u", str(e.exception))
 
+    def test_login_terminals_leave_flippys_variables_behind(self):
+        from unittest.mock import patch
+        from flippy.linux import setup
+        env = {"PATH": "/usr/bin", "FLIPPY_PROFILE": "demo", "PYTHONPATH": "/x", "ANTHROPIC_API_KEY": "k"}
+        with patch.dict(setup.os.environ, env, clear=True), \
+                patch.object(setup, "terminal_argv", side_effect=lambda cmd: ["xterm", "-e", "sh", "-c", cmd]), \
+                patch.object(setup, "claude_cli", return_value="claude"), \
+                patch.object(setup.subprocess, "Popen") as popen:
+            setup.act("claude")
+        self.assertEqual(popen.call_args.kwargs["env"], {"PATH": "/usr/bin"})
+
 
 class LayerShellPreload(unittest.TestCase):
     """gtk4-layer-shell's LD_PRELOAD stays out of what Flippy starts (flippy/linux/preload.py, no GTK)."""

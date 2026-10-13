@@ -128,11 +128,18 @@ def terminal_argv(cmd, which=shutil.which):
     return term + ["sh", "-c", cmd] if term else None
 
 
+def terminal_env():
+    """The environment for a terminal Flippy opens: without Flippy's own variables, which every shell in it would
+    inherit (later `flippy-ask` commands there would act on the wrong profile), like flippy/mac/setup.py."""
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith(("FLIPPY_", "PYTHON")) and k != "ANTHROPIC_API_KEY"}
+
+
 def _in_terminal(cmd, shown, after=""):
     argv = terminal_argv(cmd)
     if argv is None:
         raise NoTerminal(shown, after)
-    subprocess.Popen(argv, start_new_session=True)
+    subprocess.Popen(argv, start_new_session=True, env=terminal_env())
     return True
 
 
