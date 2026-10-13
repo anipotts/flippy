@@ -326,7 +326,7 @@ def run_standalone(route=None):
     def no_daemon(cmd):
         raise ValueError("Preview on screen works when Flippy is running.")
 
-    app = Gtk.Application(application_id="dev.flippy.window", flags=Gio.ApplicationFlags.NON_UNIQUE)
+    app = Gtk.Application()  # no id: nothing to register on the session bus, and it can run beside the daemon
 
     def activate(a):
         AppWindow(command=no_daemon, log=lambda m: None, app=a).present(route or "settings/appearance")
