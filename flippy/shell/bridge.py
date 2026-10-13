@@ -52,6 +52,10 @@ class Host:
     def set_chrome(self, mode):
         """The page is showing "light" or "dark": match the window's own frame to it."""
 
+    def capabilities(self):
+        """What this desktop can do that some settings depend on, e.g. {"blur": False} (schema.NEEDS)."""
+        return {}
+
     def setup_state(self):
         """The platform's setup checks: claude, codex, screen, accessibility, login_item... (flippy/mac/setup.py)."""
         return {}
@@ -112,7 +116,7 @@ class Bridge:
     def op_state(self):
         demo, self.demo = self.demo, None  # a pointer demo asked for before the page loaded
         return {"platform": schema.platform(), "pages": schema.pages(), "route": self.route, "version": _version(),
-                "demo": demo}
+                "demo": demo, "caps": self.host.capabilities()}
 
     def _key(self, id):  # noqa: A002
         section, _, key = str(id).partition(".")

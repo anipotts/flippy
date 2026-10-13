@@ -118,6 +118,9 @@ class GtkHost(Host):
     def __init__(self, window):
         self.window = window
 
+    def capabilities(self):
+        return self.window.caps()
+
     def copy_text(self, text):
         win = self.window.win
         clipboard = (win.get_display() if win else Gdk.Display.get_default()).get_clipboard()
@@ -208,8 +211,9 @@ _css_ready = False
 
 
 class AppWindow:
-    def __init__(self, on_close=lambda: None, command=lambda cmd: None, log=print, app=None):
+    def __init__(self, on_close=lambda: None, command=lambda cmd: None, log=print, app=None, caps=dict):
         global _css_ready
+        self.caps = caps
         if not _css_ready:
             Adw.init()  # libadwaita follows the desktop's light or dark setting, and WebKit's
             #             prefers-color-scheme follows it, for the page's "System" mode
