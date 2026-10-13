@@ -13,6 +13,12 @@ import cairo
 
 from . import settings, themes
 
+CORNER_GAP = 16
+# An answer next to the pointer moves to a corner (look.card_place = auto) when it's this big...
+BIG_AREA = 0.18             # ...this share of the screen
+BIG_HEIGHT = 1 / 3          # ...or this share of its height
+COVER = 0.2                 # ...or this share of it would sit on the text you're working in (avoid)
+
 
 class OverlayBase:
     card_margin_top = 70
@@ -21,7 +27,7 @@ class OverlayBase:
 
     def __init__(self):
         self.card = None          # themes.Card being shown, or None
-        self.card_mode = "top"    # "top" | "bottom" (centered) | "follow" (next to the pointer)
+        self.card_mode = "top"    # "top" | "bottom" (centered) | "follow" (next to the pointer) | "dock" (a corner)
         self.card_t0 = 0.0
         self.meta = ""            # shown by themes that have room for it (e.g. "OPUS · LOW")
         self.target = None        # (x, y, label) in logical px: where the pointer is heading
@@ -30,6 +36,10 @@ class OverlayBase:
         self.move_t0 = 0.0
         self.t0 = 0.0
         self.ticking = False
+        self.pinned = False       # the answer stays until dismissed (the card's pushpin)
+        self.docked = False       # this answer moved to a corner; it stays there, so a walkthrough doesn't jump
+        self.corner = None        # (right, bottom) of that corner
+        self.avoid = None         # (x, y, w, h): the text you were working in when you asked (platform focused_area)
 
         # draw mode
         self.strokes: list[list[tuple[float, float]]] = []
@@ -55,8 +65,13 @@ class OverlayBase:
         if self.card is None:
             self.card_t0 = time.monotonic()
         self.card = themes.Card(text=text, error=error, header=header, follow=bool(follow and self.target),
-                                meta=self.meta, **card_fields)
-        self.card_mode = "follow" if self.card.follow else ("bottom" if at_bottom else "top")
+                                meta=self.meta, pinned=self.pinned, **card_fields)
+        if self.card.follow:
+            self.card_mode = "follow"
+        elif themes.pin_shown(self.card) and settings.get("look", "card_place") != "pointer":
+            self.card_mode = "dock"  # an answer with nothing to point at: out of the way
+        else:
+            self.card_mode = "bottom" if at_bottom else "top"
         self.set_opacity(1.0)
         self._ensure_tick()
 
@@ -74,6 +89,8 @@ class OverlayBase:
 
     def clear(self, keep_marks=False):
         self.card = None
+        self.pinned = self.docked = False
+        self.corner = None
         self.target = None
         self.pos = None
         self.move_from = None
@@ -118,10 +135,42 @@ class OverlayBase:
             cy = (y - ch - 16) if flip else (y + 16)
             cx = min(max(cx, 8), W - cw - 8)
             cy = min(max(cy, 8), H - ch - 8)
+            if not self.docked and self._in_the_way((cx, cy, cw, ch), W, H):
+                self.docked = True
+            if not self.docked:
+                return cx, cy, cw, ch
+        if self.card_mode == "dock" or self.docked:
+            return self._corner_rect(W, H, cw, ch)
         else:
             cx = (W - cw) / 2
             cy = H - ch - self.card_margin_bottom if self.card_mode == "bottom" else self.card_margin_top
         return cx, cy, cw, ch
+
+    def _in_the_way(self, rect, W, H):
+        """Should this answer leave the pointer for a corner? (look.card_place)"""
+        place = settings.get("look", "card_place")
+        if place != "auto":
+            return place == "corner"
+        _, _, cw, ch = rect
+        if cw * ch > BIG_AREA * W * H or ch > BIG_HEIGHT * H:
+            return True
+        return bool(self.avoid) and _overlap(rect, self.avoid) > COVER * cw * ch
+
+    def _corner_rect(self, W, H, cw, ch):
+        """The card in a corner, top right first. Kept there unless the pointer goes under it; then the corner
+        that covers the least of the text you're working in, and not the pointer."""
+        def rect(corner):
+            right, bottom = corner
+            return (W - cw - CORNER_GAP if right else CORNER_GAP,
+                    H - ch - self.card_margin_bottom if bottom else self.card_margin_top, cw, ch)
+        def under_pointer(r):
+            return self.pos is not None and self.target is not None and _overlap(r, (*self.pos, 1, 1)) > 0
+        if self.corner is None or under_pointer(rect(self.corner)):
+            order = [(True, False), (True, True), (False, False), (False, True)]
+            self.corner = min(order, key=lambda c: (under_pointer(rect(c)),
+                                                    _overlap(rect(c), self.avoid) if self.avoid else 0,
+                                                    order.index(c)))
+        return rect(self.corner)
 
     # --- draw mode ---
     def start_drawing(self):
@@ -215,6 +264,9 @@ class OverlayBase:
             (x, y, cw, ch), opts = lay
             theme.draw(cr, x, y, cw, ch, self.card, now - self.card_t0, opts)
             hits = theme.hit_regions(self.card, x, y, cw, ch, opts)
+            if themes.pin_shown(self.card):
+                theme.draw_pin(cr, self.card, x, y, cw, ch, opts)
+                hits["pin"] = theme.pin_rect(self.card, x, y, cw, ch, opts)
         self.hits = hits
         self.hits_changed()
 
@@ -262,3 +314,10 @@ class OverlayBase:
 
     def hits_changed(self):
         """self.hits was refreshed: only those rects should take clicks (outside draw mode)."""
+
+
+def _overlap(a, b):
+    """Area two (x, y, w, h) rects share."""
+    w = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+    h = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+    return max(w, 0) * max(h, 0)

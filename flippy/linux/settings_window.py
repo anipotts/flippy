@@ -307,6 +307,8 @@ class SettingsWindow(Gtk.Window):
             look.add(combo_row("Tint color", None, "look", "glass_color", settings.options("look", "glass_color")))
         look.add(combo_row("Playback controls", "Clickable play/pause/step buttons on the answer panel", "look",
                            "controls", settings.options("look", "controls")))
+        look.add(combo_row("Answer position", "Automatic: next to the pointer, or a corner when the answer is long",
+                           "look", "card_place", settings.options("look", "card_place")))
         if self.glass:
             look.add(combo_row("Media Player reflections", "Windows Media Player gloss bars on its Liquid Glass, "
                                "or plain glass", "look", "player_shine", settings.options("look", "player_shine")))

@@ -172,6 +172,37 @@ def front_app():
     return FINDER, str(finder.localizedName()), finder.processIdentifier()
 
 
+TEXT_ROLES = ("AXTextArea", "AXTextField")
+
+
+def focused_area():
+    """(x, y, w, h) in screen points of the text you're working in (an editor, a terminal, a document), or None.
+    Only the part inside its window: an editor's text area can be the whole document. Read from the app you were
+    in, since Flippy's question box is in front by now."""
+    if not trusted():
+        return None
+    app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+    pid = app.processIdentifier() if app is not None and not _is_flippy(app) else (_last_front or (0, 0, 0))[2]
+    if not pid:
+        return None
+    root = AX.AXUIElementCreateApplication(pid)
+    AX.AXUIElementSetMessagingTimeout(root, 0.25)  # a busy app doesn't hold up the answer
+    el = _attr(root, "AXFocusedUIElement")
+    if el is None or _attr(el, "AXRole") not in TEXT_ROLES:
+        return None
+    frame = _frame(el)
+    window = _attr(el, "AXWindow")
+    bounds = _frame(window) if window is not None else None
+    if not frame:
+        return None
+    if bounds:
+        x0, y0 = max(frame[0], bounds[0]), max(frame[1], bounds[1])
+        x1 = min(frame[0] + frame[2], bounds[0] + bounds[2])
+        y1 = min(frame[1] + frame[3], bounds[1] + bounds[3])
+        frame = (x0, y0, x1 - x0, y1 - y0)
+    return frame if frame[2] > 0 and frame[3] > 0 else None
+
+
 def find_app(name):
     """A running app by name (case-insensitive), or None."""
     want = name.strip().lower()

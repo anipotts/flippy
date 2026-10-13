@@ -671,7 +671,8 @@ class Flippy:
 
     async def _ask(self, question, req, keep_marks=False):
         frame = await self._capture_frame(req, keep_marks=keep_marks)
-        await self._action_main(lambda: (self.overlay.show_text("thinking…", phase="thinking"), event("thinking")), req)
+        await self._action_main(lambda: (self._note_focus(), self.overlay.show_text("thinking…", phase="thinking"),
+                                         event("thinking")), req)
         if self.brain.dirty or (self.last_ask and time.monotonic() - self.last_ask > IDLE_RESET_S):
             await self.brain.reset()
         self.last_ask = time.monotonic()
@@ -717,6 +718,10 @@ class Flippy:
                        pointer_size=settings.get("look", "pointer_size"),
                        show_seconds=settings.get("timing", "show_seconds"),
                        max_show_seconds=settings.get("timing", "max_show_seconds"))
+
+    def _note_focus(self):
+        """Where the text you were working in is, so the answer can stay off it (overlay._in_the_way)."""
+        self.overlay.avoid = self.ui.focused_area() if hasattr(self.ui, "focused_area") else None
 
     def _start_playback(self, gen, img_size, shot_size, frame=None):
         if gen != self.gen:
@@ -828,6 +833,9 @@ class Flippy:
         if name in ("stop", "close", "min"):
             self.dismiss()
             return
+        if name == "pin":
+            self.toggle_pin()
+            return
         if name == "speed":
             settings.set("timing", "speed", themes.frac_to_speed(frac))
             return
@@ -841,6 +849,19 @@ class Flippy:
             if self.play and not self.play.stopped:
                 self._resume_ticking()
                 self._refresh_card()
+
+    def toggle_pin(self):
+        """The card's pushpin: a pinned answer stays until it's dismissed or you ask again."""
+        ov = self.overlay
+        ov.pinned = not ov.pinned
+        if ov.card:
+            ov.card.pinned = ov.pinned
+        event("pin", pinned=ov.pinned)
+        if ov.pinned:
+            self._cancel_fade()
+        elif ov.card and not (self.play and (self.play.paused or not self.play.finished)):
+            self._schedule_fade(settings.get("timing", "show_seconds"))  # done playing: fades as usual from here
+        ov.queue_draw()
 
     def pause_toggle(self):
         """Pause or resume the answer playing on screen; nothing if there isn't one (or it already finished).
@@ -1292,6 +1313,8 @@ class Flippy:
     # --- fading ---
     def _schedule_fade(self, seconds):
         self._cancel_fade()
+        if getattr(self.overlay, "pinned", False):
+            return
         owner, gen = getattr(self, "request", None), self.gen
         timer_box = []
         def fade():
