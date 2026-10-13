@@ -38,6 +38,7 @@ from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 from .. import loop, settings, themes
 from ..history import BOX_HINT, PROMPTS
 from ..overlay import OverlayBase
+from ..shell.window import AppHost
 from . import hotkeys, sensors, statusicon
 from .nudge import Nudge
 from .cairoview import blit
@@ -610,13 +611,12 @@ MENU = [("Ask about the screen", "ask", "ask"), ("Circle and ask", "draw", "draw
 
 # --------------------------------------------------------------------------- platform
 
-class Platform:
+class Platform(AppHost):
     hide_settle_ms = HIDE_SETTLE_MS
 
     def __init__(self):
         self.overlay = Overlay()
         self.screenshotter = Screenshotter()
-        self.app_window = None   # history, setup and settings (flippy/mac/shell_window.py); built when asked for
         self.nudge = Nudge()
         self.action_card = Nudge()  # separate from tips and update cards
         self.double_tap = hotkeys.DoubleTap()
@@ -647,31 +647,15 @@ class Platform:
         # setup opens by itself only on install, a new major version or a lost login (flippy/setup_gate.py,
         # decided once the first login check is done)
 
-    def open_app(self, route):
-        """The app window (history, setup, settings) on route: "setup", "history", "settings/<page>"."""
-        from .shell_window import AppWindow  # local: only built when asked for
-        if self.app_window is None:
-            self.app_window = AppWindow(on_close=self._app_closed, command=self.command, log=lambda m: None)
-        self.app_window.present(route)
+    def _new_app_window(self):
+        """History, setup and settings (flippy/mac/shell_window.py, flippy/shell/window.py AppHost)."""
+        from .shell_window import AppWindow  # local: WebKit only loads when asked for
+        return AppWindow(on_close=self._app_closed, command=self.command, log=lambda m: None)
 
     def _app_closed(self):
         from . import ax
-        self.app_window = None
+        super()._app_closed()
         ax.give_back_front()
-
-    @property
-    def setup_win(self):
-        """The app window while it shows Setup (the daemon polls the login only then)."""
-        w = self.app_window
-        return w if w is not None and w.route == "setup" else None
-
-    @property
-    def settings_win(self):
-        w = self.app_window
-        return w if w is not None and (w.route or "").startswith("settings") else None
-
-    def open_setup(self):
-        self.open_app("setup")
 
     def _bind_keys(self):
         self.key_errors = {}
@@ -895,15 +879,6 @@ class Platform:
                     except OSError:
                         pass
         threading.Thread(target=serve, daemon=True).start()
-
-    def open_settings(self, on_preview=None, on_reset=None):
-        """Settings in the app window. Its Preview and New session go through the daemon's own commands."""
-        self.open_app("settings/general")
-
-    def demo_pointer(self, name, on_saved):
-        """Scripted demo: draw a pointer in the app window's studio and save it."""
-        self.open_app("settings/appearance")
-        self.app_window.bridge.start_pointer_demo(name, on_saved)
 
     # --- demo recording (scripts/demo_mac.py): run as Flippy's children, so they use its Screen Recording ---
     def screenshot_to(self, path):

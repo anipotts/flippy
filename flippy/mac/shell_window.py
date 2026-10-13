@@ -7,7 +7,6 @@ window: quitting Flippy stays in the menu bar icon's menu.
 The page loads from local files only; its Content-Security-Policy allows nothing remote. (TODO before shipping:
 serve it through a WKURLSchemeHandler instead of file URLs.)
 """
-import json
 import os
 
 import objc
@@ -19,7 +18,10 @@ from AppKit import (NSApp, NSAppearance, NSApplicationActivationPolicyAccessory,
 from Foundation import NSMakeRect, NSMakeSize, NSObject, NSURL
 from WebKit import WKUserContentController, WKWebView, WKWebViewConfiguration
 
-from ..shell.bridge import Bridge, Host
+from .. import pixelart
+from ..shell.bridge import Host
+from ..shell.window import Window
+from . import setup
 
 WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shell", "web")
 WIDTH, HEIGHT = 1160, 780
@@ -58,37 +60,25 @@ def _menu():
 
 
 class MacHost(Host):
-    def __init__(self, window):
-        self.window = window
-        self.sampler = None
-        self.buddy = None
+    sampler = None  # the screen color picker, kept while it's up
+    buddy = None    # the draggable app icon over the Setup page (drag_target)
 
     def copy_text(self, text):
         pb = NSPasteboard.generalPasteboard()
         pb.clearContents()
         return bool(pb.setString_forType_(text, NSPasteboardTypeString))
 
-    def save_file(self, suggested, data, kind):
+    def choose_save(self, suggested, kind):
         panel = NSSavePanel.savePanel()
         panel.setNameFieldStringValue_(suggested)
         panel.setAllowedFileTypes_([kind])
-        if panel.runModal() != NSModalResponseOK:
-            return False
-        with open(panel.URL().path(), "wb") as f:
-            f.write(data)
-        return True
+        return panel.URL().path() if panel.runModal() == NSModalResponseOK else None
 
-    def open_file(self, kinds):
+    def choose_open(self, kinds):
         panel = NSOpenPanel.openPanel()
         panel.setAllowedFileTypes_(kinds)
         panel.setAllowsMultipleSelection_(False)
-        if panel.runModal() != NSModalResponseOK:
-            return None
-        path = panel.URL().path()
-        if os.path.getsize(path) > 20 * 1024 * 1024:
-            raise ValueError("That file is too big for a pointer.")
-        with open(path, "rb") as f:
-            return os.path.basename(path), f.read()
+        return panel.URL().path() if panel.runModal() == NSModalResponseOK else None
 
     def sample_color(self, done):
         from AppKit import NSColorSampler
@@ -98,28 +88,13 @@ class MacHost(Host):
                 done(None)
                 return
             c = color.colorUsingColorSpace_(NSColorSpace.sRGBColorSpace())
-            done("#" + "".join(f"{round(v * 255):02x}" for v in (c.redComponent(), c.greenComponent(), c.blueComponent())))
-        self.sampler = NSColorSampler.alloc().init()  # kept while it's up
+            done(pixelart.to_hex((c.redComponent(), c.greenComponent(), c.blueComponent())))
+        self.sampler = NSColorSampler.alloc().init()
         self.sampler.showSamplerWithSelectionHandler_(picked)
-
-    def set_chrome(self, mode):
-        self.window.set_chrome(mode)
-
-    def setup_state(self):
-        from . import setup
-        return setup.state()
-
-    def setup_action(self, name):
-        from . import setup
-        setup.act(name)
-
-    def close(self):
-        self.window.win.performClose_(None)
 
     def drag_target(self, rect):
         """A native, draggable Flippy.app icon over the page's spot for it: System Settings' permission lists
         take a dragged app, which a web page can't offer."""
-        from . import setup
         web = self.window.web
         if web is None:
             return
@@ -137,12 +112,12 @@ class MacHost(Host):
         self.buddy.setFrame_(NSMakeRect(rect["x"], y, rect["w"], rect["h"]))
 
 
-class AppWindow:
+class AppWindow(Window):
     def __init__(self, on_close=lambda: None, command=lambda cmd: None, log=print):
-        self.on_close, self.log = on_close, log
+        super().__init__(MacHost(self, setup), command, log)
+        self.on_close = on_close
         self.handler = _Handler.alloc().init()
         self.handler.owner = self
-        self.bridge = Bridge(push=self._push, command=command, log=log, host=MacHost(self))
         config = WKWebViewConfiguration.alloc().init()
         content = WKUserContentController.alloc().init()
         content.addScriptMessageHandler_name_(self.handler, "flippy")
@@ -185,16 +160,10 @@ class AppWindow:
         self.win.setAppearance_(NSAppearance.appearanceNamed_(
             "NSAppearanceNameDarkAqua" if mode == "dark" else "NSAppearanceNameAqua"))
 
-    @property
-    def route(self):
-        """The page showing now ("setup", "settings/appearance"...), or the one it's opening on."""
-        return self.bridge.current or self.bridge.route
+    def close(self):
+        self.win.performClose_(None)
 
-    def present(self, route=None):
-        if route:
-            self.bridge.route = route    # read by the page when it loads
-            self.bridge.current = route
-            self._push("route", route)   # and sent, in case it already has
+    def _show(self):
         if NSApp.activationPolicy() != NSApplicationActivationPolicyRegular:
             self._old_menu = NSApp.mainMenu()
             NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular)
@@ -212,17 +181,5 @@ class AppWindow:
         self.web = None
         self.on_close()
 
-    def _message(self, body):
-        try:
-            message = json.loads(body) if isinstance(body, str) and len(body) <= 4 * 1024 * 1024 + 4096 else None
-        except ValueError:
-            message = None
-        self._js("window.flippy.reply", self.bridge.handle(message))
-
-    def _push(self, event, data):
-        self._js("window.flippy.event", event, data)
-
-    def _js(self, fn, *args):
-        if self.web is None:
-            return
-        self.web.evaluateJavaScript_completionHandler_(f"{fn}({', '.join(json.dumps(a) for a in args)})", None)
+    def _eval(self, script):
+        self.web.evaluateJavaScript_completionHandler_(script, None)

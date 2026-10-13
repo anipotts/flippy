@@ -8,6 +8,8 @@ let loading = null;
 
 const loadGallery = () => (loading = loading || F.call("gallery").then((g) => { gallery = g; loading = null; return g; }));
 const refreshPointers = async () => { if (gallery) gallery.pointers = await F.call("pointers"); };
+const refresh = async () => { await refreshPointers(); F.rerender(); };
+const onPage = () => location.hash.endsWith("/appearance") && !document.querySelector(".studio");
 
 // ---- mode thumbnails: little pictures of this window in light and dark
 function modeShot(kind) {
@@ -47,7 +49,6 @@ function themeTiles() {
       el("span", { class: "art" }, t.image ? el("img", { src: t.image, alt: "" }) : el("span", { class: "skeleton" })),
       el("span", { class: "name" }, t.name, F.svg("check", "check"))));
   }
-  grid.querySelectorAll(".name svg").forEach((s) => s.classList.add("check"));
   return grid;
 }
 
@@ -95,7 +96,7 @@ function pointerTiles(host) {
     add("From image", "image", async () => {
       const r = await F.call("pointer_import").catch((e) => (F.toast(e.message), null));
       if (!r) return;
-      if (r.saved) { await refreshPointers(); F.rerender(); F.toast("Pointer imported"); } else openStudio(host, r.studio);
+      if (r.saved) { await refresh(); F.toast("Pointer imported"); } else openStudio(host, r.studio);
     }));
   return grid;
 }
@@ -104,23 +105,20 @@ function pointerMenu(anchor, p, host) {
   const name = p.value.slice("custom:".length);
   F.menu(anchor, [
     ["Edit", "pencil", async () => openStudio(host, await F.call("studio_open", { name }))],
-    ["Duplicate", "copy", async () => { await F.call("pointer_duplicate", { name }); await refreshPointers(); F.rerender(); }],
+    ["Duplicate", "copy", async () => { await F.call("pointer_duplicate", { name }); await refresh(); }],
     ["Rename", "rename", () => F.dialog((sheet, close) => {
       const input = el("input", { type: "text", value: name, maxlength: "40", spellcheck: "false", style: "width:100%" });
       const err = el("div", { class: "error" });
       const go = async () => {
-        try { await F.call("pointer_rename", { name, new: input.value }); close(); await refreshPointers(); F.rerender(); }
+        try { await F.call("pointer_rename", { name, new: input.value }); close(); await refresh(); }
         catch (e) { err.textContent = e.message; }
       };
       input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
-      sheet.append(el("h3", {}, "Rename pointer"), input, err,
-        el("div", { class: "actions" }, el("button", { class: "btn", onclick: close }, "Cancel"), el("button", { class: "btn primary", onclick: go }, "Rename")));
+      sheet.append(el("h3", {}, "Rename pointer"), input, err, F.actions(close, "Rename", go));
     })],
     ["Export as PNG", "export", async () => { if (await F.call("pointer_export", { name })) F.toast(`Saved “${name}.png” with its tip`); }],
-    ["Delete", "trash", () => F.dialog((sheet, close) => sheet.append(
-      el("h3", {}, `Delete “${name}”?`), el("p", {}, "The pointer file is removed. Export it first to keep a copy."),
-      el("div", { class: "actions" }, el("button", { class: "btn", onclick: close }, "Cancel"),
-        el("button", { class: "btn primary", onclick: async () => { close(); await F.call("pointer_delete", { name }); await refreshPointers(); F.rerender(); F.toast(`Deleted “${name}”`); } }, "Delete")))), true],
+    ["Delete", "trash", () => F.confirm(`Delete “${name}”?`, "The pointer file is removed. Export it first to keep a copy.", "Delete",
+      async () => { await F.call("pointer_delete", { name }); await refresh(); F.toast(`Deleted “${name}”`); }), true],
   ]);
 }
 
@@ -153,8 +151,7 @@ function openStudio(host, data, after) {
   if (closeStudio) closeStudio();
   closeStudio = F.openStudio(data, host, async (value, name) => {
     if (after) after(value);
-    await refreshPointers();
-    F.rerender();
+    await refresh();
     F.toast(`Saved “${name.trim() || "My pointer"}” and set it as your pointer`);
   });
   host.addEventListener("studio-closed", () => (closeStudio = null), { once: true });
@@ -170,8 +167,7 @@ function importLook() {
         const r = await F.call("look_import", { text: text.value });
         close();
         await F.reload();
-        await refreshPointers();
-        gallery.themes = (await F.call("gallery")).themes;
+        gallery = await F.call("gallery");
         F.rerender();
         const before = {};
         for (const [k, v] of Object.entries(r.before)) before["look." + k] = v;
@@ -181,7 +177,7 @@ function importLook() {
     };
     sheet.append(el("h3", {}, "Import a look"),
       el("p", {}, "Paste a look someone copied from Flippy: theme, pointer (with its drawing), tint and card settings."),
-      text, err, el("div", { class: "actions" }, el("button", { class: "btn", onclick: close }, "Cancel"), el("button", { class: "btn primary", onclick: apply }, "Apply")));
+      text, err, F.actions(close, "Apply", apply));
   });
 }
 async function copyLook() {
@@ -223,7 +219,7 @@ F.renderers.appearance = (p) => {
   const [foot] = F.foot(Object.assign({}, p, { fields: [] }));
   foot.firstChild.replaceWith(el("button", { class: "btn", onclick: () => F.call("command", { name: "preview" }).then(() => F.toast("Showing the look on screen"), () => F.toast("Preview works inside Flippy")) },
     F.svg("play"), "Preview on screen"));
-  foot.lastChild.onclick = () => F.resetPage(p).then(async () => { await refreshPointers(); F.rerender(); });
+  foot.lastChild.onclick = () => F.resetPage(p).then(refresh);
   wrap.append(foot);
 
   if (!gallery) loadGallery().then(() => { if (location.hash.endsWith("/appearance")) F.rerender(); });
@@ -232,7 +228,7 @@ F.renderers.appearance = (p) => {
 
 F.rerender = () => {
   const y = document.getElementById("page").scrollTop;
-  F.render(location.hash.slice(1));
+  F.render(F.here());
   document.getElementById("page").scrollTop = y;
 };
 
@@ -243,9 +239,9 @@ F.on("field:look.theme", async (f) => {
   const tint = document.querySelector('[data-id="tint"]');
   if (tint && F.state.platform !== "darwin") tint.hidden = !["glass", "mediaplayer"].includes(f.value);
   await refreshPointers();  // "Theme default" shows the theme's own pointer
-  if (location.hash.endsWith("/appearance") && !document.querySelector(".studio")) F.rerender();
+  if (onPage()) F.rerender();
 });
-F.on("field:look.pointer", () => { if (location.hash.endsWith("/appearance") && !document.querySelector(".studio")) F.rerender(); });
+F.on("field:look.pointer", () => { if (onPage()) F.rerender(); });
 F.on("field:window.mode", () => { const r = document.querySelector("[data-mode-row]"); if (r) r.replaceWith(modeRow()); });
 for (const id of ["look.glass_color", "look.glass_tint"]) F.on("field:" + id, () => { const r = document.querySelector('[data-id="tint"]'); if (r) r.replaceWith(tintRow()); });
 let redraw = null;

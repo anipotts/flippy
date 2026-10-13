@@ -13,6 +13,7 @@ import subprocess
 from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 
 from ..profile import current
+from ..shell.setup import claude_cli, logged_in, login_items, run, terminal_env
 from . import hotkeys
 
 APP = os.environ.get("FLIPPY_APP")  # set by Flippy.app's launcher; None when run from a terminal
@@ -23,16 +24,6 @@ ACCESSIBILITY_PANE = "x-apple.systempreferences:com.apple.preference.security?Pr
 
 
 # ---- checks
-def claude_logged_in():
-    from ..providers import CONNECTION_STATUS
-    return CONNECTION_STATUS["claude"] is True
-
-
-def codex_logged_in():
-    from ..providers import CONNECTION_STATUS
-    return CONNECTION_STATUS["codex"] is True
-
-
 def screen_ok():
     return bool(CGPreflightScreenCaptureAccess())
 
@@ -40,13 +31,6 @@ def screen_ok():
 def needs_setup():
     from ..providers import setup_ready
     return not (setup_ready() and screen_ok())
-
-
-def claude_cli():
-    """The CLI the Agent SDK uses: its bundled copy, else `claude` on PATH."""
-    import claude_agent_sdk
-    bundled = os.path.join(os.path.dirname(claude_agent_sdk.__file__), "_bundled", "claude")
-    return bundled if os.path.exists(bundled) else "claude"
 
 
 def temporary_path(app):
@@ -70,7 +54,7 @@ def state():
     app = os.path.abspath(APP) if installed() else None
     home = os.path.expanduser("~")
     return {
-        "claude": claude_logged_in(), "codex": codex_logged_in(),
+        "claude": logged_in("claude"), "codex": logged_in("codex"),
         "screen": screen_ok(), "accessibility": hotkeys.accessibility_trusted(),
         "login_item": login_item_on(), "login_item_allowed": installed() and not current().demo,
         "app": app and ("~" + app[len(home):] if app.startswith(home + os.sep) else app),
@@ -79,13 +63,6 @@ def state():
 
 
 # ---- actions
-def terminal_env():
-    """The environment for opening Terminal: without Flippy's own variables, which a Terminal started from here
-    would pass on to every shell in it (FLIPPY_BUNDLED there made later Flippy commands act like the app)."""
-    return {k: v for k, v in os.environ.items()
-            if not k.startswith(("FLIPPY_", "PYTHON")) and k not in ("SSL_CERT_FILE", "ANTHROPIC_API_KEY")}
-
-
 def open_login_terminal():
     """Run `claude` in Terminal so the user can /login with their Pro/Max account."""
     cmd = f"unset ANTHROPIC_API_KEY; '{claude_cli()}'"
@@ -129,8 +106,6 @@ def reveal():
 
 def set_login_item(on):
     """A LaunchAgent that opens Flippy.app at login (no extra permission needed)."""
-    if current().demo:
-        return  # the development profile never installs or removes login items
     if not on:
         subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{AGENT_LABEL}"], capture_output=True)
         try:
@@ -147,12 +122,9 @@ def set_login_item(on):
 
 ACTIONS = {
     "claude": open_login_terminal, "codex": open_codex_login, "screen": ask_screen,
-    "accessibility": ask_accessibility, "restart": restart, "reveal": reveal,
-    "login_on": lambda: set_login_item(True), "login_off": lambda: set_login_item(False),
+    "accessibility": ask_accessibility, "restart": restart, "reveal": reveal, **login_items(set_login_item),
 }
 
 
 def act(name):
-    if name not in ACTIONS:
-        raise ValueError(f"unknown setup step {name}")
-    ACTIONS[name]()
+    run(ACTIONS, name)

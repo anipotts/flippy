@@ -1,11 +1,55 @@
-"""The Setup page's words and its mark, worked out without a window (the platform supplies the checks)."""
+"""The Setup page's words and its mark, worked out without a window, and the helpers both platforms' setup
+modules share (flippy/mac/setup.py, flippy/linux/setup.py supply the checks and actions)."""
 import base64
 import io
 import math
+import os
 
 import cairo
 
 from .. import settings, themes
+from ..profile import current
+
+
+def data_url(png):
+    """PNG bytes as a data: URL the page can show."""
+    return "data:image/png;base64," + base64.b64encode(png).decode()
+
+
+# ---- for the platforms' setup modules
+def logged_in(name):
+    """Whether "claude" or "codex" is signed in, as the providers last checked."""
+    from ..providers import CONNECTION_STATUS
+    return CONNECTION_STATUS[name] is True
+
+
+def claude_cli():
+    """The CLI the Agent SDK uses: its bundled copy, else `claude` on PATH."""
+    import claude_agent_sdk
+    bundled = os.path.join(os.path.dirname(claude_agent_sdk.__file__), "_bundled", "claude")
+    return bundled if os.path.exists(bundled) else "claude"
+
+
+def terminal_env():
+    """The environment for a terminal Flippy opens: without Flippy's own variables, which every shell in it would
+    inherit (FLIPPY_BUNDLED made later Flippy commands act like the app; FLIPPY_PROFILE, the wrong profile)."""
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith(("FLIPPY_", "PYTHON")) and k not in ("SSL_CERT_FILE", "ANTHROPIC_API_KEY")}
+
+
+def login_items(set_login_item):
+    """The login_on / login_off actions; the development profile never installs or removes login items."""
+    def toggle(on):
+        if not current().demo:
+            set_login_item(on)
+    return {"login_on": lambda: toggle(True), "login_off": lambda: toggle(False)}
+
+
+def run(actions, name):
+    """Run setup step `name` from a platform's actions; the page can only name steps that are there."""
+    if name not in actions:
+        raise ValueError(f"unknown setup step {name}")
+    actions[name]()
 
 
 def provider_note(mode, claude, codex):
@@ -53,12 +97,11 @@ def mark(size=64):
         cr.stroke()
     buf = io.BytesIO()
     surface.write_to_png(buf)
-    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    return data_url(buf.getvalue())
 
 
 def logos():
     """The Claude and ChatGPT logos the setup windows always used (flippy/mac/assets, flippy/linux/assets)."""
-    import os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out = {}
     for key, name in (("claude", "claude.png"), ("codex", "openai.png")):
@@ -66,7 +109,7 @@ def logos():
             path = os.path.join(root, folder, "assets", name)
             if os.path.exists(path):
                 with open(path, "rb") as f:
-                    out[key] = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+                    out[key] = data_url(f.read())
                 break
     return out
 

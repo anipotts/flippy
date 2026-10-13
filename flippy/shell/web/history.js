@@ -2,7 +2,7 @@
 (() => {
 "use strict";
 const F = window.F, el = F.el;
-let entries = [], keep = true, days = 30, more = false, query = "", open = new Set(), list = null;
+let entries = [], keep = true, days = 30, more = false, query = "", open = new Set(), list = null, typing = null;
 
 const DAY = 86400000;
 function dayLabel(ts) {
@@ -40,7 +40,7 @@ function entryRow(e) {
     if (e.outcome === "error" && e.detail) body.append(el("p", { class: "answer muted" }, e.detail));
     if (!e.answer && !e.steps.length && e.outcome === "completed") body.append(el("p", { class: "answer muted" }, "Done, with nothing to say."));
     body.append(el("div", { class: "entry-actions" },
-      el("button", { class: "btn quiet", onclick: async () => {
+      el("button", { class: "btn quiet", onclick: () => {
         const text = `${e.question}\n\n${e.steps.length ? e.steps.join("\n") : e.answer}`.trim();
         F.call("copy", { text }).then(() => F.toast("Copied"), (err) => F.toast(err.message));
       } }, F.svg("copy"), "Copy"),
@@ -55,15 +55,13 @@ function draw() {
   if (!list || !list.isConnected) return;
   list.replaceChildren();
   if (!keep) {
-    list.append(el("div", { class: "empty" }, el("div", {}, el("div", { class: "glyph", html: icon("history") }),
-      el("strong", {}, "History is off"), el("p", {}, "Flippy isn’t saving what you ask."),
-      el("p", {}, el("button", { class: "btn", style: "margin-top:16px", onclick: async () => { await F.call("set", { id: "history.keep", value: true }); load(); } }, "Turn on history")))));
+    list.append(F.empty("history", "History is off", "Flippy isn’t saving what you ask.",
+      el("button", { class: "btn", style: "margin-top:16px", onclick: async () => { await F.call("set", { id: "history.keep", value: true }); load(); } }, "Turn on history")));
     return;
   }
   if (!entries.length) {
-    list.append(el("div", { class: "empty" }, el("div", {}, el("div", { class: "glyph", html: icon("history") }),
-      el("strong", {}, query ? "Nothing matches" : "Nothing yet"),
-      el("p", {}, query ? `No question or answer has “${query}”.` : `Ask Flippy something and it shows up here. Kept for ${days} days, as text only.`))));
+    list.append(F.empty("history", query ? "Nothing matches" : "Nothing yet",
+      query ? `No question or answer has “${query}”.` : `Ask Flippy something and it shows up here. Kept for ${days} days, as text only.`));
     return;
   }
   let current = null, card = null;
@@ -81,12 +79,9 @@ function draw() {
 
 F.renderHistory = () => {
   const search = el("input", { type: "text", class: "find", placeholder: "Search history", value: query, spellcheck: "false", "aria-label": "Search history",
-    oninput: (e) => { query = e.target.value.trim(); clearTimeout(search.t); search.t = setTimeout(() => load(), 180); } });
-  const clear = el("button", { class: "btn quiet", onclick: () => F.dialog((sheet, close) => sheet.append(
-    el("h3", {}, "Clear all history?"), el("p", {}, "Every saved question and answer is deleted from this Mac."),
-    el("div", { class: "actions" }, el("button", { class: "btn", onclick: close }, "Cancel"),
-      el("button", { class: "btn primary", onclick: async () => { close(); await F.call("history_clear"); open.clear(); load(); F.toast("History cleared"); } }, "Clear all")))) },
-    F.svg("trash"), "Clear all");
+    oninput: (e) => { query = e.target.value.trim(); clearTimeout(typing); typing = setTimeout(load, 180); } });
+  const clear = el("button", { class: "btn quiet", onclick: () => F.confirm("Clear all history?", "Every saved question and answer is deleted from this computer.",
+    "Clear all", async () => { await F.call("history_clear"); open.clear(); load(); F.toast("History cleared"); }) }, F.svg("trash"), "Clear all");
   list = el("div", { class: "history" });
   const wrap = el("div", { class: "content" },
     el("div", { class: "page-head" }, el("h1", {}, "History"), el("div", { class: "head-tools" }, search, clear)),
@@ -96,6 +91,7 @@ F.renderHistory = () => {
   load();
   return wrap;
 };
-F.on("history", () => { if (location.hash.slice(1) === "history") load(); });
-F.on("field:history.keep", () => { if (location.hash.slice(1) === "history") load(); });
+const reload = () => { if (location.hash.slice(1) === "history") load(); };
+F.on("history", reload);
+F.on("field:history.keep", reload);
 })();

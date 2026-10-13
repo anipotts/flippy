@@ -92,6 +92,16 @@ class BridgeTest(ShellTestCase):
         self.assertFalse(self.b.handle({"id": 11, "op": "command", "args": {"name": "quit"}})["ok"])
         self.assertEqual(self.commands, ["preview"])
 
+    def test_an_unexpected_error_still_answers_the_page(self):
+        logged = []
+        self.b.log = logged.append
+        with mock.patch.object(bridge.appearance, "themes_gallery", side_effect=RuntimeError("cairo broke")):
+            r = self.b.handle({"id": 12, "op": "gallery"})
+        self.assertEqual(r, {"id": 12, "ok": False, "error": "Something went wrong (RuntimeError)."})
+        self.assertIn("RuntimeError", logged[-1])
+        bad = self.b.handle({"id": 13, "op": "set", "args": {"id": "look.text_size", "value": 999}})
+        self.assertEqual(bad["error"], "invalid setting look.text_size")  # expected errors keep their words
+
     def test_close_stops_pushing(self):
         self.b.close()
         settings.set("look", "text_size", 20)
@@ -243,6 +253,14 @@ class AppearanceTest(ShellTestCase):
             self.call("set", id="keys.ask", value="ctrl+option+k")
             self.assertEqual(settings.get("keys", "ask"), "ctrl+option+k")
 
+    def test_set_many_checks_shortcuts_like_set(self):
+        with self.assertRaises(ValueError):
+            self.call("set_many", values={"look.text_size": 18, "keys.ask": "space"})
+        if schema.platform() == "darwin":
+            with self.assertRaises(ValueError):
+                self.call("set_many", values={"look.text_size": 18, "keys.ask": "cmd+nosuchkey"})  # gitleaks:allow (a hotkey, not a key)
+        self.assertEqual(settings.get("look", "text_size"), settings.DEFAULTS["look"]["text_size"])
+
 
 class SchemaExtrasTest(ShellTestCase):
     def test_controls_switch_and_theme_options(self):
@@ -260,3 +278,15 @@ class LinuxPages(ShellTestCase):
         self.assertNotIn("keys.ask", [f["id"] for p in pages.values() for f in p["fields"]])
         mac = {p["id"]: p for p in schema.pages("darwin")}
         self.assertIn("keys.ask", [f["id"] for f in mac["shortcuts"]["fields"]])
+
+
+class PageActions(ShellTestCase):
+    """The old Settings window's buttons (fresh session, check now, config file) are on the pages, through allowed ops."""
+    def test_actions_use_allowed_commands_and_ops(self):
+        pages = {p["id"]: p for p in schema.pages("darwin")}
+        acts = pages["general"]["actions"]
+        self.assertEqual({a["args"]["name"] for a in acts if a["op"] == "command"}, {"reset", "update"})
+        self.assertTrue({a["args"]["name"] for a in acts if a["op"] == "command"} <= bridge.COMMANDS)
+        for a in acts:
+            self.assertTrue(hasattr(bridge.Bridge, "op_" + a["op"]), a)
+        self.assertIn("/new", [a["keys"] for a in pages["shortcuts"]["actions"]])

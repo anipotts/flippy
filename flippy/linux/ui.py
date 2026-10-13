@@ -32,7 +32,8 @@ from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
 from .. import loop, pointers, settings, themes  # noqa: E402
 from ..history import BOX_HINT, PROMPTS  # noqa: E402
 from ..overlay import OverlayBase  # noqa: E402
-from . import act, preload, sensors, wl  # noqa: E402
+from ..shell.window import AppHost  # noqa: E402
+from . import act, keyboard, preload, sensors, wl  # noqa: E402
 from .notice import Notice, NoticeLayer  # noqa: E402
 from .screenshot import Screenshotter  # noqa: E402
 
@@ -345,7 +346,7 @@ class InputBox:
         self.entry.emit("activate")
 
 
-class Platform:
+class Platform(AppHost):
     hide_settle_ms = HIDE_SETTLE_MS
     act_catalog, act_prompt = act.CATALOG, act.PROMPT  # /act's tools on COSMIC (flippy/linux/act.py)
 
@@ -357,7 +358,6 @@ class Platform:
         Gtk.StyleContext.add_provider_for_display(display, base, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.theme_css = Gtk.CssProvider()  # the active theme's question-box styling
         Gtk.StyleContext.add_provider_for_display(display, self.theme_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
-        self.app_window = None   # history, setup and settings (flippy/linux/shell_window.py); built when asked for
         self.overlay = Overlay(app)
         self.screen = self.screen_size()  # logical px, for the pointer's worker threads (GDK is main-thread only)
         self.screenshotter = Screenshotter()
@@ -419,30 +419,14 @@ class Platform:
         from .setup import needs_setup
         return needs_setup() or self.setup_win is not None
 
-    def open_app(self, route):
-        """The app window (history, setup, settings) on route: "setup", "history", "settings/<page>"."""
+    def _new_app_window(self):
+        """History, setup and settings (flippy/linux/shell_window.py, flippy/shell/window.py AppHost)."""
         from .shell_window import AppWindow  # local: WebKit only loads when asked for
-        if self.app_window is None:
-            self.app_window = AppWindow(on_close=self._app_closed, command=self.command, log=lambda m: None,
-                                        app=self.app, caps=lambda: {"blur": None if self.blur is None else bool(self.blur.available)})
-        self.app_window.present(route)
 
-    def _app_closed(self):
-        self.app_window = None
-
-    @property
-    def setup_win(self):
-        """The app window while it shows Setup (the daemon polls the login only then)."""
-        w = self.app_window
-        return w if w is not None and w.route == "setup" else None
-
-    @property
-    def settings_win(self):
-        w = self.app_window
-        return w if w is not None and (w.route or "").startswith("settings") else None
-
-    def open_setup(self):
-        self.open_app("setup")
+        def caps():
+            blur = self.overlay.blur  # made on the overlay's first paint
+            return {"blur": None if blur is None else bool(blur.available)}
+        return AppWindow(on_close=self._app_closed, command=self.command, log=lambda m: None, app=self.app, caps=caps)
 
     def ask_goal(self, app_id, name):
         """What do they want to do in this app? Steers its tips (the panel menu's "Set a goal for <app>…")."""
@@ -744,15 +728,6 @@ class Platform:
             return True
         self.service.connect("incoming", incoming)
         self.service.start()
-
-    def open_settings(self, on_preview=None, on_reset=None):
-        """Settings in the app window. Its Preview and New session go through the daemon's own commands."""
-        self.open_app("settings/general")
-
-    def demo_pointer(self, name, on_saved):
-        """Scripted demo: draw a pointer in the app window's studio and save it."""
-        self.open_app("settings/appearance")
-        self.app_window.bridge.start_pointer_demo(name, on_saved)
 
     def restart(self, full_install=False):
         """Start a fresh daemon (through flippy-ask, after this one's gone) and quit. After an update, refresh the

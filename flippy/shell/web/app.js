@@ -51,7 +51,8 @@ F.el = (tag, attrs = {}, ...children) => {
   return node;
 };
 const el = F.el;
-F.svg = (name) => { const s = document.createElement("span"); s.innerHTML = icon(name); return s.firstChild; };
+F.svg = (name, cls) => { const s = document.createElement("span"); s.innerHTML = icon(name, cls); return s.firstChild; };
+F.here = () => location.hash.slice(1) || "settings/general";
 
 // ---- state
 F.state = { pages: [] };
@@ -112,6 +113,11 @@ F.dialog = (build) => {
   if (first) first.focus();
   return close;
 };
+// The usual dialog: a title, a line of text, Cancel and one action.
+F.confirm = (title, text, label, fn) => F.dialog((sheet, close) => sheet.append(el("h3", {}, title), el("p", {}, text),
+  F.actions(close, label, () => { close(); fn(); })));
+F.actions = (close, label, fn) => el("div", { class: "actions" },
+  el("button", { class: "btn", onclick: close }, "Cancel"), el("button", { class: "btn primary", onclick: fn }, label));
 let openMenu = null;
 F.menu = (anchor, items) => {
   if (openMenu) openMenu.remove();
@@ -222,10 +228,12 @@ F.controlFor = (f, row) => {
   }
 };
 
+// A setting shown only for some values of another (a theme's own options), or only where the desktop can do it.
+const hidden = (f) => Boolean((f.when && !f.when.values.includes(F.value(f.when.id))) || (f.needs && (F.state.caps || {})[f.needs] === false));
 F.fieldRow = (f) => {
   F.fields.set(f.id, f);
   const row = el("div", { class: "row", "data-id": f.id });
-  if ((f.when && !f.when.values.includes(F.value(f.when.id))) || (f.needs && (F.state.caps || {})[f.needs] === false)) row.hidden = true;
+  row.hidden = hidden(f);
   const labelled = ["choice", "slider", "text", "switch"].includes(f.control) && !(f.control === "choice" && f.choices.length <= 3);
   row.append(
     el("div", { class: "text" },
@@ -248,13 +256,12 @@ F.updateField = (f) => {
   });
   page.querySelectorAll(".row[data-id]").forEach((row) => {  // rows shown only for some values of this one
     const g = F.fields.get(row.dataset.id);
-    if (g && g.when && g.when.id === f.id) row.hidden = !g.when.values.includes(f.value);
+    if (g && g.when && g.when.id === f.id) row.hidden = hidden(g);
   });
   (listeners["field:" + f.id] || []).forEach((fn) => fn(f));
 };
 
 // ---- pages
-F.currentPage = (id) => F.state.pages.find((x) => x.id === id);
 F.foot = (p) => {
   const adv = p.fields.filter((f) => f.advanced);
   const foot = el("div", { class: "foot" });
@@ -273,30 +280,36 @@ F.resetPage = async (p) => {
   await F.reload();
   F.toast(`${p.title} reset to default`, async () => { await F.call("set_many", { values: before }); await F.reload(); });
 };
-F.reload = async () => {
+F.load = async () => {
   F.state = await F.call("state");
   for (const p of F.state.pages) for (const f of p.fields) F.fields.set(f.id, f);
   F.applyMode();
-  F.render(location.hash.slice(1) || "settings/general");
 };
+F.reload = async () => { await F.load(); F.render(F.here()); };
 
-F.renderGeneric = (p) => renderGeneric(p);
+// A row that does something instead of holding a setting (schema.ACTIONS): a button, or a key to know.
+const actionRow = (a) => el("div", { class: "row" },
+  el("div", { class: "text" }, el("span", { class: "label" }, a.label), el("div", { class: "help" }, a.help || "")),
+  el("div", { class: "control" }, a.keys ? F.tokens([a.keys]) : el("button", { class: "btn", onclick: () =>
+    F.call(a.op, a.args || {}).then(() => a.done && F.toast(a.done), (e) => F.toast(e.message)) }, a.button)));
+F.renderGeneric = renderGeneric;
 function renderGeneric(p) {
   const wrap = el("div", { class: "content" }, el("h1", {}, p.title));
-  for (const g of p.groups) {
-    const rows = g.fields.filter((f) => !f.advanced);
+  const actions = p.actions || [];
+  const titles = [...new Set([...p.groups.map((g) => g.title), ...actions.map((a) => a.group)])];
+  for (const title of titles) {
+    const g = p.groups.find((x) => x.title === title);
+    const rows = [...(g ? g.fields.filter((f) => !f.advanced).map(F.fieldRow) : []), ...actions.filter((a) => a.group === title).map(actionRow)];
     if (!rows.length) continue;
-    if (g.title) wrap.append(el("h2", {}, g.title));
-    wrap.append(el("div", { class: "card" }, rows.map(F.fieldRow)));
+    if (title) wrap.append(el("h2", {}, title));
+    wrap.append(el("div", { class: "card" }, rows));
   }
   wrap.append(...F.foot(p).filter(Boolean));
   return wrap;
 }
 
-function emptyPage(title, glyph, heading, text) {
-  return el("div", { class: "content" }, el("h1", {}, title),
-    el("div", { class: "empty" }, el("div", {}, el("div", { class: "glyph", html: icon(glyph) }), el("strong", {}, heading), el("p", {}, text))));
-}
+F.empty = (glyph, heading, ...text) => el("div", { class: "empty" }, el("div", {},
+  glyph ? el("div", { class: "glyph", html: icon(glyph) }) : null, el("strong", {}, heading), text.map((t) => el("p", {}, t))));
 
 function renderSearch(q) {
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -307,7 +320,7 @@ function renderSearch(q) {
   }
   const wrap = el("div", { class: "content" }, el("h1", {}, "Search"));
   if (!hits.length) {
-    wrap.append(el("div", { class: "empty" }, el("div", {}, el("strong", {}, "No settings match"), el("p", {}, `Nothing for “${q}”.`))));
+    wrap.append(F.empty(null, "No settings match", `Nothing for “${q}”.`));
     return wrap;
   }
   wrap.append(el("div", { class: "card" }, hits.map(([p, f]) => el("div", { class: "result", tabindex: "0",
@@ -317,7 +330,7 @@ function renderSearch(q) {
   return wrap;
 }
 
-F.renderNav = (route) => renderNav(route);
+F.renderNav = renderNav;
 function renderNav(route) {
   const item = (id, title, ic, extra) => el("li", {}, el("a", { href: "#" + id, "aria-current": route === id ? "page" : null }, F.svg(ic), title, extra || null));
   nav.replaceChildren(
@@ -335,12 +348,12 @@ F.render = (route, focusId) => {
   else {
     const [kind, id] = route.split("/");
     if (kind === "settings") {
-      const p = F.currentPage(id) || F.state.pages[0];
+      const p = F.state.pages.find((x) => x.id === id) || F.state.pages[0];
       view = (F.renderers[p.id] || renderGeneric)(p);
     } else if (kind === "setup" && F.renderSetup) {
       view = F.renderSetup();
     } else {
-      view = F.renderHistory()
+      view = F.renderHistory();
     }
   }
   page.replaceChildren(view);
@@ -358,12 +371,12 @@ F.go = (route, focusId) => {
 window.addEventListener("hashchange", () => {
   const f = F.pendingFocus;
   F.pendingFocus = null;
-  F.render(location.hash.slice(1) || "settings/general", f);
+  F.render(F.here(), f);
   page.focus({ preventScroll: true });
 });
-search.addEventListener("input", () => F.render(location.hash.slice(1) || "settings/general"));
+search.addEventListener("input", () => F.render(F.here()));
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "f") { e.preventDefault(); search.focus(); search.select(); }
-  if (e.key === "Escape" && document.activeElement === search && search.value) { search.value = ""; F.render(location.hash.slice(1)); }
+  if (e.key === "Escape" && document.activeElement === search && search.value) { search.value = ""; F.render(F.here()); }
 });
 })();

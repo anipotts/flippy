@@ -1,6 +1,6 @@
 """The app window on Linux: a WebKitGTK 6 web view showing flippy/shell/web, talking to Python through
 flippy/shell/bridge.py. The GTK side of flippy/mac/shell_window.py, with the same API:
-AppWindow(on_close, command, log).present(route), and run_standalone(route) for `python -m flippy.shell`.
+AppWindow(on_close, command, log).present(route), and run_standalone for `python -m flippy.shell`.
 
 A normal window, not a layer surface (COSMIC can't close those safely, see ui.py). Its title bar is a slim
 header bar in the page's chrome color, light or dark as the page reports (Host.set_chrome); that's per window, so
@@ -12,6 +12,7 @@ The page loads from local files only: decide-policy allows file URLs under flipp
 user follows to the default browser, and ignores everything else. Its Content-Security-Policy allows nothing
 remote, and the web view uses an ephemeral network session, so nothing is written to disk.
 """
+import functools
 import json
 import os
 import pathlib
@@ -24,15 +25,18 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("WebKit", "6.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, WebKit  # noqa: E402
+# Gtk.FileDialog, UriLauncher and CssProvider.load_from_string need GTK 4.12; Pop!_OS 24.04, the oldest the
+# install script supports (scripts/install_linux.sh), has 4.14.
 
-from .. import profile  # noqa: E402
-from ..shell.bridge import MAX_MESSAGE, Bridge, Host  # noqa: E402
+from .. import pixelart, profile  # noqa: E402
+from ..shell.bridge import Host  # noqa: E402
+from ..shell.window import Window  # noqa: E402
+from . import setup  # noqa: E402
 
 WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shell", "web")
 WIDTH, HEIGHT = 1160, 780
 MIN_WIDTH, MIN_HEIGHT = 760, 480
 SIZE_FILE = "app-window.json"
-MAX_IMPORT = 20 * 1024 * 1024
 CHROME = {"dark": ("#0b0b0c", "#ececef"), "light": ("#e9e9ec", "#1c1c1f")}  # app.css --chrome, --text
 CSS = "".join(f"""
 window.flippy-app.{mode}, window.flippy-app.{mode} headerbar {{
@@ -88,11 +92,6 @@ def save_size(width, height, path=None):
         pass
 
 
-def open_external(uri, parent=None):
-    """Open an http(s) link in the default browser (through the portal when sandboxed)."""
-    Gtk.UriLauncher.new(uri).launch(parent, None, None, None)
-
-
 def _filters(kinds):
     f = Gtk.FileFilter(name="Images" if len(kinds) > 1 else kinds[0].upper())
     for kind in kinds:
@@ -115,12 +114,6 @@ def _wait(start):
 
 
 class GtkHost(Host):
-    def __init__(self, window):
-        self.window = window
-
-    def capabilities(self):
-        return self.window.caps()
-
     def copy_text(self, text):
         win = self.window.win
         clipboard = (win.get_display() if win else Gdk.Display.get_default()).get_clipboard()
@@ -129,55 +122,28 @@ class GtkHost(Host):
 
     def _choose(self, save, kinds, suggested=None):
         """A path from the file dialog, or None when cancelled."""
-        parent = self.window.win
-        if hasattr(Gtk, "FileDialog"):  # GTK 4.10+
-            dialog = Gtk.FileDialog(modal=True, title="Export Pointer" if save else "Import Pointer")
-            store = Gio.ListStore.new(Gtk.FileFilter)
-            store.append(_filters(kinds))
-            dialog.set_filters(store)
-            if suggested:
-                dialog.set_initial_name(suggested)
-
-            def start(done):
-                def finished(d, result):
-                    try:
-                        f = d.save_finish(result) if save else d.open_finish(result)
-                        done(f.get_path() if f else None)
-                    except GLib.Error:
-                        done(None)  # cancelled or dismissed
-                (dialog.save if save else dialog.open)(parent, None, finished)
-            return _wait(start)
-        chooser = Gtk.FileChooserNative.new(None, parent, Gtk.FileChooserAction.SAVE if save
-                                            else Gtk.FileChooserAction.OPEN, None, None)
-        chooser.set_modal(True)
-        chooser.add_filter(_filters(kinds))
+        dialog = Gtk.FileDialog(modal=True, title="Export Pointer" if save else "Import Pointer")
+        store = Gio.ListStore.new(Gtk.FileFilter)
+        store.append(_filters(kinds))
+        dialog.set_filters(store)
         if suggested:
-            chooser.set_current_name(suggested)
+            dialog.set_initial_name(suggested)
 
-        def start_native(done):
-            def response(c, resp):
-                f = c.get_file() if resp == Gtk.ResponseType.ACCEPT else None
-                done(f.get_path() if f else None)
-            chooser.connect("response", response)
-            chooser.show()
-        return _wait(start_native)
+        def start(done):
+            def finished(d, result):
+                try:
+                    f = d.save_finish(result) if save else d.open_finish(result)
+                    done(f.get_path() if f else None)
+                except GLib.Error:
+                    done(None)  # cancelled or dismissed
+            (dialog.save if save else dialog.open)(self.window.win, None, finished)
+        return _wait(start)
 
-    def save_file(self, suggested, data, kind):
-        path = self._choose(True, [kind], suggested)
-        if not path:
-            return False
-        with open(path, "wb") as f:
-            f.write(data)
-        return True
+    def choose_save(self, suggested, kind):
+        return self._choose(True, [kind], suggested)
 
-    def open_file(self, kinds):
-        path = self._choose(False, kinds)
-        if not path:
-            return None
-        if os.path.getsize(path) > MAX_IMPORT:
-            raise ValueError("That file is too big for a pointer.")
-        with open(path, "rb") as f:
-            return os.path.basename(path), f.read()
+    def choose_open(self, kinds):
+        return self._choose(False, kinds)
 
     def sample_color(self, done):
         """The Screenshot portal's color picker: click anywhere on screen. done(None) when cancelled, or when the
@@ -185,46 +151,30 @@ class GtkHost(Host):
         from .screenshot import Screenshotter
 
         def picked(rgb, _failed):
-            done("#" + "".join(f"{round(v * 255):02x}" for v in rgb) if rgb is not None else None)
+            done(pixelart.to_hex(rgb) if rgb is not None else None)
         try:
             Screenshotter().pick_color(picked)
         except Exception:  # no session bus or portal
             done(None)
 
-    def set_chrome(self, mode):
-        self.window.set_chrome(mode)
-
-    def setup_state(self):
-        from . import setup
-        return setup.state()
-
-    def setup_action(self, name):
-        from . import setup
-        setup.act(name)
-
-    def close(self):
-        if self.window.win is not None:
-            GLib.idle_add(lambda: self.window.win is not None and self.window.win.close() and False)
 
 
-_css_ready = False
+@functools.cache
+def _style_once():
+    """The header bar's CSS, for the display, and libadwaita: it follows the desktop's light or dark setting, and
+    WebKit's prefers-color-scheme follows it, for the page's "System" mode."""
+    Adw.init()
+    provider = Gtk.CssProvider()
+    provider.load_from_string(CSS)
+    Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
+                                              Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
 
-class AppWindow:
+class AppWindow(Window):
     def __init__(self, on_close=lambda: None, command=lambda cmd: None, log=print, app=None, caps=dict):
-        global _css_ready
-        self.caps = caps
-        if not _css_ready:
-            Adw.init()  # libadwaita follows the desktop's light or dark setting, and WebKit's
-            #             prefers-color-scheme follows it, for the page's "System" mode
-            provider = Gtk.CssProvider()
-            provider.load_from_string(CSS) if hasattr(provider, "load_from_string") else provider.load_from_data(
-                CSS.encode())
-            Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
-                                                      Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-            _css_ready = True
-        self.on_close, self.log = on_close, log
-        self.bridge = Bridge(push=self._push, command=command, log=log, host=GtkHost(self))
+        _style_once()
+        super().__init__(GtkHost(self, setup), command, log, caps)
+        self.on_close = on_close
         self.content = WebKit.UserContentManager()
         self.content.register_script_message_handler("flippy", None)
         self.content.connect("script-message-received::flippy", lambda _m, value: self._message(value.to_string()))
@@ -267,16 +217,11 @@ class AppWindow:
         rgba.parse(CHROME[mode][0])
         self.web.set_background_color(rgba)
 
-    @property
-    def route(self):
-        """The page showing now ("setup", "settings/appearance"...), or the one it's opening on."""
-        return self.bridge.current or self.bridge.route
+    def close(self):
+        if self.win is not None:
+            GLib.idle_add(lambda: self.win is not None and self.win.close() and False)
 
-    def present(self, route=None):
-        if route:
-            self.bridge.route = route    # read by the page when it loads
-            self.bridge.current = route
-            self._push("route", route)   # and sent, in case it already has
+    def _show(self):
         if self.win is not None:
             self.win.present()
 
@@ -292,7 +237,7 @@ class AppWindow:
         decision.ignore()
         if verdict == "open" and (action.is_user_gesture()
                                   or action.get_navigation_type() == WebKit.NavigationType.LINK_CLICKED):
-            open_external(uri, self.win)  # a link the user followed, not a script moving the page
+            Gtk.UriLauncher.new(uri).launch(self.win, None, None, None)  # a link the user followed, not a script
         else:
             self.log(f"app window: blocked navigation to {uri[:200]}")
         return True
@@ -308,31 +253,12 @@ class AppWindow:
         self.on_close()
         return False  # let GTK destroy the window
 
-    def _message(self, body):
-        try:
-            message = json.loads(body) if isinstance(body, str) and len(body) <= MAX_MESSAGE + 4096 else None
-        except ValueError:
-            message = None
-        self._js("window.flippy.reply", self.bridge.handle(message))
-
-    def _push(self, event, data):
-        self._js("window.flippy.event", event, data)
-
-    def _js(self, fn, *args):
-        if self.web is None:
-            return
-        self.web.evaluate_javascript(f"{fn}({', '.join(json.dumps(a) for a in args)})", -1, None, None, None,
-                                     None, None)
+    def _eval(self, script):
+        self.web.evaluate_javascript(script, -1, None, None, None, None, None)
 
 
-def run_standalone(route=None):
-    """The window on its own, without the daemon (`python -m flippy.shell`); returns when it closes."""
-    def no_daemon(cmd):
-        raise ValueError("Preview on screen works when Flippy is running.")
-
+def run_standalone(route, command):
+    """The window on its own, without the daemon (flippy/shell/__main__.py); returns when it closes."""
     app = Gtk.Application()  # no id: nothing to register on the session bus, and it can run beside the daemon
-
-    def activate(a):
-        AppWindow(command=no_daemon, log=lambda m: None, app=a).present(route or "settings/appearance")
-    app.connect("activate", activate)
+    app.connect("activate", lambda a: AppWindow(command=command, log=lambda m: None, app=a).present(route))
     app.run([])

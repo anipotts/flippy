@@ -25,7 +25,7 @@ def main():
         AppHelper.runEventLoop()
     else:
         from ..linux.shell_window import run_standalone  # flippy/linux/shell_window.py
-        run_standalone(route)
+        run_standalone(route, _no_daemon)
 
 
 if __name__ == "__main__":

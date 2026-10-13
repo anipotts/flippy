@@ -1564,7 +1564,7 @@ class Flippy:
 
     # --- settings ---
     def open_settings(self):
-        self.ui.open_settings(on_preview=self.preview, on_reset=self.reset_session)
+        self.ui.open_settings()
 
     def click_command(self, args):
         """Scripted clicks for demos and automation. Off unless turned on in Settings; Claude never triggers these."""

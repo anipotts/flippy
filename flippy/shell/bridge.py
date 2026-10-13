@@ -6,13 +6,16 @@ go through settings.set (which validates), commands must be in COMMANDS, and fil
 platform's own open and save panels (Host).
 """
 import os
+import subprocess
+import sys
 import time
 
 from .. import history_store, settings
 from . import appearance, schema, setup
 
-COMMANDS = {"preview", "reset", "tour", "update"}  # daemon commands the page may ask for
-MAX_MESSAGE = 4 * 1024 * 1024                       # a smooth drawing's PNG is the biggest thing the page sends
+COMMANDS = {"preview", "reset", "update"}  # daemon commands the page may ask for
+MAX_MESSAGE = 4 * 1024 * 1024             # a smooth drawing's PNG is the biggest thing the page sends
+MAX_OPEN = 20 * 1024 * 1024               # the biggest image Import Pointer reads
 
 
 def _version():
@@ -33,17 +36,43 @@ def _check_shortcut(combo):
 
 
 class Host:
-    """What the platform window provides: the clipboard, file panels, the screen color picker. Defaults do nothing."""
+    """What the platform window provides: the clipboard, file panels, the screen color picker. Without a window
+    (tests, Bridge alone) the defaults do nothing.
+
+    window: the app window (flippy/shell/window.py); setup: the platform's setup module, with state() and act(name)
+    (flippy/mac/setup.py, flippy/linux/setup.py)."""
+    def __init__(self, window=None, setup=None):
+        self.window, self.setup = window, setup
+
     def copy_text(self, text):
         return False
 
+    def choose_save(self, suggested, kind):
+        """The platform's save panel: a path, or None when cancelled."""
+        return None
+
+    def choose_open(self, kinds):
+        """The platform's open panel for files ending in kinds: a path, or None when cancelled."""
+        return None
+
     def save_file(self, suggested, data, kind):
         """Ask where to save data; True when saved."""
-        return False
+        path = self.choose_save(suggested, kind)
+        if not path:
+            return False
+        with open(path, "wb") as f:
+            f.write(data)
+        return True
 
     def open_file(self, kinds):
         """Ask for a file; (filename, bytes) or None."""
-        return None
+        path = self.choose_open(kinds)
+        if not path:
+            return None
+        if os.path.getsize(path) > MAX_OPEN:
+            raise ValueError("That file is too big for a pointer.")
+        with open(path, "rb") as f:
+            return os.path.basename(path), f.read()
 
     def sample_color(self, done):
         """Let the user pick a color anywhere on screen; done("#rrggbb") or done(None)."""
@@ -51,20 +80,26 @@ class Host:
 
     def set_chrome(self, mode):
         """The page is showing "light" or "dark": match the window's own frame to it."""
+        if self.window is not None:
+            self.window.set_chrome(mode)
 
     def capabilities(self):
         """What this desktop can do that some settings depend on, e.g. {"blur": False} (schema.NEEDS)."""
-        return {}
+        return self.window.caps() if self.window is not None else {}
 
     def setup_state(self):
-        """The platform's setup checks: claude, codex, screen, accessibility, login_item... (flippy/mac/setup.py)."""
-        return {}
+        """The platform's setup checks: claude, codex, screen, accessibility, login_item..."""
+        return self.setup.state() if self.setup is not None else {}
 
     def setup_action(self, name):
-        raise ValueError("setup isn't available here")
+        if self.setup is None:
+            raise ValueError("setup isn't available here")
+        self.setup.act(name)
 
     def close(self):
         """Close the window (Setup's Done)."""
+        if self.window is not None:
+            self.window.close()
 
     def drag_target(self, rect):
         """Where the page shows the app icon you can drag into System Settings ({x, y, w, h} in page px), or None."""
@@ -77,7 +112,6 @@ class Bridge:
         self.log = log
         self.host = host or Host()
         self.opened = time.monotonic()
-        self.marks = {}
         self.route = None         # where the page opens; later routes are pushed
         self.current = None       # the route the page is showing (op_route)
         self.on_demo_saved = None  # the scripted pointer demo's callback (flippy/demos.py)
@@ -109,8 +143,11 @@ class Bridge:
             if fn is None:
                 raise ValueError(f"unknown op {op}")
             return {"id": mid, "ok": True, "result": fn(**args)}
-        except (TypeError, ValueError, KeyError, OSError) as e:
+        except (TypeError, ValueError, KeyError, OSError) as e:  # bad arguments, or a message meant for the page
             return {"id": mid, "ok": False, "error": str(e)}
+        except Exception as e:  # a bug: the page still gets its answer, so it never waits forever
+            self.log(f"app window: {message.get('op')} failed: {type(e).__name__}: {e}")
+            return {"id": mid, "ok": False, "error": f"Something went wrong ({type(e).__name__})."}
 
     # ---- settings
     def op_state(self):
@@ -124,12 +161,15 @@ class Bridge:
             raise ValueError(f"unknown setting {id}")
         return section, key
 
-    def op_set(self, id, value):  # noqa: A002 (id is the field id the page knows)
-        section, key = self._key(id)
+    @staticmethod
+    def _validate(section, key, value):
         if schema.control(section, key) == "shortcut":
             _check_shortcut(value)
-        settings.set(section, key, value)  # raises ValueError when invalid
-        return schema.field(section, key)
+        if not settings._valid(section, key, value):
+            raise ValueError(f"invalid setting {section}.{key}")
+
+    def op_set(self, id, value):  # noqa: A002 (id is the field id the page knows)
+        return self.op_set_many({id: value})[0]
 
     def op_set_many(self, values):
         """Several settings at once (undo, reset); all are checked before any is saved."""
@@ -137,8 +177,7 @@ class Bridge:
             raise ValueError("bad values")
         keys = {i: self._key(i) for i in values}
         for i, (section, key) in keys.items():
-            if not settings._valid(section, key, values[i]):
-                raise ValueError(f"invalid setting {i}")
+            self._validate(section, key, values[i])
         for i, (section, key) in keys.items():
             settings.set(section, key, values[i])
         return [schema.field(*k) for k in keys.values()]
@@ -198,6 +237,10 @@ class Bridge:
             rect = {k: float(rect[k]) for k in ("x", "y", "w", "h")}
         self.host.drag_target(rect)
 
+    def op_open_config(self):
+        """The settings file in the user's text editor."""
+        subprocess.Popen(["open", "-t", settings.PATH] if sys.platform == "darwin" else ["xdg-open", settings.PATH])
+
     def op_close(self):
         self.host.close()
 
@@ -217,10 +260,7 @@ class Bridge:
 
     def op_mark(self, name):
         """Timing marks from the page (first paint, ready), in ms since the window was asked for."""
-        ms = round((time.monotonic() - self.opened) * 1000)
-        self.marks[str(name)[:32]] = ms
-        self.log(f"app window: {name} at {ms} ms")
-        return ms
+        self.log(f"app window: {str(name)[:32]} at {round((time.monotonic() - self.opened) * 1000)} ms")
 
     # ---- appearance
     def op_gallery(self):

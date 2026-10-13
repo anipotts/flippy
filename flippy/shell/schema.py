@@ -4,6 +4,7 @@ Every setting shows up somewhere: a key without an entry in LABELS gets a label 
 without a page entry gets its own page. So settings added elsewhere appear without window work. Only the copy,
 grouping and when-to-show live here; types, choices, bounds and validation stay in settings.py.
 """
+import os
 import sys
 
 from .. import settings
@@ -25,7 +26,8 @@ ADVANCED = {("timing", "glide_seconds"), ("timing", "speed"), ("claude", "image"
 LABELS = {
     ("provider", "mode"): ("Use", "Automatic picks the only connected subscription.", None),
     ("updates", "check"): ("Check for updates", "Look for a new release once a day and offer to install it.", None),
-    ("automation", "clicks"): ("Let scripts click", "Allow flippy-ask click to click on screen.", ("darwin",)),
+    ("automation", "clicks"): ("Let scripts click and type", "flippy-ask click, type and key, for recording demos. When on, any "
+                               "program running as you can make Flippy click. Separate from task approvals.", ("darwin",)),
     ("history", "keep"): ("Keep history", "Save what you ask and what Flippy did, as text. Never screenshots.", None),
     ("history", "days"): ("Keep for", "Days, then it's deleted.", None),
     ("window", "mode"): ("Mode", "This window follows the system, or stays light or dark.", None),
@@ -42,7 +44,7 @@ LABELS = {
     ("claude", "model"): ("Model", None, None),
     ("claude", "effort"): ("Effort", "Higher thinks longer and uses more of your plan.", None),
     ("claude", "image"): ("Screenshot size", "Larger is sharper and uses more of your plan.", None),
-    ("codex", "model"): ("Model", None, None),
+    ("codex", "model"): ("Model", "\u201cdefault\u201d uses your account\u2019s model.", None),
     ("codex", "effort"): ("Effort", None, None),
     ("act", "mode"): ("Approval", "When Flippy asks before acting in an app.", None),
     ("act", "allowed_apps"): ("Allowed apps", "Apps you approved once. Remove one to be asked again.", None),
@@ -73,6 +75,21 @@ NEEDS = {("look", "frosted"): "blur"}
 SWITCHES = {("look", "controls"): ("all", "players")}
 UNITS = {("look", "text_size"): "pt", ("timing", "show_seconds"): "s", ("timing", "max_show_seconds"): "s",
          ("timing", "glide_seconds"): "s", ("history", "days"): "days", ("timing", "speed"): "×", ("look", "pointer_size"): "×"}
+
+
+# Rows that do something instead of holding a setting, by page: a button that runs a bridge op, or a key to know.
+def actions(plat):
+    from .. import updates
+    out = {"general": [
+        {"group": "Session", "label": "Start a fresh session", "help": "Forget the conversation so far.", "button": "Reset",
+         "op": "command", "args": {"name": "reset"}, "done": "Started a fresh session"},
+        {"group": None, "label": "Check for updates now", "help": f"You have Flippy {updates.current_version()}.",
+         "button": "Check", "op": "command", "args": {"name": "update"}, "done": "Checking for updates"},
+        {"group": "Config file", "label": settings.PATH.replace(os.path.expanduser("~"), "~"), "help": "Edit it by hand if you like.",
+         "button": "Open", "op": "open_config"}]}
+    keys = [("/new", "Start a fresh session"), ("/act", "Do it for me"), ("/settings", "Open this window"), ("Esc", "Close")]
+    out["shortcuts"] = [{"group": "In the question box", "label": what, "keys": key} for key, what in keys]
+    return out
 
 
 def platform():
@@ -129,7 +146,7 @@ def pages(plat=None):
     """Every settings page with its groups of fields. Sections no page claims get a page of their own, at the end."""
     claimed = {s for *_, groups in PAGES for _, sections in groups for s in sections}
     extra = [(s, _label_from_key(s), "dots", [(None, [s])]) for s in settings.DEFAULTS if s not in claimed]
-    out = []
+    out, more = [], actions(plat or platform())
     for page_id, title, icon, groups in PAGES + extra:
         built = []
         for group_title, sections in groups:
@@ -139,5 +156,5 @@ def pages(plat=None):
                 built.append({"title": group_title, "fields": fields})
         if built or page_id == "shortcuts":  # on COSMIC it lists COSMIC's shortcuts (shortcuts.js)
             out.append({"id": page_id, "title": title, "icon": icon, "groups": built,
-                        "fields": [f for g in built for f in g["fields"]]})
+                        "fields": [f for g in built for f in g["fields"]], "actions": more.get(page_id, [])})
     return out
