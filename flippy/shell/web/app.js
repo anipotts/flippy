@@ -225,7 +225,7 @@ F.controlFor = (f, row) => {
 F.fieldRow = (f) => {
   F.fields.set(f.id, f);
   const row = el("div", { class: "row", "data-id": f.id });
-  if (f.when && !f.when.values.includes(F.value(f.when.id))) row.hidden = true;
+  if ((f.when && !f.when.values.includes(F.value(f.when.id))) || (f.needs && (F.state.caps || {})[f.needs] === false)) row.hidden = true;
   const labelled = ["choice", "slider", "text", "switch"].includes(f.control) && !(f.control === "choice" && f.choices.length <= 3);
   row.append(
     el("div", { class: "text" },

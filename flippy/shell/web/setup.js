@@ -43,6 +43,9 @@ function build(s) {
     el("p", { class: "sub" }, "Use the subscription you’ve already got."),
     el("div", { class: "card" }, providerRow("claude", "Claude", s.claude), providerRow("codex", "ChatGPT", s.codex), useRow));
 
+  if (s.act_note) wrap.append(el("h2", {}, "Desktop tasks"), el("div", { class: "card" }, el("div", { class: "row" },
+    el("div", { class: "text" }, el("span", { class: "label" }, "When Flippy works in an app for you"), el("div", { class: "help" }, s.act_note)))));
+
   if (mac) {
     const perms = el("div", { class: "card" });
     if (s.app) perms.append(el("div", { class: "row" },

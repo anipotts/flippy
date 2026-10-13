@@ -99,6 +99,9 @@ def state():
         "screen": True, "accessibility": True,  # the portal asks when needed; nothing to grant up front
         "login_item": desktop.autostart_on(), "login_item_allowed": not current().demo,
         "app": None, "app_name": None,
+        "act_note": ("For desktop tasks, Flippy turns on Linux's accessibility layer (apps already open may need a "
+                     "restart to show their controls). The first time it clicks by position, COSMIC asks once to allow "
+                     "remote desktop. Both need COSMIC Epoch 1.7 or newer."),
         "shortcuts": [{"label": names.get(args, f"flippy-ask {args}".strip()), "keys": accel_tokens(accel),
                        "command": f"flippy-ask {args}".strip()} for accel, args in bound],
         "shortcuts_missing": [WANTED[i][0] for i in gone],

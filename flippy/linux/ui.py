@@ -424,7 +424,7 @@ class Platform:
         from .shell_window import AppWindow  # local: WebKit only loads when asked for
         if self.app_window is None:
             self.app_window = AppWindow(on_close=self._app_closed, command=self.command, log=lambda m: None,
-                                        app=self.app)
+                                        app=self.app, caps=lambda: {"blur": None if self.blur is None else bool(self.blur.available)})
         self.app_window.present(route)
 
     def _app_closed(self):

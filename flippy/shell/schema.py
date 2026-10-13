@@ -67,6 +67,8 @@ WHEN = {
     ("look", "player_shine"): ("look.theme", ["mediaplayer"]),
     ("look", "frosted"): ("look.theme", ["glass", "mediaplayer"]),
 }
+# Shown only where the desktop can do it (Host.capabilities): hidden when the capability is False.
+NEEDS = {("look", "frosted"): "blur"}
 # Two-value choices shown as a switch: (value when on, value when off).
 SWITCHES = {("look", "controls"): ("all", "players")}
 UNITS = {("look", "text_size"): "pt", ("timing", "show_seconds"): "s", ("timing", "max_show_seconds"): "s",
@@ -116,6 +118,8 @@ def field(section, key, plat=None):
         out["on"], out["off"] = SWITCHES[section, key]
     if (section, key) in WHEN:
         out["when"] = {"id": WHEN[section, key][0], "values": WHEN[section, key][1]}
+    if (section, key) in NEEDS:
+        out["needs"] = NEEDS[section, key]
     if (section, key) in UNITS:
         out["unit"] = UNITS[section, key]
     return out
