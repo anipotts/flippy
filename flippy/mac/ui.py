@@ -580,6 +580,8 @@ class MenuTarget(NSObject, protocols=[objc.protocolNamed("NSMenuDelegate")]):
         p = self.platform
         if cmd == "setup":
             p.open_setup()
+        elif cmd == "history":
+            p.open_app("history")
         elif cmd == "help-toggle":
             p.command(f"help-mode {'off' if settings.get('help', 'mode') != 'off' else 'quiet'}")
         elif cmd == "tips-toggle":
@@ -600,7 +602,8 @@ MENU = [("Ask about the screen", "ask", "ask"), ("Circle and ask", "draw", "draw
         ("Check a video edit", "video", "video"), None,
         ("Help when I'm stuck", "help-toggle", None), ("Tips while I work", "tips-toggle", None),
         ("Watch this app", "watch-front", None), ("Set a goal…", "goal-front", None), None,
-        ("Preview the look", "preview", None), ("Settings…", "settings", None), ("New session", "reset", None),
+        ("Preview the look", "preview", None), ("History…", "history", None), ("Settings…", "settings", None),
+        ("New session", "reset", None),
         None, ("Check for updates…", "update", None), ("Setup…", "setup", None), ("Take the tour", "tour", None),
         ("Quit Flippy", "quit", None)]
 
@@ -613,8 +616,7 @@ class Platform:
     def __init__(self):
         self.overlay = Overlay()
         self.screenshotter = Screenshotter()
-        self.settings_win = None
-        self.setup_win = None
+        self.app_window = None   # history, setup and settings (flippy/mac/shell_window.py); built when asked for
         self.nudge = Nudge()
         self.action_card = Nudge()  # separate from tips and update cards
         self.double_tap = hotkeys.DoubleTap()
@@ -645,18 +647,31 @@ class Platform:
         # setup opens by itself only on install, a new major version or a lost login (flippy/setup_gate.py,
         # decided once the first login check is done)
 
-    def open_setup(self):
-        from .setup_window import SetupWindow
-        if self.setup_win is None:
-            self.setup_win = SetupWindow(lambda: self.command("settings"), lambda: self._closed("setup_win"))
-        self.setup_win.present()
+    def open_app(self, route):
+        """The app window (history, setup, settings) on route: "setup", "history", "settings/<page>"."""
+        from .shell_window import AppWindow  # local: only built when asked for
+        if self.app_window is None:
+            self.app_window = AppWindow(on_close=self._app_closed, command=self.command, log=lambda m: None)
+        self.app_window.present(route)
 
-    def _closed(self, which):
-        """Setup or Settings closed: with neither left open, give the app you were in back the front."""
+    def _app_closed(self):
         from . import ax
-        setattr(self, which, None)
-        if self.setup_win is None and self.settings_win is None:
-            ax.give_back_front()
+        self.app_window = None
+        ax.give_back_front()
+
+    @property
+    def setup_win(self):
+        """The app window while it shows Setup (the daemon polls the login only then)."""
+        w = self.app_window
+        return w if w is not None and w.route == "setup" else None
+
+    @property
+    def settings_win(self):
+        w = self.app_window
+        return w if w is not None and (w.route or "").startswith("settings") else None
+
+    def open_setup(self):
+        self.open_app("setup")
 
     def _bind_keys(self):
         self.key_errors = {}
@@ -821,10 +836,8 @@ class Platform:
         return out
 
     def change_shortcuts(self):
-        """Where to change them: Settings, on its Hotkeys page."""
-        self.command("settings")
-        if self.settings_win is not None:
-            self.settings_win._show_tab("Hotkeys")
+        """Where to change them: Settings, on its Shortcuts page."""
+        self.open_app("settings/shortcuts")
 
     def key_label(self, name):
         """For the tour's cards: "⇧⌘Space", "double-tap ⌘", or None if it's off."""
@@ -836,7 +849,7 @@ class Platform:
         return hotkeys.pretty(combo)
 
     def setup_pending(self):
-        from .setup_window import needs_setup
+        from .setup import needs_setup
         return needs_setup() or self.setup_win is not None
 
     def _label_menu(self):
@@ -883,25 +896,14 @@ class Platform:
                         pass
         threading.Thread(target=serve, daemon=True).start()
 
-    def open_settings(self, on_preview, on_reset):
-        from .settings_window import SettingsWindow  # local: only built when asked for
-        if self.settings_win is None:
-            self.settings_win = SettingsWindow(on_preview, on_reset, lambda: self._closed("settings_win"),
-                                               command=self.command)
-        self.settings_win.present()
+    def open_settings(self, on_preview=None, on_reset=None):
+        """Settings in the app window. Its Preview and New session go through the daemon's own commands."""
+        self.open_app("settings/general")
 
     def demo_pointer(self, name, on_saved):
-        """Scripted demo: draw a pointer in the editor and save it."""
-        from . import pointer_editor
-        from .. import pixelart, pointers
-        ed = pointer_editor.PixelEditor(lambda n: None)
-        ed.present()
-
-        def done():
-            ed.name.setStringValue_(name)
-            ed._save()
-            on_saved(pointers.PREFIX + name)
-        pixelart.demo_paint(ed.art, ed._redraw, ed._set_tool, lambda col: setattr(ed, "color", col), done)
+        """Scripted demo: draw a pointer in the app window's studio and save it."""
+        self.open_app("settings/appearance")
+        self.app_window.bridge.start_pointer_demo(name, on_saved)
 
     # --- demo recording (scripts/demo_mac.py): run as Flippy's children, so they use its Screen Recording ---
     def screenshot_to(self, path):

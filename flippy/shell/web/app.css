@@ -273,3 +273,22 @@ input[type="text"]:focus, textarea:focus, .select select:focus { border-color: v
 .tint:hover { transform: scale(1.1); }
 .tint[aria-checked="true"] { box-shadow: 0 0 0 2px var(--page), 0 0 0 4px var(--accent); }
 .tint-row { display: flex; align-items: center; justify-content: space-between; gap: 28px; flex-wrap: wrap; }
+
+/* ---- setup */
+.hero { display: flex; align-items: center; gap: 22px; margin-bottom: 8px; }
+.hero .mark { width: 72px; height: 72px; padding: 6px; border-radius: 18px; background: #111114; box-shadow: 0 0 0 1px var(--card-line); }
+.hero h1 { margin: 0 0 4px; }
+.hero .lede { margin: 0; }
+h2 .step { width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 12px; font-weight: 600;
+  background: var(--hover); color: var(--muted); }
+h2 .step.done { background: var(--accent-soft); color: var(--accent); }
+h2 .step svg { width: 14px; height: 14px; stroke-width: 2; }
+.sub { color: var(--muted); margin: -6px 0 14px; }
+.status { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 13px; }
+.status svg { width: 15px; height: 15px; }
+.status.ok { color: #3fbf6a; }
+.row .text.with-icon { display: flex; align-items: center; gap: 14px; }
+.row .text.with-icon .status { margin-top: 3px; }
+.logo { width: 36px; height: 36px; border-radius: 9px; }
+.row.attention .help { color: var(--text); font-weight: 500; }
+.row.attention select { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }

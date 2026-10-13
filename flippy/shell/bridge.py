@@ -9,7 +9,7 @@ import os
 import time
 
 from .. import settings
-from . import appearance, schema
+from . import appearance, schema, setup
 
 COMMANDS = {"preview", "reset", "tour", "update"}  # daemon commands the page may ask for
 MAX_MESSAGE = 4 * 1024 * 1024                       # a smooth drawing's PNG is the biggest thing the page sends
@@ -52,6 +52,16 @@ class Host:
     def set_chrome(self, mode):
         """The page is showing "light" or "dark": match the window's own frame to it."""
 
+    def setup_state(self):
+        """The platform's setup checks: claude, codex, screen, accessibility, login_item... (flippy/mac/setup.py)."""
+        return {}
+
+    def setup_action(self, name):
+        raise ValueError("setup isn't available here")
+
+    def close(self):
+        """Close the window (Setup's Done)."""
+
 
 class Bridge:
     def __init__(self, push=lambda event, data: None, command=lambda cmd: None, log=lambda msg: None, host=None):
@@ -62,6 +72,10 @@ class Bridge:
         self.opened = time.monotonic()
         self.marks = {}
         self.route = None         # where the page opens; later routes are pushed
+        self.current = None       # the route the page is showing (op_route)
+        self.on_demo_saved = None  # the scripted pointer demo's callback (flippy/demos.py)
+        self.demo = None
+        self._mark = None
         settings.on_change(self._changed)
 
     def close(self):
@@ -88,7 +102,9 @@ class Bridge:
 
     # ---- settings
     def op_state(self):
-        return {"platform": schema.platform(), "pages": schema.pages(), "route": self.route, "version": _version()}
+        demo, self.demo = self.demo, None  # a pointer demo asked for before the page loaded
+        return {"platform": schema.platform(), "pages": schema.pages(), "route": self.route, "version": _version(),
+                "demo": demo}
 
     def _key(self, id):  # noqa: A002
         section, _, key = str(id).partition(".")
@@ -133,6 +149,37 @@ class Bridge:
         if mode not in ("light", "dark"):
             raise ValueError("bad mode")
         self.host.set_chrome(mode)
+
+    def op_route(self, route):
+        self.current = str(route)[:100]
+
+    def op_setup_state(self):
+        out = setup.page_state(self.host.setup_state())
+        if self._mark is None:
+            self._mark = (setup.mark(), setup.logos())
+        out["mark"], out["logos"] = self._mark
+        return out
+
+    def op_setup_action(self, name):
+        self.host.setup_action(str(name))
+        return self.op_setup_state()
+
+    def op_close(self):
+        self.host.close()
+
+    def start_pointer_demo(self, name, on_saved):
+        """Draw a demo pointer in the studio, then on_saved("custom:<name>")."""
+        from .. import pixelart
+        self.on_demo_saved = on_saved
+        self.demo = {"name": name, "sprite": pixelart.DEMO_SPRITE,
+                     "colors": {k: pixelart.to_hex(v) for k, v in pixelart.DEMO_COLORS.items()}}
+        self.push("demo-pointer", self.demo)  # if the page is already up; else it reads self.demo when it loads
+
+    def op_demo_saved(self, value):
+        self.demo = None
+        if self.on_demo_saved:
+            done, self.on_demo_saved = self.on_demo_saved, None
+            done(value)
 
     def op_mark(self, name):
         """Timing marks from the page (first paint, ready), in ms since the window was asked for."""

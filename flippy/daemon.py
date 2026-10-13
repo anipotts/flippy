@@ -244,8 +244,12 @@ class Flippy:
             if not hasattr(self.ui, "video_window"):
                 return NOT_HERE
             return self.video.command(cmd)
-        elif cmd == "setup" and hasattr(self.ui, "open_setup"):  # macOS first-run window
+        elif cmd == "settings":
+            self.open_settings()
+        elif cmd == "setup" and hasattr(self.ui, "open_setup"):  # first-run setup
             self.ui.open_setup()
+        elif cmd == "history" and hasattr(self.ui, "open_app"):  # the app window's History
+            self.ui.open_app("history")
         elif cmd.startswith("control "):  # same as clicking a player button: control <name> [0-1 for seek/speed]
             parts = cmd.split()
             self.control(parts[1], float(parts[2]) if len(parts) > 2 else 0.0)

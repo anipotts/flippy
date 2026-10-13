@@ -1,4 +1,4 @@
-"""The Draw editor's color controls (flippy/pixelart.py, used by both editors): the hex field and the sliders."""
+"""The pointer model's color helpers (flippy/pixelart.py): the hex field and the sliders."""
 import colorsys
 import sys
 import unittest
@@ -15,12 +15,6 @@ class Hex(unittest.TestCase):
     def test_junk_is_refused(self):
         for text in ("", "#12345", "zzzzzz", "#1234567"):
             self.assertIsNone(pixelart.from_hex(text))
-
-    @unittest.skipUnless(sys.platform == "darwin", "macOS editor")
-    def test_the_macos_editor_uses_them(self):
-        from flippy.mac import pointer_editor
-        self.assertIs(pointer_editor.from_hex, pixelart.from_hex)
-        self.assertIs(pointer_editor.to_hex, pixelart.to_hex)
 
 
 class Sliders(unittest.TestCase):
