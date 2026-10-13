@@ -132,8 +132,10 @@ class AppWindow:
             decision.use()
             return True
         decision.ignore()
-        if verdict == "open":
-            open_external(uri, self.win)
+        action = decision.get_navigation_action()
+        if verdict == "open" and (action.is_user_gesture()
+                                  or action.get_navigation_type() == WebKit.NavigationType.LINK_CLICKED):
+            open_external(uri, self.win)  # a link the user followed, not a script moving the page
         else:
             self.log(f"app window: blocked navigation to {uri[:200]}")
         return True
