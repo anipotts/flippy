@@ -274,6 +274,8 @@ class Flippy:
         event("box")
         if hasattr(self.ui, "prime_focused_area"):
             self.ui.prime_focused_area()  # overlay._in_the_way
+        # Read before the box takes the keyboard: Electron apps (VS Code) stop reporting their focus once it does.
+        self.focus_at_open = self.ui.focused_area() if hasattr(self.ui, "focused_area") else None
         self.box.show()
 
     def submit(self, question, tutorial=None):
@@ -722,8 +724,13 @@ class Flippy:
                        max_show_seconds=settings.get("timing", "max_show_seconds"))
 
     def _note_focus(self):
-        """Where the text you were working in is, so the answer can stay off it (overlay._in_the_way)."""
-        self.overlay.avoid = self.ui.focused_area() if hasattr(self.ui, "focused_area") else None
+        """Where the text you were working in is, so the answer can stay off it (overlay._in_the_way): as the box
+        opened, else now (flippy-ask q has no box)."""
+        area, self.focus_at_open = getattr(self, "focus_at_open", None), None
+        if area is None and hasattr(self.ui, "focused_area"):
+            area = self.ui.focused_area()
+        self.overlay.avoid = area
+        log(f"placement: work area {tuple(round(v) for v in area) if area else None}")
 
     def _start_playback(self, gen, img_size, shot_size, frame=None):
         if gen != self.gen:
@@ -779,6 +786,8 @@ class Flippy:
             elif kind in ("finish", "fade"):
                 if kind == "finish":
                     event("answer_done")
+                    ov = self.overlay
+                    log(f"placement: answer shown {'in a corner' if ov.docked or ov.card_mode == 'dock' else ov.card_mode}")
                 if self.play and not self.play.paused:
                     self._schedule_fade(payload)
             elif kind == "cancel_fade":
