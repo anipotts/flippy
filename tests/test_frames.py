@@ -8,7 +8,7 @@ import unittest
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
-from flippy.frames import ScreenFrame, prepare_frame, prepare_image
+from flippy.frames import ScreenFrame, prepare_frame
 
 
 class TestFrames(unittest.TestCase):
@@ -43,13 +43,12 @@ class TestFrames(unittest.TestCase):
                 frames.append(prepare_frame(path))
             self.assertNotEqual(frames[0].fingerprint, frames[1].fingerprint)
 
-    def test_full_resolution_and_compatibility_preparation(self):
+    def test_full_resolution_preparation(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "screen.png")
             Image.new("RGBA", (60, 30), (255, 0, 0, 255)).save(path)
             frame = prepare_frame(path, 0)
             self.assertEqual(frame.size, (60, 30))
-            self.assertEqual(prepare_image(path, 0), (frame.jpeg, frame.size, frame.original_size))
             self.assertEqual(frame.content()[1]["data"], frame.jpeg)
             self.assertIn("60x30", frame.content()[0]["text"])
 

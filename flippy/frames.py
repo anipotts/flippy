@@ -103,9 +103,3 @@ def prepare_frame(path, long_edge=1920, *, logical_size=None, target=None):
     small.save(buf, format="JPEG", quality=85)
     return ScreenFrame(base64.b64encode(buf.getvalue()).decode(), size,
                        logical_size or original, target, digest.hexdigest(), original, small.tobytes())
-
-
-def prepare_image(path, long_edge=1920):
-    """Compatibility for callers outside the controller."""
-    frame = prepare_frame(path, long_edge)
-    return frame.jpeg, frame.size, frame.original_size

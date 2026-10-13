@@ -87,6 +87,16 @@ def _blank_smooth():
     return cairo.ImageSurface(cairo.FORMAT_ARGB32, GRID_W * RES, GRID_H * RES)
 
 
+def _fill_cells(cr, cells, k):
+    """Paint the grid's cells as k x k squares."""
+    for y, row in enumerate(cells):
+        for x, c in enumerate(row):
+            if c is not None:
+                cr.set_source_rgb(*c)
+                cr.rectangle(x * k, y * k, k, k)
+                cr.fill()
+
+
 def _copy(surf):
     out = _blank_smooth()
     cr = cairo.Context(out)
@@ -134,12 +144,7 @@ class PixelArt:
         surf = _blank_smooth()
         cr = cairo.Context(surf)
         cr.set_antialias(cairo.ANTIALIAS_NONE)
-        for y, row in enumerate(self.cells):
-            for x, c in enumerate(row):
-                if c is not None:
-                    cr.set_source_rgb(*c)
-                    cr.rectangle(x * RES, y * RES, RES, RES)
-                    cr.fill()
+        _fill_cells(cr, self.cells, RES)
         surf.flush()
         return surf
 
@@ -184,7 +189,7 @@ class PixelArt:
                 b, g, r, a = data[yy * stride + xx * 4: yy * stride + xx * 4 + 4]
                 if a > 127:  # premultiplied ARGB32, little-endian -> BGRA bytes
                     self.cells[yy][xx] = (r / a, g / a, b / a)
-        self.hotspot = tuple(pointers.meta(name)["hotspot"])
+        self.hotspot = tuple(m["hotspot"])
 
     @staticmethod
     def cell_at(x, y):
@@ -265,20 +270,15 @@ class PixelArt:
         if not self.pixel:
             return _copy(self.smooth)
         surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, GRID_W, GRID_H)
-        cr = cairo.Context(surf)
-        for y in range(GRID_H):
-            for x in range(GRID_W):
-                c = self.cells[y][x]
-                if c is not None:
-                    cr.set_source_rgb(*c)
-                    cr.rectangle(x, y, 1, 1)
-                    cr.fill()
+        _fill_cells(cairo.Context(surf), self.cells, 1)
         surf.flush()
         return surf
 
     def draw_canvas(self, cr, w, h, mirror=False):
         checker(cr, 0, 0, w, h, CELL / 2)
-        if not self.pixel:
+        if self.pixel:
+            _fill_cells(cr, self.cells, CELL)
+        else:
             cr.save()
             cr.scale(CELL / RES, CELL / RES)
             pat = cairo.SurfacePattern(self.smooth)
@@ -286,13 +286,6 @@ class PixelArt:
             cr.set_source(pat)
             cr.paint()
             cr.restore()
-        for y in range(GRID_H if self.pixel else 0):
-            for x in range(GRID_W):
-                c = self.cells[y][x]
-                if c is not None:
-                    cr.set_source_rgb(*c)
-                    cr.rectangle(x * CELL, y * CELL, CELL, CELL)
-                    cr.fill()
         cr.set_source_rgba(0, 0, 0, 0.18 if self.pixel else 0.08)  # the grid stays: the tip snaps to it
         cr.set_line_width(1)
         for x in range(GRID_W + 1):

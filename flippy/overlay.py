@@ -7,20 +7,16 @@ cairo by the active theme (flippy/themes.py). A platform subclass
 the hooks at the bottom: redraw, opacity, ticking, and which parts take clicks.
 It feeds mouse input in through press/motion/release/right_click.
 """
-import math
 import time
 
 import cairo
 
 from . import settings, themes
 
-CARD_MARGIN_TOP = 70
-CARD_MARGIN_BOTTOM = 110    # clear the dock
-
 
 class OverlayBase:
-    card_margin_top = CARD_MARGIN_TOP
-    card_margin_bottom = CARD_MARGIN_BOTTOM
+    card_margin_top = 70
+    card_margin_bottom = 110  # clear the dock
     has_backdrop = False      # the platform can put real blurred glass behind the card (Theme.backdrop)
 
     def __init__(self):
@@ -207,7 +203,7 @@ class OverlayBase:
                 x, y, cw, ch = lay[0]
                 cr.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
                 cr.rectangle(0, 0, w, h)
-                _rounded_rect(cr, x, y, cw, ch, (theme.backdrop or {}).get("radius", 20))
+                themes.round_rect(cr, x, y, cw, ch, (theme.backdrop or {}).get("radius", 20))
                 cr.clip()
             self._draw_strokes(cr)
             cr.restore()
@@ -266,13 +262,3 @@ class OverlayBase:
 
     def hits_changed(self):
         """self.hits was refreshed: only those rects should take clicks (outside draw mode)."""
-
-
-def _rounded_rect(cr, x, y, w, h, r):
-    r = min(r, w / 2, h / 2)
-    cr.new_sub_path()
-    cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
-    cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
-    cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
-    cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
-    cr.close_path()

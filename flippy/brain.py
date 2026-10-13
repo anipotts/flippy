@@ -6,7 +6,6 @@ from dataclasses import replace
 from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, RateLimitEvent, ResultMessage, StreamEvent,
                               TextBlock, query)
 
-from .frames import prepare_image
 from .usage_guard import GUARDS, PlanLimitReached
 
 # The pointing instructions are adapted from Clicky (MIT: see THIRD_PARTY_NOTICES.md).
