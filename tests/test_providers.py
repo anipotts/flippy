@@ -16,7 +16,7 @@ class TestProviders(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(lambda: CONNECTION_STATUS.update(previous))
         self.brain = object.__new__(Brain)
         self.brain.providers = {name: SimpleNamespace(start=AsyncMock(), stop=AsyncMock(), available=AsyncMock(return_value=False),
-            configure=Mock(), ask=AsyncMock(return_value=name), last_model=name) for name in ('claude', 'codex')}
+            configure=Mock(), ask=AsyncMock(return_value=name)) for name in ('claude', 'codex')}
         self.brain.selected = None
         self.brain.dirty = False
         self.brain._revision = 0
