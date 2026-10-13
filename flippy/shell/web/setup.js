@@ -46,7 +46,8 @@ function build(s) {
   if (mac) {
     const perms = el("div", { class: "card" });
     if (s.app) perms.append(el("div", { class: "row" },
-      el("div", { class: "text" }, el("span", { class: "label" }, s.app_name), el("div", { class: "help" }, s.app)),
+      el("div", { class: "text with-icon" }, el("div", { class: "drag-app", title: "Drag into the list in System Settings" }),
+        el("div", {}, el("span", { class: "label" }, s.app_name), el("div", { class: "help" }, "Drag me into the list in System Settings, or use + there."))),
       el("div", { class: "control" }, el("button", { class: "btn quiet", onclick: () => act("reveal") }, "Show in Finder"))));
     perms.append(
       permissionRow("screen", "Screen Recording", "So I can see what you’re asking about.", s.screen),
@@ -79,6 +80,18 @@ function build(s) {
   return wrap;
 }
 
+// The native, draggable app icon sits over .drag-app (flippy/mac/shell_window.py drag_target).
+function placeDrag() {
+  const spot = location.hash.slice(1) === "setup" && document.querySelector(".drag-app");
+  if (!spot) return F.call("drag_target", { rect: null }).catch(() => {});
+  const r = spot.getBoundingClientRect(), page = document.getElementById("page").getBoundingClientRect();
+  const visible = r.bottom > page.top && r.top < page.bottom;
+  F.call("drag_target", { rect: visible ? { x: r.left, y: r.top, w: r.width, h: r.height } : null }).catch(() => {});
+}
+document.getElementById("page").addEventListener("scroll", () => requestAnimationFrame(placeDrag), { passive: true });
+window.addEventListener("resize", () => requestAnimationFrame(placeDrag));
+window.addEventListener("hashchange", () => requestAnimationFrame(placeDrag));
+
 function show(s) {
   const pending = !s.done;
   if (pending !== F.setupPending) { F.setupPending = pending; F.renderNav(location.hash.slice(1)); }
@@ -90,6 +103,7 @@ function show(s) {
   const y = page.scrollTop;
   page.replaceChildren(build(s));
   page.scrollTop = y;
+  requestAnimationFrame(placeDrag);
 }
 
 F.checkSetup = () => F.call("setup_state").then(show).catch(() => {});
@@ -97,8 +111,9 @@ F.checkSetup = () => F.call("setup_state").then(show).catch(() => {});
 F.renderSetup = () => {
   clearInterval(timer);
   timer = setInterval(() => { if (location.hash.slice(1) === "setup") F.checkSetup(); else clearInterval(timer); }, 1000);
-  if (last) return build(last);
-  F.checkSetup().then(() => { if (last && location.hash.slice(1) === "setup") { const p = document.getElementById("page"); p.replaceChildren(build(last)); } });
+  if (last) { setTimeout(() => requestAnimationFrame(placeDrag)); return build(last); }
+  else requestAnimationFrame(placeDrag);
+  F.checkSetup().then(() => { if (last && location.hash.slice(1) === "setup") { const p = document.getElementById("page"); p.replaceChildren(build(last)); requestAnimationFrame(placeDrag); } });
   return el("div", { class: "content" }, el("h1", {}, "Setup"));
 };
 F.on("field:provider.mode", () => { if (location.hash.slice(1) === "setup") F.checkSetup(); });

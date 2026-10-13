@@ -128,7 +128,7 @@ function pointerMenu(anchor, p, host) {
 F.runPointerDemo = async (demo) => {
   F.go("settings/appearance");
   await new Promise((r) => setTimeout(r, 400));
-  const host = document.querySelector('[data-for="look.pointer"] > div:last-child');
+  const host = document.getElementById("studio-host");
   if (!host) return;
   openStudio(host, await F.call("studio_open", {}), (value) => F.call("demo_saved", { value }));
   await new Promise((r) => setTimeout(r, 300));
@@ -206,11 +206,11 @@ F.renderers.appearance = (p) => {
       el("div", { class: "help" }, "How answer cards look. Each one is drawn by the theme itself."))), themeTiles()),
     tintRow(), ...rows(["look.player_shine", "look.frosted"])));
 
-  const studioHost = el("div");
+  const studioHost = el("div", { id: "studio-host" });
   wrap.append(el("h2", {}, "Pointer"), el("div", { class: "card" },
     el("div", { class: "block", "data-for": "look.pointer" }, el("div", { class: "head" }, el("div", {}, el("div", { class: "label" }, "Pointer"),
-      el("div", { class: "help" }, "What points at things. Draw your own, or start from any image."))), pointerTiles(studioHost), studioHost),
-    ...rows(["look.pointer_size"])));
+      el("div", { class: "help" }, "What points at things. Draw your own, or start from any image."))), pointerTiles(studioHost)),
+    ...rows(["look.pointer_size"])), studioHost);
 
   wrap.append(el("h2", {}, "Cards"), el("div", { class: "card" }, ...rows(["look.text_size", "look.card_opacity", "look.controls"])));
 

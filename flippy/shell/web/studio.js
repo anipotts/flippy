@@ -234,7 +234,7 @@ F.openStudio = (data, host, onDone) => {
   const hex = el("input", { class: "hex", type: "text", placeholder: "#RRGGBB", "aria-label": "Hex color", spellcheck: "false",
     onchange: () => { const h = parseHex(hex.value); h ? pick(h) : (hex.value = S.color || ""); } });
   const chans = [0, 1, 2].map((i) => {
-    const [c, ctx] = sharpCanvas("", 200, 20);
+    const [c, ctx] = sharpCanvas("", 200, 22);
     c.style.width = "100%";
     const letter = el("span", {}, "H"), out = el("output", {}, "0");
     const slide = (e) => {
@@ -249,7 +249,7 @@ F.openStudio = (data, host, onDone) => {
   const rgbButton = sbtn("RGB", () => { S.sliders = S.sliders === "hsb" ? "rgb" : "hsb"; rgbButton.textContent = S.sliders === "hsb" ? "RGB" : "HSB"; showColor(); },
     { title: "Switch between hue/saturation/brightness and red/green/blue (0-255) sliders" });
   function drawChan({ c, ctx }, i) {
-    const w = c.getBoundingClientRect().width || 200, h = 20;
+    const w = c.getBoundingClientRect().width || 200, h = 22;
     if (c.width !== Math.round(w * devicePixelRatio)) { c.width = Math.round(w * devicePixelRatio); ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); }
     ctx.clearRect(0, 0, w, h);
     const g = ctx.createLinearGradient(7, 0, w - 7, 0);
@@ -264,13 +264,14 @@ F.openStudio = (data, host, onDone) => {
       for (let k = 0; k <= n; k++) { const f = k / n; g.addColorStop(f, rgbToHex(hsvToRgb(i === 0 ? [f, 1, 1] : i === 1 ? [hu, f, va] : [hu, sa, f]))); }
       at = S.hsv[i];
     }
+    const css = getComputedStyle(document.documentElement);
     ctx.fillStyle = g;
-    ctx.fillRect(7, h / 2 - 4, w - 14, 8);
-    ctx.strokeStyle = "#808085"; ctx.lineWidth = 1;
-    ctx.strokeRect(7.5, h / 2 - 3.5, w - 15, 7);
-    const kx = 7 + (w - 14) * at;  // a sharp knob, like the rest of the window
-    ctx.fillStyle = "#f0f1f2"; ctx.fillRect(kx - 4, 1, 8, h - 2);
-    ctx.strokeStyle = "#000"; ctx.strokeRect(kx - 3.5, 1.5, 7, h - 3);
+    ctx.beginPath(); ctx.roundRect(7, h / 2 - 4, w - 14, 8, 4); ctx.fill();
+    ctx.strokeStyle = "rgba(127,127,127,0.35)"; ctx.lineWidth = 1; ctx.stroke();
+    const kx = 7 + (w - 14) * at;
+    ctx.beginPath(); ctx.arc(kx, h / 2, 8, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff"; ctx.shadowColor = "rgba(0,0,0,0.35)"; ctx.shadowBlur = 3; ctx.fill(); ctx.shadowBlur = 0;
+    ctx.strokeStyle = css.getPropertyValue("--field-line"); ctx.stroke();
   }
   function showColor() {
     current.className = "current" + (S.color ? "" : " clear");
@@ -333,6 +334,7 @@ F.openStudio = (data, host, onDone) => {
     catch (e) { err.textContent = e.message; }
   }, { class: "sbtn primary" });
 
+  const mirrorBox = check("Mirror \u2194", false, (on) => { S.mirror = on; redraw(); });
   const side = el("div", { class: "side" });
   if (S.mode === "image") {
     side.append(
@@ -341,7 +343,7 @@ F.openStudio = (data, host, onDone) => {
   } else {
     side.append(
       el("div", {}, el("h4", {}, "Tools"), el("div", { class: "line" }, el("div", { class: "joined" }, toolButtons), sbtn("Undo", undo, { title: "⌘Z" }))),
-      check("Mirror ↔", false, (on) => { S.mirror = on; redraw(); }),
+      mirrorBox,
       el("div", {}, el("h4", {}, "Style"), el("div", { class: "line" }, el("div", { class: "joined" }, modeButtons), el("div", { class: "joined" }, brushButtons))),
       el("div", {}, el("h4", {}, "Color"), el("div", { class: "swatches" }, swatches)),
       el("div", { class: "line" }, current, hex, F.state.platform === "darwin" ? sbtn("Eyedropper", () => F.call("eyedropper"), { title: "Pick a color from anywhere on the screen" }) : el("span")),
@@ -361,11 +363,21 @@ F.openStudio = (data, host, onDone) => {
 
   const title = data.editing ? `Edit “${data.editing}”` : S.mode === "image" ? "Pick the tip" : "Draw a pointer";
   const studio = el("section", { class: "studio", "aria-label": "Pointer studio" },
-    el("div", { class: "bar" }, el("strong", {}, title), sbtn("Close", () => close())),
-    el("div", { class: "body" }, el("div", {}, board), side));
+    el("div", { class: "bar" }, el("strong", {}, title),
+      S.mode === "image" ? null : el("span", { class: "keys-hint" }, "P pencil, F fill, T tip, M mirror, \u2318Z undo"),
+      sbtn("Close", () => close(), { class: "sbtn quiet" })),
+    el("div", { class: "body" }, el("div", { class: "board-wrap" }, board), side));
+  studio.tabIndex = -1;
   studio.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "z" && e.target.tagName !== "INPUT") { e.preventDefault(); undo(); }
-    if (e.key === "Escape") close();
+    if (e.target.tagName === "INPUT" && e.target.type !== "checkbox") return;
+    if ((e.metaKey || e.ctrlKey) && e.key === "z") { e.preventDefault(); undo(); return; }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === "escape") close();
+    else if (S.mode !== "image" && { p: "pencil", f: "fill", t: "hotspot" }[k]) setTool({ p: "pencil", f: "fill", t: "hotspot" }[k]);
+    else if (S.mode !== "image" && k === "m") { const box = mirrorBox.querySelector("input"); box.checked = !box.checked; S.mirror = box.checked; redraw(); }
+    else return;
+    e.preventDefault();
   });
   function close() { studio.remove(); offColor && offColor(); F.studioDemo = null; host.dispatchEvent(new Event("studio-closed")); }
 
@@ -383,6 +395,7 @@ F.openStudio = (data, host, onDone) => {
     if (S.mode === "image") S.image = await loadImage(data.image);
     setTool(S.tool); showStyle(); pick("#000000"); redraw();
     studio.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    board.focus && studio.focus({ preventScroll: true });
   })();
   return close;
 };

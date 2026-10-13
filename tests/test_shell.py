@@ -32,16 +32,16 @@ class SchemaTest(ShellTestCase):
     def test_new_settings_show_up_without_window_work(self):
         extra = dict(settings.SETTINGS)
         extra["look", "corner"] = settings.Setting("top", (("top", "Top"), ("corner", "Corner")))
-        extra["history", "days"] = settings.Setting(30, (), 1, 365, 1, 0)
+        extra["recall", "days"] = settings.Setting(30, (), 1, 365, 1, 0)
         defaults = {s: dict(v) for s, v in settings.DEFAULTS.items()}
         defaults["look"]["corner"] = "top"
-        defaults["history"] = {"days": 30}
+        defaults["recall"] = {"days": 30}
         with mock.patch.object(settings, "SETTINGS", extra), mock.patch.object(settings, "DEFAULTS", defaults), \
                 mock.patch.object(settings, "_data", defaults):
             pages = {p["id"]: p for p in schema.pages("darwin")}
         corner = next(f for f in pages["appearance"]["fields"] if f["id"] == "look.corner")
         self.assertEqual((corner["label"], corner["control"]), ("Corner", "choice"))
-        self.assertEqual(pages["history"]["fields"][0]["control"], "slider")  # a section no page claims
+        self.assertEqual(pages["recall"]["fields"][0]["control"], "slider")  # a section no page claims
 
     def test_controls(self):
         self.assertEqual(schema.control("look", "theme"), "choice")
