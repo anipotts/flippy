@@ -59,19 +59,25 @@ function build(s) {
       el("p", { class: "sub" }, "Let me see your screen and lend a hand."), perms);
   }
 
-  wrap.append(el("h2", {}, el("span", { class: "step done" }, mac ? "3" : "2"), "Your shortcut"),
+  // macOS: Flippy's own hotkeys. COSMIC: the shortcuts COSMIC runs for Flippy (flippy/linux/setup.py).
+  const first = !mac && s.shortcuts && s.shortcuts.length ? s.shortcuts[0] : null;
+  const shortcutsOk = mac || !(s.shortcuts_missing || []).length;
+  wrap.append(el("h2", {}, el("span", { class: "step" + (shortcutsOk ? " done" : "") }, shortcutsOk ? F.svg("check") : (mac ? "3" : "2")), "Your shortcut"),
     el("p", { class: "sub" }, "That’s how you call me, from any app."),
     el("div", { class: "card" }, el("div", { class: "row" },
-      el("div", { class: "text" }, el("span", { class: "label" }, "Ask about the screen"),
-        el("div", { class: "help" }, "There are more, like circling something or checking a video.")),
-      el("div", { class: "control" }, F.keycaps(s.ask), el("button", { class: "btn quiet", onclick: () => F.go("settings/shortcuts") }, "Change")))));
+      el("div", { class: "text" }, el("span", { class: "label" }, mac ? "Ask about the screen" : first ? first.label : "Flippy’s shortcuts"),
+        el("div", { class: "help" }, mac ? "There are more, like circling something or checking a video." : (s.shortcuts_note || "COSMIC runs these. Change them in COSMIC Settings."))),
+      el("div", { class: "control" }, mac ? F.keycaps(s.ask) : first ? F.tokens(first.keys) : null,
+        !shortcutsOk ? el("button", { class: "btn", onclick: () => act("shortcuts") }, "Add them") : null,
+        el("button", { class: "btn quiet", onclick: () => F.go("settings/shortcuts") }, mac ? "Change" : "All shortcuts")))));
 
-  if (mac) {
+  {
     const sw = el("input", { type: "checkbox", role: "switch", class: "switch", id: "login-item", checked: s.login_item,
       disabled: !s.login_item_allowed, onchange: (e) => act(e.target.checked ? "login_on" : "login_off") });
     wrap.append(el("h2", {}, "Startup"), el("div", { class: "card" }, el("div", { class: "row" },
       el("div", { class: "text" }, el("label", { class: "label", for: "login-item" }, "Launch at login"),
-        el("div", { class: "help" }, s.login_item_allowed ? "Flippy starts in the menu bar when you log in." : "Run the installed Flippy.app to turn this on.")),
+        el("div", { class: "help" }, s.login_item_allowed ? (mac ? "Flippy starts in the menu bar when you log in." : "Flippy starts in the panel when you log in.")
+          : (mac ? "Run the installed Flippy.app to turn this on." : "Not available in the development profile."))),
       el("div", { class: "control" }, sw))));
   }
 

@@ -38,7 +38,7 @@ LABELS = {
     ("look", "glass_color"): ("Tint", None, None),
     ("look", "controls"): ("Controls on every theme", "Playback controls on every card, not only the players.", None),
     ("look", "player_shine"): ("Shine", "Gloss bars on the Media Player card.", ("darwin",)),
-    ("look", "frosted"): ("Frosted glass", "The compositor blurs behind glass cards.", ("linux",)),
+    ("look", "frosted"): ("Frosted glass", "Blur behind glass cards, where the compositor can.", ("linux",)),
     ("claude", "model"): ("Model", None, None),
     ("claude", "effort"): ("Effort", "Higher thinks longer and uses more of your plan.", None),
     ("claude", "image"): ("Screenshot size", "Larger is sharper and uses more of your plan.", None),
@@ -47,10 +47,11 @@ LABELS = {
     ("act", "mode"): ("Approval", "When Flippy asks before acting in an app.", None),
     ("act", "allowed_apps"): ("Allowed apps", "Apps you approved once. Remove one to be asked again.", None),
     ("act", "infer"): ("Do things when I ask", "A request like “open Spotify” runs as a desktop task.", None),
-    ("keys", "ask"): ("Ask about the screen", None, None),
-    ("keys", "draw"): ("Circle and ask", None, None),
-    ("keys", "video"): ("Check a video edit", None, None),
-    ("keys", "pause"): ("Pause a walkthrough", None, None),
+    # COSMIC runs Flippy's shortcuts itself: the Shortcuts page shows those there (shortcuts.js)
+    ("keys", "ask"): ("Ask about the screen", None, ("darwin",)),
+    ("keys", "draw"): ("Circle and ask", None, ("darwin",)),
+    ("keys", "video"): ("Check a video edit", None, ("darwin",)),
+    ("keys", "pause"): ("Pause a walkthrough", None, ("darwin",)),
     ("timing", "show_seconds"): ("Answer stays at least", "Seconds after it finishes.", None),
     ("timing", "max_show_seconds"): ("Answer stays at most", "Seconds.", None),
     ("timing", "step_pace"): ("Step pace", "How long each walkthrough step holds.", None),
@@ -132,7 +133,7 @@ def pages(plat=None):
                       if (s, k) not in HIDDEN and (f := field(s, k, plat)) is not None]
             if fields:
                 built.append({"title": group_title, "fields": fields})
-        if built:
+        if built or page_id == "shortcuts":  # on COSMIC it lists COSMIC's shortcuts (shortcuts.js)
             out.append({"id": page_id, "title": title, "icon": icon, "groups": built,
                         "fields": [f for g in built for f in g["fields"]]})
     return out

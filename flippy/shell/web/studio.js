@@ -346,7 +346,7 @@ F.openStudio = (data, host, onDone) => {
       mirrorBox,
       el("div", {}, el("h4", {}, "Style"), el("div", { class: "line" }, el("div", { class: "joined" }, modeButtons), el("div", { class: "joined" }, brushButtons))),
       el("div", {}, el("h4", {}, "Color"), el("div", { class: "swatches" }, swatches)),
-      el("div", { class: "line" }, current, hex, F.state.platform === "darwin" ? sbtn("Eyedropper", () => F.call("eyedropper"), { title: "Pick a color from anywhere on the screen" }) : el("span")),
+      el("div", { class: "line" }, current, hex, sbtn("Eyedropper", () => F.call("eyedropper"), { title: "Pick a color from anywhere on the screen" })),
       el("div", {}, chans.map((c) => c.row), el("div", { class: "line", style: "justify-content:flex-end;margin-top:2px" }, rgbButton)),
       el("div", {}, el("h4", {}, "Start from"), el("div", { class: "line", style: "justify-content:flex-start;gap:6px" },
         sbtn("Blank", () => { snapshot(); S.cells = Array.from({ length: GH }, () => Array(GW).fill(null)); if (S.mode === "smooth") S.smooth = smoothCanvas(); redraw(); }),

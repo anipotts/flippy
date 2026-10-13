@@ -251,3 +251,12 @@ class SchemaExtrasTest(ShellTestCase):
         self.assertEqual(schema.field("look", "player_shine", "darwin")["when"], {"id": "look.theme", "values": ["mediaplayer"]})
         self.assertIsNone(schema.field("look", "player_shine", "linux"))
         self.assertEqual(schema.field("window", "mode")["choices"][0]["value"], "system")
+
+
+class LinuxPages(ShellTestCase):
+    def test_cosmic_shortcuts_page_without_mac_keys(self):
+        pages = {p["id"]: p for p in schema.pages("linux")}
+        self.assertEqual(pages["shortcuts"]["fields"], [])  # COSMIC's own list (shortcuts.js)
+        self.assertNotIn("keys.ask", [f["id"] for p in pages.values() for f in p["fields"]])
+        mac = {p["id"]: p for p in schema.pages("darwin")}
+        self.assertIn("keys.ask", [f["id"] for f in mac["shortcuts"]["fields"]])
