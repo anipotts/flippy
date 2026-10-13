@@ -11,7 +11,7 @@ function providerRow(key, title, connected) {
   const logo = last.logos && last.logos[key];
   return el("div", { class: "row" },
     el("div", { class: "text with-icon" },
-      logo ? el("img", { class: "logo", src: logo, alt: "" }) : null,
+      logo ? el("img", { class: "logo " + key, src: logo, alt: "" }) : null,
       el("div", {}, el("span", { class: "label" }, title), status(connected, "Connected", "Not connected"))),
     el("div", { class: "control" }, el("button", { class: "btn", onclick: () => act(key) },
       connected ? "Reconnect…" : key === "claude" ? "Log in…" : "Sign in…")));
@@ -66,7 +66,8 @@ function build(s) {
     el("p", { class: "sub" }, "That’s how you call me, from any app."),
     el("div", { class: "card" }, el("div", { class: "row" },
       el("div", { class: "text" }, el("span", { class: "label" }, mac ? "Ask about the screen" : first ? first.label : "Flippy’s shortcuts"),
-        el("div", { class: "help" }, mac ? "There are more, like circling something or checking a video." : (s.shortcuts_note || "COSMIC runs these. Change them in COSMIC Settings."))),
+        el("div", { class: "help" }, mac ? "There are more, like circling something or checking a video."
+          : shortcutsOk ? "COSMIC runs these. Change them in COSMIC Settings." : "Some of Flippy\u2019s shortcuts aren\u2019t in COSMIC yet.")),
       el("div", { class: "control" }, mac ? F.keycaps(s.ask) : first ? F.tokens(first.keys) : null,
         !shortcutsOk ? el("button", { class: "btn", onclick: () => act("shortcuts") }, "Add them") : null,
         el("button", { class: "btn quiet", onclick: () => F.go("settings/shortcuts") }, mac ? "Change" : "All shortcuts")))));
