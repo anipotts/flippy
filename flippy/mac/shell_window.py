@@ -168,9 +168,16 @@ class AppWindow:
         if not self.win.setFrameUsingName_(AUTOSAVE):
             self.win.center()
         self.win.setFrameAutosaveName_(AUTOSAVE)
+        self._loaded = False
+        self._old_menu = None
+
+    def _load(self):
+        """Load the page once the window is on screen: a page loaded into a hidden window can stay unpainted."""
+        if self._loaded:
+            return
+        self._loaded = True
         index = NSURL.fileURLWithPath_(os.path.join(WEB, "index.html"))
         self.web.loadFileURL_allowingReadAccessToURL_(index, NSURL.fileURLWithPath_isDirectory_(WEB, True))
-        self._old_menu = None
 
     def set_chrome(self, mode):
         """The title strip and the window frame follow the page's light or dark."""
@@ -194,6 +201,7 @@ class AppWindow:
             NSApp.setMainMenu_(_menu())
         self.win.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
+        self._load()
 
     def _closed(self):
         self.bridge.close()
