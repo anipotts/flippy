@@ -272,6 +272,8 @@ class Flippy:
 
     def _show_box(self):
         event("box")
+        if hasattr(self.ui, "prime_focused_area"):
+            self.ui.prime_focused_area()  # overlay._in_the_way
         self.box.show()
 
     def submit(self, question, tutorial=None):

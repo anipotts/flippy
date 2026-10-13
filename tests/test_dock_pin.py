@@ -1,4 +1,5 @@
 """Where answers show (flippy/overlay.py: next to the pointer, or a corner) and the card's pushpin (flippy/themes.py)."""
+import sys
 import types
 import unittest
 from unittest.mock import MagicMock, patch
@@ -166,3 +167,34 @@ class PinTiming(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(sys.platform == "darwin", "macOS Accessibility")
+class FocusedArea(unittest.TestCase):
+    """flippy/mac/ax.py focused_area: what counts as the text you're working in."""
+    def area(self, tree, focused):
+        from flippy.mac import ax
+        attrs = {"root": {"AXFocusedUIElement": focused}, **tree}
+        with patch.object(ax, "trusted", return_value=True), patch.object(ax, "_working_app", return_value="root"), \
+                patch.object(ax, "_attr", side_effect=lambda el, name: attrs.get(el, {}).get(name)), \
+                patch.object(ax, "_frame", side_effect=lambda el: attrs.get(el, {}).get("frame")):
+            return ax.focused_area()
+
+    def test_vs_code_cursor_field_means_the_editor_around_it(self):
+        tree = {"cursor": {"AXRole": "AXTextArea", "frame": (669, 252, 217, 18), "AXParent": "pane"},
+                "pane": {"AXRole": "AXGroup", "frame": (603, 252, 745, 429), "AXWindow": "win"},
+                "win": {"frame": (307, 161, 1046, 690)}}
+        self.assertEqual(self.area(tree, "cursor"), (603, 252, 745, 429))
+
+    def test_a_terminal_is_clipped_to_its_window(self):
+        tree = {"text": {"AXRole": "AXTextArea", "frame": (162, -70, 818, 829), "AXWindow": "win"},
+                "win": {"frame": (162, 184, 818, 575)}}
+        self.assertEqual(self.area(tree, "text"), (162, 184, 818, 575))
+
+    def test_a_search_field_stays_small(self):
+        tree = {"field": {"AXRole": "AXTextField", "frame": (859, 440, 78, 20), "AXParent": "bar"},
+                "bar": {"AXRole": "AXGroup", "frame": (0, 400, 1512, 100)}}
+        self.assertEqual(self.area(tree, "field"), (859, 440, 78, 20))
+
+    def test_not_text(self):
+        self.assertIsNone(self.area({"list": {"AXRole": "AXOutline", "frame": (0, 0, 500, 500)}}, "list"))

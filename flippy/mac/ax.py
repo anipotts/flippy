@@ -173,25 +173,42 @@ def front_app():
 
 
 TEXT_ROLES = ("AXTextArea", "AXTextField")
+EDITOR_MIN = (200, 80)  # a multi-line text area smaller than this is a stand-in for the editor around it
 
 
-def focused_area():
-    """(x, y, w, h) in screen points of the text you're working in (an editor, a terminal, a document), or None.
-    Only the part inside its window: an editor's text area can be the whole document. Read from the app you were
-    in, since Flippy's question box is in front by now."""
-    if not trusted():
-        return None
+def _working_app():
+    """The AX element of the app you were in (Flippy's question box may be in front by now), or None."""
     app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
     pid = app.processIdentifier() if app is not None and not _is_flippy(app) else (_last_front or (0, 0, 0))[2]
     if not pid:
         return None
     root = AX.AXUIElementCreateApplication(pid)
     AX.AXUIElementSetMessagingTimeout(root, 0.25)  # a busy app doesn't hold up the answer
-    el = _attr(root, "AXFocusedUIElement")
+    return root
+
+
+def prime_focused_area():
+    """Electron apps (VS Code, Slack...) only build their accessibility tree when asked to: ask now, as the question
+    box opens, so it's there by the time the question is sent. Other apps ignore it."""
+    if trusted() and (root := _working_app()) is not None:
+        AX.AXUIElementSetAttributeValue(root, "AXManualAccessibility", True)
+
+
+def focused_area():
+    """(x, y, w, h) in screen points of the text you're working in (an editor, a terminal, a document), or None.
+    Only the part inside its window: an editor's text area can be the whole document."""
+    root = _working_app() if trusted() else None
+    el = _attr(root, "AXFocusedUIElement") if root is not None else None
     if el is None or _attr(el, "AXRole") not in TEXT_ROLES:
         return None
     frame = _frame(el)
-    window = _attr(el, "AXWindow")
+    if _attr(el, "AXRole") == "AXTextArea":
+        for _ in range(6):  # VS Code focuses a hidden one-line field at the cursor: use the editor around it
+            if not frame or frame[2] >= EDITOR_MIN[0] and frame[3] >= EDITOR_MIN[1]:
+                break
+            el = _attr(el, "AXParent")
+            frame = _frame(el) if el is not None else None
+    window = _attr(el, "AXWindow") if el is not None else None
     bounds = _frame(window) if window is not None else None
     if not frame:
         return None

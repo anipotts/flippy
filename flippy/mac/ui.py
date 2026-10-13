@@ -1391,6 +1391,13 @@ subprocess.run(sys.argv[2:], check=False)
         self.stop_recording()
         AppHelper.callAfter(NSApp.terminate_, None)
 
+    def prime_focused_area(self):
+        from . import ax
+        try:
+            ax.prime_focused_area()
+        except Exception as e:
+            print(f"flippy: prime_focused_area: {type(e).__name__}", flush=True)
+
     def focused_area(self):
         """The text you were working in, for keeping answers off it (overlay._in_the_way), or None."""
         from . import ax
