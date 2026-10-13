@@ -1,0 +1,105 @@
+// The Setup page: connect a subscription, grant permissions, learn the shortcut. Re-checked every second while
+// it's showing, so a permission granted in System Settings ticks off here by itself.
+(() => {
+"use strict";
+const F = window.F, el = F.el;
+let last = null, timer = null;
+
+const status = (ok, yes, no) => el("span", { class: "status" + (ok ? " ok" : "") }, F.svg(ok ? "check" : "dots"), ok ? yes : no);
+
+function providerRow(key, title, connected) {
+  const logo = last.logos && last.logos[key];
+  return el("div", { class: "row" },
+    el("div", { class: "text with-icon" },
+      logo ? el("img", { class: "logo", src: logo, alt: "" }) : null,
+      el("div", {}, el("span", { class: "label" }, title), status(connected, "Connected", "Not connected"))),
+    el("div", { class: "control" }, el("button", { class: "btn", onclick: () => act(key) },
+      connected ? "Reconnect…" : key === "claude" ? "Log in…" : "Sign in…")));
+}
+
+function permissionRow(key, title, help, ok) {
+  return el("div", { class: "row" },
+    el("div", { class: "text" }, el("span", { class: "label" }, title), el("div", { class: "help" }, help)),
+    el("div", { class: "control" }, status(ok, "Allowed", "Not yet"), el("button", { class: "btn", onclick: () => act(key) }, "Open Settings")));
+}
+
+async function act(name) {
+  try { show(await F.call("setup_action", { name })); } catch (e) { F.toast(e.message); }
+}
+
+function build(s) {
+  const mac = F.state.platform === "darwin";
+  const use = F.fields.get("provider.mode");
+  const useRow = F.fieldRow(use);
+  const note = useRow.querySelector(".help");
+  note.textContent = s.note;
+  if (s.attention) useRow.classList.add("attention");
+
+  const wrap = el("div", { class: "content" },
+    el("div", { class: "hero" }, el("img", { class: "mark", src: s.mark, alt: "" }),
+      el("div", {}, el("h1", {}, "Hi, I’m Flippy."), el("p", { class: "lede" }, "Ask about anything on your screen. I’ll point it out."))));
+
+  wrap.append(el("h2", {}, el("span", { class: "step" + (s.connected ? " done" : "") }, s.connected ? F.svg("check") : "1"), "Connect"),
+    el("p", { class: "sub" }, "Use the subscription you’ve already got."),
+    el("div", { class: "card" }, providerRow("claude", "Claude", s.claude), providerRow("codex", "ChatGPT", s.codex), useRow));
+
+  if (mac) {
+    const perms = el("div", { class: "card" });
+    if (s.app) perms.append(el("div", { class: "row" },
+      el("div", { class: "text" }, el("span", { class: "label" }, s.app_name), el("div", { class: "help" }, s.app)),
+      el("div", { class: "control" }, el("button", { class: "btn quiet", onclick: () => act("reveal") }, "Show in Finder"))));
+    perms.append(
+      permissionRow("screen", "Screen Recording", "So I can see what you’re asking about.", s.screen),
+      permissionRow("accessibility", "Accessibility", "For desktop actions and double-tap shortcuts.", s.accessibility),
+      el("div", { class: "row" }, el("div", { class: "text" }, el("span", { class: "label" }, "Restart Flippy"),
+        el("div", { class: "help" }, "macOS applies new permissions after a restart. In System Settings, add Flippy with + if dragging it in doesn’t work.")),
+        el("div", { class: "control" }, el("button", { class: "btn", onclick: () => act("restart") }, "Restart"))));
+    wrap.append(el("h2", {}, el("span", { class: "step" + (s.screen && s.accessibility ? " done" : "") }, s.screen && s.accessibility ? F.svg("check") : "2"), "Permissions"),
+      el("p", { class: "sub" }, "Let me see your screen and lend a hand."), perms);
+  }
+
+  wrap.append(el("h2", {}, el("span", { class: "step done" }, mac ? "3" : "2"), "Your shortcut"),
+    el("p", { class: "sub" }, "That’s how you call me, from any app."),
+    el("div", { class: "card" }, el("div", { class: "row" },
+      el("div", { class: "text" }, el("span", { class: "label" }, "Ask about the screen"),
+        el("div", { class: "help" }, "There are more, like circling something or checking a video.")),
+      el("div", { class: "control" }, F.keycaps(s.ask), el("button", { class: "btn quiet", onclick: () => F.go("settings/shortcuts") }, "Change")))));
+
+  if (mac) {
+    const sw = el("input", { type: "checkbox", role: "switch", class: "switch", id: "login-item", checked: s.login_item,
+      disabled: !s.login_item_allowed, onchange: (e) => act(e.target.checked ? "login_on" : "login_off") });
+    wrap.append(el("h2", {}, "Startup"), el("div", { class: "card" }, el("div", { class: "row" },
+      el("div", { class: "text" }, el("label", { class: "label", for: "login-item" }, "Launch at login"),
+        el("div", { class: "help" }, s.login_item_allowed ? "Flippy starts in the menu bar when you log in." : "Run the installed Flippy.app to turn this on.")),
+      el("div", { class: "control" }, sw))));
+  }
+
+  wrap.append(el("div", { class: "foot" }, el("span", { class: "sub", style: "margin:0" }, s.done ? "All set. You stay in control." : "You stay in control."),
+    el("button", { class: "btn primary", onclick: () => F.call("close").catch(() => {}) }, "Done")));
+  return wrap;
+}
+
+function show(s) {
+  const pending = !s.done;
+  if (pending !== F.setupPending) { F.setupPending = pending; F.renderNav(location.hash.slice(1)); }
+  const changed = JSON.stringify(s) !== JSON.stringify(last);
+  last = s;
+  if (location.hash.slice(1) !== "setup" || !changed) return;
+  const page = document.getElementById("page");
+  if (page.querySelector("select:focus")) return;  // don't close an open menu under the pointer
+  const y = page.scrollTop;
+  page.replaceChildren(build(s));
+  page.scrollTop = y;
+}
+
+F.checkSetup = () => F.call("setup_state").then(show).catch(() => {});
+
+F.renderSetup = () => {
+  clearInterval(timer);
+  timer = setInterval(() => { if (location.hash.slice(1) === "setup") F.checkSetup(); else clearInterval(timer); }, 1000);
+  if (last) return build(last);
+  F.checkSetup().then(() => { if (last && location.hash.slice(1) === "setup") { const p = document.getElementById("page"); p.replaceChildren(build(last)); } });
+  return el("div", { class: "content" }, el("h1", {}, "Setup"));
+};
+F.on("field:provider.mode", () => { if (location.hash.slice(1) === "setup") F.checkSetup(); });
+})();

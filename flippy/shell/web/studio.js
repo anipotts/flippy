@@ -367,9 +367,17 @@ F.openStudio = (data, host, onDone) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "z" && e.target.tagName !== "INPUT") { e.preventDefault(); undo(); }
     if (e.key === "Escape") close();
   });
-  function close() { studio.remove(); offColor && offColor(); host.dispatchEvent(new Event("studio-closed")); }
+  function close() { studio.remove(); offColor && offColor(); F.studioDemo = null; host.dispatchEvent(new Event("studio-closed")); }
 
   host.replaceChildren(studio);
+  // for the scripted demo (flippy-ask demo-pointer): the same steps a person would take
+  F.studioDemo = {
+    tool: setTool, color: (h) => pick(h),
+    paint: (x, y) => { snapshot(); paint(x, y, S.color); redraw(); },
+    fill: (x, y) => { snapshot(); fill(x, y, S.color); redraw(); },
+    tip: (x, y) => { snapshot(); S.hotspot = [x, y]; redraw(); },
+    name: (n) => (name.value = n), save: () => save.click(),
+  };
   (async () => {
     if (S.mode === "smooth") { S.smooth = smoothCanvas(); S.smooth.getContext("2d").drawImage(await loadImage(data.image), 0, 0); }
     if (S.mode === "image") S.image = await loadImage(data.image);

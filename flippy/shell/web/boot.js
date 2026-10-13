@@ -10,5 +10,7 @@
   const route = F.state.route || location.hash.slice(1) || "settings/general";
   if (location.hash.slice(1) !== route) history.replaceState(null, "", "#" + route);
   F.render(route);
+  if (F.checkSetup) F.checkSetup();
+  if (F.state.demo) F.runPointerDemo(F.state.demo);  // the sidebar's dot until setup is done
   requestAnimationFrame(() => F.call("mark", { name: "painted" }).catch(() => {}));
 })();

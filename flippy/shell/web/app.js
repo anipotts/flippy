@@ -314,11 +314,12 @@ function renderSearch(q) {
   return wrap;
 }
 
+F.renderNav = (route) => renderNav(route);
 function renderNav(route) {
-  const item = (id, title, ic) => el("li", {}, el("a", { href: "#" + id, "aria-current": route === id ? "page" : null }, F.svg(ic), title));
+  const item = (id, title, ic, extra) => el("li", {}, el("a", { href: "#" + id, "aria-current": route === id ? "page" : null }, F.svg(ic), title, extra || null));
   nav.replaceChildren(
     item("history", "History", "history"),
-    item("setup", "Setup", "setup"),
+    item("setup", "Setup", "setup", F.setupPending ? el("span", { class: "badge", title: "Setup isn\u2019t finished" }) : null),
     el("li", { class: "group", role: "presentation" }, "Settings"),
     ...F.state.pages.map((p) => item("settings/" + p.id, p.title, p.icon)));
 }
@@ -333,14 +334,15 @@ F.render = (route, focusId) => {
     if (kind === "settings") {
       const p = F.currentPage(id) || F.state.pages[0];
       view = (F.renderers[p.id] || renderGeneric)(p);
-    } else if (kind === "setup") {
-      view = emptyPage("Setup", "setup", "Setup moves here next", "Sign-in, permissions and shortcuts, checked off as you go.");
+    } else if (kind === "setup" && F.renderSetup) {
+      view = F.renderSetup();
     } else {
       view = emptyPage("History", "history", "No conversations yet",
         "Your questions and desktop tasks will show here, newest first, kept for 30 days. Screenshots are never saved.");
     }
   }
   page.replaceChildren(view);
+  F.call("route", { route: q ? "search" : route }).catch(() => {});
   if (focusId) {
     const row = page.querySelector(`[data-id="${CSS.escape(focusId)}"], [data-for~="${CSS.escape(focusId)}"]`);
     if (row) { row.hidden = false; row.scrollIntoView({ block: "center" }); row.classList.add("flash"); }

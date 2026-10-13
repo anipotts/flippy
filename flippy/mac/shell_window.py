@@ -104,6 +104,17 @@ class MacHost(Host):
     def set_chrome(self, mode):
         self.window.set_chrome(mode)
 
+    def setup_state(self):
+        from . import setup
+        return setup.state()
+
+    def setup_action(self, name):
+        from . import setup
+        setup.act(name)
+
+    def close(self):
+        self.window.win.performClose_(None)
+
 
 class AppWindow:
     def __init__(self, on_close=lambda: None, command=lambda cmd: None, log=print):
@@ -146,9 +157,15 @@ class AppWindow:
         self.win.setAppearance_(NSAppearance.appearanceNamed_(
             "NSAppearanceNameDarkAqua" if mode == "dark" else "NSAppearanceNameAqua"))
 
+    @property
+    def route(self):
+        """The page showing now ("setup", "settings/appearance"...), or the one it's opening on."""
+        return self.bridge.current or self.bridge.route
+
     def present(self, route=None):
         if route:
             self.bridge.route = route    # read by the page when it loads
+            self.bridge.current = route
             self._push("route", route)   # and sent, in case it already has
         if NSApp.activationPolicy() != NSApplicationActivationPolicyRegular:
             self._old_menu = NSApp.mainMenu()

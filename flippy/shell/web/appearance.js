@@ -124,10 +124,35 @@ function pointerMenu(anchor, p, host) {
   ]);
 }
 
+// The scripted pointer demo (flippy/demos.py): draw pixelart.DEMO_SPRITE like a person would, then save.
+F.runPointerDemo = async (demo) => {
+  F.go("settings/appearance");
+  await new Promise((r) => setTimeout(r, 400));
+  const host = document.querySelector('[data-for="look.pointer"] > div:last-child');
+  if (!host) return;
+  openStudio(host, await F.call("studio_open", {}), (value) => F.call("demo_saved", { value }));
+  await new Promise((r) => setTimeout(r, 300));
+  const d = F.studioDemo, [ox, oy] = [1, 1], wait = (ms) => new Promise((r) => setTimeout(r, ms)), ms = 34;
+  document.querySelector(".studio").scrollIntoView({ block: "center" });
+  const cells = (k) => demo.sprite.flatMap((row, r) => [...row].map((ch, c) => (ch === k ? [ox + c, oy + r] : null)).filter(Boolean));
+  await wait(700);
+  d.tool("pencil"); d.color(demo.colors.o);
+  for (const [x, y] of cells("o")) { d.paint(x, y); await wait(ms); }
+  await wait(ms * 6); d.tool("fill"); d.color(demo.colors.f); await wait(ms * 4); d.fill(ox + 2, oy + 6); await wait(ms * 8);
+  d.tool("pencil"); d.color(demo.colors.h);
+  for (const [x, y] of cells("h")) { d.paint(x, y); await wait(ms); }
+  d.color(demo.colors.s);
+  for (const [x, y] of cells("s")) { d.paint(x, y); await wait(ms); }
+  await wait(ms * 6); d.tool("hotspot"); await wait(ms * 4); d.tip(ox, oy); await wait(ms * 16);
+  d.name(demo.name); d.save();
+};
+F.on("demo-pointer", (demo) => F.runPointerDemo(demo));
+
 let closeStudio = null;
-function openStudio(host, data) {
+function openStudio(host, data, after) {
   if (closeStudio) closeStudio();
   closeStudio = F.openStudio(data, host, async (value, name) => {
+    if (after) after(value);
     await refreshPointers();
     F.rerender();
     F.toast(`Saved “${name.trim() || "My pointer"}” and set it as your pointer`);
