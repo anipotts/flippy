@@ -21,6 +21,14 @@ PLIST_REV=2  # bump when Info.plist below changes, so installed apps get rebuilt
 # one exact build. If the certificate can't be made or used, the app is signed ad hoc as before.
 SIGN_DIR="$HOME/.config/flippy-signing"
 KEYCHAIN="$SIGN_DIR/flippy-signing.keychain-db"
+add_to_search_list() {  # some macOS versions' codesign only finds an identity in a keychain on this list (#19)
+  local real; real="$(cd "$(dirname "$KEYCHAIN")" && pwd -P)/$(basename "$KEYCHAIN")"  # as the list stores it
+  security list-keychains -d user | grep -qF "\"$real\"" && return 0
+  security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//' | {
+    local list=() k; while IFS= read -r k; do list+=("$k"); done
+    security list-keychains -d user -s ${list[@]+"${list[@]}"} "$real"
+  }
+}
 signing_identity() {  # prints the certificate's SHA-1, or nothing
   if [ ! -f "$KEYCHAIN" ]; then
     local tmp; tmp="$(mktemp -d)"
@@ -41,6 +49,7 @@ signing_identity() {  # prints the certificate's SHA-1, or nothing
     rm -rf "$tmp"
   fi
   [ -f "$KEYCHAIN" ] && security unlock-keychain -p "$(cat "$SIGN_DIR/password")" "$KEYCHAIN" 2>/dev/null &&
+    add_to_search_list &&
     security find-identity -p codesigning "$KEYCHAIN" | awk '/"Flippy Local Signing"/ { print $2; exit }'
 }
 SIGN="$(signing_identity 2>/dev/null || true)"
@@ -82,10 +91,14 @@ with open(out, 'wb') as f:
         'FlippyRoot': root, 'FlippyProfile': profile, 'FlippyLauncherHash': digest,
     }, f)
 PY
-if [ -n "$SIGN" ]; then
-  codesign --force --sign "$SIGN" --keychain "$KEYCHAIN" "$TMP/$NAME.app"
-else
-  echo 'flippy: signing ad hoc (no local certificate), so macOS may ask for permissions again after rebuilds' >&2
+if [ -n "$SIGN" ] && ! codesign --force --sign "$SIGN" --keychain "$KEYCHAIN" "$TMP/$NAME.app"; then
+  echo 'flippy: the local certificate could not sign Flippy' >&2
+  SIGN=''
+  # The hash names the identity, so an ad hoc build isn't later taken for a signed one and kept.
+  plutil -replace FlippyLauncherHash -string "${HASH%-*}-adhoc" "$STAGE/Info.plist"
+fi
+if [ -z "$SIGN" ]; then
+  echo 'flippy: signing ad hoc, so macOS may ask for permissions again after rebuilds' >&2
   codesign --force --sign - "$TMP/$NAME.app"
 fi
 codesign --verify --strict "$TMP/$NAME.app"
