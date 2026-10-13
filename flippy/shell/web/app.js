@@ -155,6 +155,8 @@ F.keycaps = (combo) => {
   const name = key === "space" ? "Space" : key.length === 1 ? key.toUpperCase() : key[0].toUpperCase() + key.slice(1);
   return el("span", { class: "keys", "aria-label": combo }, parts.map((p) => el("kbd", {}, SYMBOLS[p] || p)), el("kbd", {}, name));
 };
+// Keycaps from ready-made tokens (COSMIC's accelerators: ["Super", "Shift", "Space"]).
+F.tokens = (tokens) => el("span", { class: "keys", "aria-label": tokens.join(" ") }, tokens.map((t) => el("kbd", {}, t)));
 const KEYNAMES = { " ": "space", Enter: "return", Tab: "tab", Escape: "escape" };
 function recordShortcut(f, row, button) {
   let caps = row.querySelector(".keys");
@@ -278,6 +280,7 @@ F.reload = async () => {
   F.render(location.hash.slice(1) || "settings/general");
 };
 
+F.renderGeneric = (p) => renderGeneric(p);
 function renderGeneric(p) {
   const wrap = el("div", { class: "content" }, el("h1", {}, p.title));
   for (const g of p.groups) {

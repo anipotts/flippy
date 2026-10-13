@@ -289,7 +289,7 @@ h2 .step svg { width: 14px; height: 14px; stroke-width: 2; }
 .status.ok { color: #3fbf6a; }
 .row .text.with-icon { display: flex; align-items: center; gap: 14px; }
 .row .text.with-icon .status { margin-top: 3px; }
-.logo { width: 36px; height: 36px; border-radius: 9px; }
+.logo { width: 36px; height: 36px; border-radius: 9px; background: #fff; padding: 4px; box-shadow: 0 0 0 1px var(--card-line); }
 .row.attention .help { color: var(--text); font-weight: 500; }
 .row.attention select { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
