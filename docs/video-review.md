@@ -1,11 +1,11 @@
-# Video review: how it works, how it was built, and the macOS version
+# Video review
 
 "Did I do this edit right?" You press a shortcut in your video editor, play the edit
 back, press it again and ask. Flippy shows Claude the frames that matter and the card
 answers, pointing at your timeline if that helps.
 
-Status: **working on COSMIC** (tested end to end; see [What was tested](#what-was-tested)).
-**macOS: built** (`⌃⌥V`, menu bar "Check a video edit"); see [The macOS version](#the-macos-version).
+Works on COSMIC (`Super+Shift+V`, tested end to end; see [What was tested](#what-was-tested)) and macOS
+(`⌃⌥V`, menu bar "Check a video edit"); see [The platforms](#the-platforms).
 
 ## How it works
 
@@ -59,27 +59,16 @@ The last recording is kept in memory (until the next one or `cancel`), so `video
 can ask about it again. Follow-up questions through the normal box share the session,
 so Claude still has the frames in context.
 
-## What we did, in order
+## How it was built
 
-1. Asked what "video" should mean. Answer: record while playing (not an exported file),
-   no audio, COSMIC now and macOS built separately.
-2. Kept macOS byte-identical: everything new is either a **new** shared module that
-   macOS doesn't import yet (`flippy/video.py`) or lives in `flippy/linux/`. The
-   controller (`flippy/daemon.py`) and `flippy/brain.py` weren't changed.
-   - `Brain.ask` sends one image, so `video.ask` talks to `brain.client` itself, in the
-     same session.
-   - `Review` drives the controller through the attributes and methods the normal ask
-     uses (`busy`, `gen`, `shooter`, `_run`, `_start_playback`, `_stream_text`,
-     `_on_answer`, `_fail`, `overlay`). Those are private, which is the price of not
-     touching `daemon.py`. See [Merging the two](#merging-the-two).
-3. Recorded the **window**, not the screen. On COSMIC: `ext_image_copy_capture` with a
-   toplevel source (`flippy/linux/wl.py capture_window`), the same capture help mode
-   uses. Flippy's own overlay, its "Recording" card and the panel aren't in a window
-   capture, so they never end up in the frames.
-4. Wrote the picking as pure functions and tested them on synthetic thumbnails first.
-5. Tested end to end: a generated 15 s clip with three shots looping in a player
-   window, recorded 13 s, asked "where are the cuts". Claude found all three, at the
-   right times, called them clean hard cuts, and said what it couldn't check.
+Video means recording while the edit plays (not an exported file), with no audio. The picking is pure functions,
+tested on synthetic thumbnails first. Each platform records the editor's **window**, not the screen, so Flippy's
+overlay, its "Recording" card and the panel never end up in the frames. `Review` drives the controller through the
+attributes and methods the normal ask uses (`busy`, `gen`, `shooter`, `_run`, `_start_playback`, `_stream_text`,
+`_on_answer`, `_fail`, `overlay`), and `video.ask` talks to `brain.client` itself in the same session, because
+`Brain.ask` sends one image. `Flippy` owns `self.video` and routes `video …` (`NOT_HERE` without `video_window`).
+Still open: moving `Review`'s use of those private methods into a public `Flippy.ask_with(...)`, so the normal ask
+and video review share one path.
 
 ## Mistakes not to make
 
@@ -87,7 +76,7 @@ These all happened (or nearly did) while building the COSMIC side:
 
 - **Don't change shared files or `flippy/mac/` for one platform's sake.** Extend from the
   platform folder (a mixin, a wrapper, a new module) so the other platform runs what it
-  ran before. Shared changes go in only when both sides are ready (see below).
+  ran before. Shared changes go in only when both sides are ready.
 - **Don't record or screenshot someone's screen without saying so first.** Test with a
   window you opened yourself (a generated clip in a player). The final screenshot shows
   the whole screen, so ask before a live test.
@@ -113,63 +102,18 @@ These all happened (or nearly did) while building the COSMIC side:
   session that reports "stopped" must not be destroyed twice, or the compositor drops
   the connection.
 
-## The macOS version
+## The platforms
 
-Built as planned below. `video_window` uses `sensors.front_window(pid)` (first layer-0
-window of the frontmost app, front to back); `video_frame` uses `CGWindowListCreateImage`
-(still works on macOS 27, ~16 ms a grab) and falls back to `screencapture -l <id>` if it
-ever stops returning frames. `flippy/video.py` is used as is.
+- **COSMIC:** `ext_image_copy_capture` with a toplevel source (`flippy/linux/wl.py` `capture_window`), the same
+  capture help mode uses.
+- **macOS** (`flippy/mac/ui.py`): `video_window` takes the frontmost app's first layer-0 window, front to back
+  (`sensors.front_window(pid)`), and refuses Flippy's own. `video_frame` grabs that one window with
+  `CGWindowListCreateImage` (`kCGWindowImageNominalResolution`, so Retina windows stay at 1×; still works on
+  macOS 27, ~16 ms a grab) and falls back to `screencapture -l <id>` if it ever stops returning frames. The
+  shortcut is `keys.video` (`ctrl+option+v`; `⇧⌘V` is "paste and match style" in many Mac apps), hotkey id 3, with
+  a recorder row in Settings → Hotkeys and "Check a video edit" in the menu bar.
 
-### 1. `Platform.video_window()` (flippy/mac/ui.py)
-
-The frontmost app and its frontmost normal window. `sensors.frontmost()` already gives
-`(bundle id, name, pid)`, and `sensors.windows(pid)` the app's on-screen windows (id,
-bounds), largest first. For the recording, take the frontmost of them in z-order rather
-than the largest: `CGWindowListCopyWindowInfo` returns windows front to back, so the
-first layer-0 window with that pid. Refuse Flippy's own pid (`os.getpid()`), like
-`sensors.sample()` does, and return `(None, "Click your video editor first…")`.
-Return `(window id, app name)`.
-
-### 2. `Platform.video_frame(window_id)` (worker thread)
-
-One window, without anything above it:
-
-```python
-img = Quartz.CGWindowListCreateImage(Quartz.CGRectNull, Quartz.kCGWindowListOptionIncludingWindow, window_id,
-                                     Quartz.kCGWindowImageBoundsIgnoreFraming | Quartz.kCGWindowImageNominalResolution)
-```
-
-`None` (or a 1×1 image) means the window closed: return `None`. Convert the `CGImage` to
-PIL from its data provider (`CGImageGetDataProvider` → `CGDataProviderCopyData`,
-`CGImageGetBytesPerRow`, BGRA): `Image.frombuffer("RGBA", (w, h), data, "raw", "BGRA",
-bytes_per_row, 1)`. `kCGWindowImageNominalResolution` keeps Retina windows at 1×, which
-is plenty: frames are cut to 1600 px anyway.
-
-It uses the Screen Recording permission Flippy already has. `CGWindowListCreateImage` is
-deprecated from macOS 14 in favour of ScreenCaptureKit; check that it still returns
-frames on the macOS you test on. If it doesn't, use `SCScreenshotManager
-captureImageWithFilter:configuration:` with `SCContentFilter
-initWithDesktopIndependentWindow:` (macOS 14+). That's async, so wait on a
-`threading.Event` inside `video_frame`. The cards are a separate panel on macOS, and a
-single-window capture leaves them out, like on COSMIC.
-
-### 3. Routing, shortcut, menu
-
-- **Routing:** see [Merging the two](#merging-the-two). Doing that first is simplest.
-- **Shortcut:** a `keys.video` setting (`settings.DEFAULTS["keys"]`), registered in
-  `Platform._bind_keys` as hotkey id 3 (1 and 2 are ask and draw, 4 is Esc while
-  drawing), sending `self.command("hotkey video")`. `Flippy.command`'s `hotkey` branch
-  already passes the name on (`self.command(name)`), so that reaches `video`. Pick the
-  default with care: `⇧⌘V` is "paste and match style" in many Mac apps. `⌃⇧V` or
-  `⌃⌥V` are safer.
-- **Settings → Hotkeys:** a recorder row for `video`, like ask and draw
-  (`flippy/mac/settings_window.py`, the `for name, what in …` loop).
-- **Menu bar:** "Check a video edit" with command `video` in `MENU`
-  (`flippy/mac/ui.py`), with its key shown like ask and draw.
-
-### 4. Try it
-
-Open a clip in QuickTime and play it, then:
+To try it on macOS, open a clip in QuickTime and play it, then:
 
 ```
 flippy-ask video start
@@ -186,21 +130,6 @@ ffmpeg -f lavfi -i testsrc2=size=960x540:rate=30:duration=5 -f lavfi -i smptebar
   -f lavfi -i "mandelbrot=size=960x540:rate=30" -filter_complex \
   "[2]trim=duration=5,setpts=PTS-STARTPTS[m];[0][1][m]concat=n=3:v=1:a=0[v]" -map "[v]" -pix_fmt yuv420p clip.mp4
 ```
-
-## Merging the two
-
-Done (steps 1-3): `Flippy` owns `self.video` and routes `video …`; COSMIC's `_route`
-stopgap is gone. Step 4 is still open:
-
-1. `Flippy.__init__`: `self.video = video.Review(self)` (import `video` with the other
-   modules).
-2. `Flippy.command`: `elif cmd == "video" or cmd.startswith("video "): return
-   self.video.command(cmd)`, guarded with `hasattr(self.ui, "video_window")` →
-   `NOT_HERE`, like the other platform features.
-3. Remove `Platform._route` (and its uses in `listen` and `start`) and the
-   `self.video = Review(...)` line from `flippy/linux/ui.py`.
-4. Optionally move `Review`'s use of the controller's private methods into a public
-   `Flippy.ask_with(...)`, so the normal ask and video review share one path.
 
 ## What was tested
 

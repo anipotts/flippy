@@ -1,6 +1,5 @@
-.venv/
-.DS_Store
 .venv
+.DS_Store
 __pycache__/
 *.pyc
 .gstack/
@@ -13,16 +12,6 @@ flippy-demo/
 demo_raw/
 reel_raw/
 dist/
-scripts/*
-!scripts/install_mac.sh
-!scripts/install_linux.sh
-!scripts/release.sh
-!scripts/package.sh
-!scripts/build_mac.sh
-!scripts/dev.sh
-!scripts/doctor.py
-!scripts/action_fixture.py
-!scripts/wait_stopped.py
 *.mp4
 *.mov
 *.webm

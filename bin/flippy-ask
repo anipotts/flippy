@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ping the flippy daemon. Usage: flippy-ask [ask|draw|settings|setup|dismiss|reset|quit|ping]
+"""Send a command to the flippy daemon (default: ask). Usage: flippy-ask [<command> ...]; the README lists them.
 
 Starts the daemon if it isn't running (so no autostart is needed).
 """
@@ -16,7 +16,7 @@ from flippy.profile import current
 
 PROFILE = current()
 SOCK = PROFILE.socket
-DAEMON = os.path.join(os.path.dirname(os.path.realpath(__file__)), "flippy-daemon")
+DAEMON = os.path.join(ROOT, "bin", "flippy-daemon")
 APPS = []
 LOG = PROFILE.log
 if sys.platform == "darwin":
