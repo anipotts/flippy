@@ -47,6 +47,9 @@ jobs:
           /usr/bin/python3 -m venv --system-site-packages .venv
           .venv/bin/python -m pip install -r requirements-linux.txt 'claude-agent-sdk==0.2.165'
           .venv/bin/python -m pip check
+      - name: Fresh-home app build (#19)
+        if: runner.os == 'macOS'
+        run: bash scripts/check_fresh_build_mac.sh
       - name: Shared and platform-adapter unit tests
         run: .venv/bin/python -m unittest discover -s tests -v
       - name: Syntax and whitespace
