@@ -38,7 +38,7 @@ class OverlayBase:
         self.ticking = False
         self.pinned = False       # the answer stays until dismissed (the card's pushpin)
         self.docked = False       # this answer moved to a corner; it stays there, so a walkthrough doesn't jump
-        self.corner = None        # (right, bottom) of that corner
+        self.corner = None        # (right, bottom) of that corner, picked once per answer
         self.avoid = None         # (x, y, w, h): the text you were working in when you asked (platform focused_area)
 
         # draw mode
@@ -157,19 +157,15 @@ class OverlayBase:
         return bool(self.avoid) and _overlap(rect, self.avoid) > COVER * cw * ch
 
     def _corner_rect(self, W, H, cw, ch):
-        """The card in a corner, top right first. Kept there unless the pointer goes under it; then the corner
-        that covers the least of the text you're working in, and not the pointer."""
+        """The card in a corner: top right, unless another covers less of the text you're working in. It stays there
+        for the rest of the answer whatever the pointer does; the pointer is drawn over it (paint)."""
         def rect(corner):
             right, bottom = corner
             return (W - cw - CORNER_GAP if right else CORNER_GAP,
                     H - ch - self.card_margin_bottom if bottom else self.card_margin_top, cw, ch)
-        def under_pointer(r):
-            return self.pos is not None and self.target is not None and _overlap(r, (*self.pos, 1, 1)) > 0
-        if self.corner is None or under_pointer(rect(self.corner)):
+        if self.corner is None:
             order = [(True, False), (True, True), (False, False), (False, True)]
-            self.corner = min(order, key=lambda c: (under_pointer(rect(c)),
-                                                    _overlap(rect(c), self.avoid) if self.avoid else 0,
-                                                    order.index(c)))
+            self.corner = min(order, key=lambda c: (_overlap(rect(c), self.avoid) if self.avoid else 0, order.index(c)))
         return rect(self.corner)
 
     # --- draw mode ---
@@ -256,9 +252,6 @@ class OverlayBase:
                 cr.clip()
             self._draw_strokes(cr)
             cr.restore()
-        if self.target and self.pos:
-            themes.draw_pointer(cr, theme, self.pointer_style(), *self.pos, now - self.t0,
-                                settings.get("look", "pointer_size"), h, backdrop=self.has_backdrop)
         hits = {}
         if lay:
             (x, y, cw, ch), opts = lay
@@ -267,6 +260,9 @@ class OverlayBase:
             if themes.pin_shown(self.card):
                 theme.draw_pin(cr, self.card, x, y, cw, ch, opts)
                 hits["pin"] = theme.pin_rect(self.card, x, y, cw, ch, opts)
+        if self.target and self.pos:  # over the card: a docked card never hides what it's pointing at
+            themes.draw_pointer(cr, theme, self.pointer_style(), *self.pos, now - self.t0,
+                                settings.get("look", "pointer_size"), h, backdrop=self.has_backdrop)
         self.hits = hits
         self.hits_changed()
 

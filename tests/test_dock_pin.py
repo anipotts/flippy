@@ -68,10 +68,21 @@ class Placement(Base):
         self.answer(SHORT, at=(300, 300))
         self.assertFalse(self.ov.docked)
 
-    def test_the_corner_avoids_the_pointer(self):
-        x, y, w, h = self.answer(LONG, at=(W - 60, 120))  # pointing at something under the top-right corner
+    def test_a_docked_card_ignores_the_pointer(self):
+        x, y, w, h = self.answer(LONG, at=(300, 300))
         self.assertTrue(self.ov.docked)
-        self.assertFalse(x <= W - 60 <= x + w and y <= 120 <= y + h)
+        for at in ((W - 60, 120), (60, 120), (W - 60, H - 150)):  # wherever the walkthrough points next, under it too
+            x2, y2, w2, h2 = self.answer(SHORT, at=at)
+            self.assertEqual((x2 + w2, y2), (x + w, y))  # same top-right corner
+
+    def test_the_pointer_is_drawn_over_the_card(self):
+        self.answer(LONG, at=(W - 60, 120))
+        calls = []
+        theme = self.ov.theme
+        with patch.object(type(theme), "draw", lambda *a: calls.append("card")), \
+                patch.object(overlay.themes, "draw_pointer", lambda *a, **k: calls.append("pointer")):
+            self.ov.paint(cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)), W, H)
+        self.assertEqual(calls, ["card", "pointer"])
 
     def test_the_setting(self):
         settings.set("look", "card_place", "pointer")
