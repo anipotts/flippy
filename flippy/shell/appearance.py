@@ -13,6 +13,7 @@ import cairo
 from PIL import Image, PngImagePlugin
 
 from .. import pixelart, pointers, settings, themes
+from .setup import data_url
 
 TILE_W, TILE_H, SCALE = 288, 150, 2         # theme tiles, CSS px; rendered at 2x for sharp screens
 POINTER_TILE, POINTER_SCALE = 72, 2
@@ -27,7 +28,7 @@ LOOK_KEYS = ["theme", "pointer", "pointer_size", "text_size", "card_opacity", "g
 def _png_url(surf):
     buf = io.BytesIO()
     surf.write_to_png(buf)
-    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    return data_url(buf.getvalue())
 
 
 def _surface_from_png(data):
@@ -110,6 +111,17 @@ def _hex(rgb):
     return None if rgb is None else pixelart.to_hex(rgb)
 
 
+def _studio_base():
+    """What every studio opening carries: the grid, the smooth canvas's resolution, the palette and brushes."""
+    return {"grid": [pixelart.GRID_W, pixelart.GRID_H], "res": pixelart.RES,
+            "palette": [_hex(c) for c in pixelart.PALETTE], "brushes": list(pixelart.BRUSHES)}
+
+
+def _existing(name):
+    if name not in pointers.names():
+        raise ValueError(f"no pointer {name}")
+
+
 def studio_open(name=None, start=None):
     """What the studio shows: a new drawing, a template (hand, arrow) or an existing pointer."""
     meta = pointers.meta(name) if name else None
@@ -118,9 +130,8 @@ def studio_open(name=None, start=None):
         raise ValueError(f"no pointer {name}")
     image_mode = bool(name) and not ((meta["pixel"] and surf.get_width() <= pixelart.GRID_W
                                       and surf.get_height() <= pixelart.GRID_H) or meta["grid_h"])
-    out = {"name": name or pointers.unique_name("My pointer"), "editing": name, "flip": meta["flip"] if meta else True,
-           "grid": [pixelart.GRID_W, pixelart.GRID_H], "res": pixelart.RES, "palette": [_hex(c) for c in pixelart.PALETTE],
-           "brushes": list(pixelart.BRUSHES)}
+    out = dict(_studio_base(), name=name or pointers.unique_name("My pointer"), editing=name,
+               flip=meta["flip"] if meta else True)
     if image_mode:
         return dict(out, mode="image", image=_png_url(surf), size=[surf.get_width(), surf.get_height()],
                     hotspot=list(meta["hotspot"]), crisp=meta["pixel"])
@@ -197,15 +208,18 @@ def studio_save(mode, name, hotspot, flip=True, editing=None, cells=None, image=
     return pointers.PREFIX + name
 
 
+def _copy(old, new):
+    m = pointers.meta(old)
+    pointers.save(new, pointers.surface(old), m["hotspot"], m["pixel"], m["flip"], m["grid_h"])
+
+
 def rename(old, new):
     new = _name(new)
-    if old not in pointers.names():
-        raise ValueError(f"no pointer {old}")
+    _existing(old)
     if new == old:
         return pointers.PREFIX + old
     new = pointers.unique_name(new)
-    m, surf = pointers.meta(old), pointers.surface(old)
-    pointers.save(new, surf, m["hotspot"], m["pixel"], m["flip"], m["grid_h"])
+    _copy(old, new)
     pointers.delete(old)
     if settings.get("look", "pointer") == pointers.PREFIX + old:
         settings.set("look", "pointer", pointers.PREFIX + new)
@@ -213,17 +227,14 @@ def rename(old, new):
 
 
 def duplicate(name):
-    if name not in pointers.names():
-        raise ValueError(f"no pointer {name}")
+    _existing(name)
     new = pointers.unique_name(name + " copy")
-    m = pointers.meta(name)
-    pointers.save(new, pointers.surface(name), m["hotspot"], m["pixel"], m["flip"], m["grid_h"])
+    _copy(name, new)
     return pointers.PREFIX + new
 
 
 def delete(name):
-    if name not in pointers.names():
-        raise ValueError(f"no pointer {name}")
+    _existing(name)
     if settings.get("look", "pointer") == pointers.PREFIX + name:
         settings.set("look", "pointer", "theme")
     pointers.delete(name)
@@ -232,8 +243,7 @@ def delete(name):
 # ---- pointer files: a PNG that carries its own tip
 def export_png(name):
     """The pointer as PNG bytes, with its tip and style in a text chunk, so importing it needs no picking."""
-    if name not in pointers.names():
-        raise ValueError(f"no pointer {name}")
+    _existing(name)
     buf = io.BytesIO()
     pointers.surface(name).write_to_png(buf)
     info = PngImagePlugin.PngInfo()
@@ -264,11 +274,9 @@ def import_file(data, filename="Image pointer"):
     im = im.convert("RGBA")
     im.thumbnail((pointers.MAX_IMPORT_PX, pointers.MAX_IMPORT_PX), Image.LANCZOS)
     w, h = im.size
-    return {"studio": {"mode": "image", "name": pointers.unique_name(_name(base)), "editing": None, "flip": True,
-                       "image": "data:image/png;base64," + base64.b64encode(_png_bytes(im)).decode(),
-                       "size": [w, h], "hotspot": [w // 2, 0], "crisp": max(w, h) <= 48,
-                       "grid": [pixelart.GRID_W, pixelart.GRID_H], "res": pixelart.RES,
-                       "palette": [_hex(c) for c in pixelart.PALETTE], "brushes": list(pixelart.BRUSHES)}}
+    return {"studio": dict(_studio_base(), mode="image", name=pointers.unique_name(_name(base)), editing=None,
+                           flip=True, image=data_url(_png_bytes(im)), size=[w, h], hotspot=[w // 2, 0],
+                           crisp=max(w, h) <= 48)}
 
 
 def _png_bytes(im):

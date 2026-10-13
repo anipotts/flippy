@@ -81,7 +81,8 @@ class MacSetup(unittest.TestCase):
         agent = os.path.join(self.tmp.name, "agent.plist")
         app = os.path.join(self.tmp.name, "Flippy.app")
         os.mkdir(app)
-        with mock.patch.object(self.mac, "AGENT", agent), mock.patch.object(self.mac, "current", return_value=mock.Mock(demo=False)):
+        not_demo, demo = mock.Mock(demo=False), mock.Mock(demo=True)
+        with mock.patch.object(self.mac, "AGENT", agent), mock.patch.object(setup, "current", return_value=not_demo):
             with mock.patch.object(self.mac, "APP", "/Volumes/Flippy/Flippy.app"):
                 self.mac.act("login_on")
                 self.assertFalse(os.path.exists(agent))  # a disk image path would open nothing at login
@@ -91,7 +92,7 @@ class MacSetup(unittest.TestCase):
                 with mock.patch.object(self.mac.subprocess, "run"):
                     self.mac.act("login_off")
                 self.assertFalse(os.path.exists(agent))
-        with mock.patch.object(self.mac, "AGENT", agent), mock.patch.object(self.mac, "current", return_value=mock.Mock(demo=True)), \
+        with mock.patch.object(self.mac, "AGENT", agent), mock.patch.object(setup, "current", return_value=demo), \
                 mock.patch.object(self.mac, "APP", app):
             self.mac.act("login_on")
             self.assertFalse(os.path.exists(agent))  # the demo profile never installs login items

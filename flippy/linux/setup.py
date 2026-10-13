@@ -2,8 +2,8 @@
 shortcuts, open at login. The page (flippy/shell/web/setup.js) shows state() and asks for act(name). The Linux
 side of flippy/mac/setup.py, and no GTK: the window is flippy/linux/shell_window.py.
 
-COSMIC has no permission settings to visit first (screenshots go through the portal), so "screen" is always
-True. /act does need two things: AT-SPI, Linux's accessibility layer (atspi.enable turns it on; apps already open
+COSMIC has no permission settings to visit first (screenshots go through the portal), so no Screen Recording
+step. /act does need two things: AT-SPI, Linux's accessibility layer (atspi.enable turns it on; apps already open
 may need a restart to show their controls), and the RemoteDesktop portal, which COSMIC asks about once, the first
 time /act clicks by position. Both need COSMIC Epoch 1.7 or newer. The shortcuts live in COSMIC's custom
 shortcuts file: Flippy can add the missing ones there (backed up first), and COSMIC picks them up right away.
@@ -16,6 +16,7 @@ import subprocess
 
 from . import desktop
 from ..profile import current
+from ..shell.setup import claude_cli, logged_in, login_items, run, terminal_env
 
 ASK = os.path.expanduser("~/.local/bin/flippy-ask")
 SHORTCUTS = os.path.expanduser("~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom")
@@ -31,16 +32,6 @@ WANTED = [("Ask about the screen", "", ["Super", "Shift"], "space"),
 
 
 # ---- checks
-def claude_logged_in():
-    from ..providers import CONNECTION_STATUS
-    return CONNECTION_STATUS["claude"] is True
-
-
-def codex_logged_in():
-    from ..providers import CONNECTION_STATUS
-    return CONNECTION_STATUS["codex"] is True
-
-
 def needs_setup():
     from ..providers import setup_ready
     return not setup_ready()
@@ -89,16 +80,15 @@ def missing_text(which):
 
 
 def state():
-    """Everything the Setup page shows, as plain data: the macOS keys (flippy/mac/setup.py state()) plus COSMIC's
-    shortcuts, which COSMIC runs (Flippy's own key settings don't apply here)."""
+    """Everything the Setup page shows, as plain data: sign-ins, open at login and COSMIC's shortcuts, which COSMIC
+    runs (Flippy's own key settings don't apply here). No screen or accessibility keys: those are macOS's
+    permissions, and flippy/shell/setup.py page_state counts a missing "screen" as granted."""
     bound = flippy_shortcuts()
     names = {w[1]: w[0] for w in WANTED}
     gone = missing(bound)
     return {
-        "claude": claude_logged_in(), "codex": codex_logged_in(),
-        "screen": True, "accessibility": True,  # the portal asks when needed; nothing to grant up front
+        "claude": logged_in("claude"), "codex": logged_in("codex"),
         "login_item": desktop.autostart_on(), "login_item_allowed": not current().demo,
-        "app": None, "app_name": None,
         "act_note": ("For desktop tasks, Flippy turns on Linux's accessibility layer (apps already open may need a "
                      "restart to show their controls). The first time it clicks by position, COSMIC asks once to allow "
                      "remote desktop. Both need COSMIC Epoch 1.7 or newer."),
@@ -110,13 +100,6 @@ def state():
 
 
 # ---- actions
-def claude_cli():
-    """The CLI the Agent SDK uses: its bundled copy, else `claude` on PATH."""
-    import claude_agent_sdk
-    bundled = os.path.join(os.path.dirname(claude_agent_sdk.__file__), "_bundled", "claude")
-    return bundled if os.path.exists(bundled) else "claude"
-
-
 class NoTerminal(ValueError):
     """No terminal app to run it in. args: (the command for them to run themselves, what to do after). A
     ValueError, so the page shows it as the action's error."""
@@ -129,13 +112,6 @@ def terminal_argv(cmd, which=shutil.which):
     """The argv that runs the shell command `cmd` in the first installed terminal, or None."""
     term = next((t for t in TERMINALS if which(t[0])), None)
     return term + ["sh", "-c", cmd] if term else None
-
-
-def terminal_env():
-    """The environment for a terminal Flippy opens: without Flippy's own variables, which every shell in it would
-    inherit (later `flippy-ask` commands there would act on the wrong profile), like flippy/mac/setup.py."""
-    return {k: v for k, v in os.environ.items()
-            if not k.startswith(("FLIPPY_", "PYTHON")) and k != "ANTHROPIC_API_KEY"}
 
 
 def _in_terminal(cmd, shown, after=""):
@@ -216,20 +192,11 @@ def open_keyboard_settings():
     subprocess.Popen(["cosmic-settings", "keyboard"], start_new_session=True)
 
 
-def set_login_item(on):
-    if current().demo:
-        return  # the development profile never installs or removes login items
-    desktop.set_autostart(on)
-
-
 ACTIONS = {
     "claude": open_login_terminal, "codex": open_codex_login,
-    "shortcuts": add_missing_shortcuts, "keyboard": open_keyboard_settings,
-    "login_on": lambda: set_login_item(True), "login_off": lambda: set_login_item(False),
+    "shortcuts": add_missing_shortcuts, "keyboard": open_keyboard_settings, **login_items(desktop.set_autostart),
 }
 
 
 def act(name):
-    if name not in ACTIONS:
-        raise ValueError(f"unknown setup step {name}")
-    ACTIONS[name]()
+    run(ACTIONS, name)

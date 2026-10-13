@@ -7,6 +7,7 @@ const CELL = 18;
 const SPRITE_PX = 4;          // themes.sprite_px(1.0): screen px per pixel-art cell
 const IMAGE_PX = 64;          // pointers.IMAGE_PX: an imported image's long edge at size 1.0
 const CHECK_A = "#525259", CHECK_B = "#6b6b73";
+const KEYS = { p: "pencil", f: "fill", t: "hotspot" };  // the studio's tool keys
 
 const hexToRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
 const rgbToHex = (rgb) => "#" + rgb.map((v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, "0")).join("");
@@ -45,10 +46,11 @@ function sharpCanvas(cls, w, h) {
 
 F.openStudio = (data, host, onDone) => {
   const [GW, GH] = data.grid, RES = data.res, PALETTE = data.palette, BRUSHES = data.brushes;
+  const blank = () => Array.from({ length: GH }, () => Array(GW).fill(null));
   const S = {
     mode: data.mode, tool: data.mode === "image" ? "hotspot" : "pencil", mirror: false, brush: BRUSHES[1],
     color: "#000000", hsv: [0, 0, 0], sliders: "hsb", hotspot: data.hotspot.slice(), undo: [],
-    cells: data.cells ? data.cells.map((r) => r.slice()) : Array.from({ length: GH }, () => Array(GW).fill(null)),
+    cells: data.cells ? data.cells.map((r) => r.slice()) : blank(),
     smooth: null, image: null, crisp: !!data.crisp, flip: data.flip !== false, last: null, erasing: false,
   };
   const smoothCanvas = () => { const c = document.createElement("canvas"); c.width = GW * RES; c.height = GH * RES; return c; };
@@ -118,7 +120,7 @@ F.openStudio = (data, host, onDone) => {
     ctx.restore();
     S.last = p;
   };
-  const fillSmooth = (x, y, col) => {  // tolerant of soft brush edges, like pixelart.fill_smooth
+  const fillSmooth = (x, y, col) => {  // tolerant of soft brush edges (a 48 per channel match)
     const k = RES / CELL, sx = Math.floor(x * k), sy = Math.floor(y * k), W = GW * RES, H = GH * RES;
     if (sx < 0 || sy < 0 || sx >= W || sy >= H) return;
     const ctx = S.smooth.getContext("2d"), img = ctx.getImageData(0, 0, W, H), d = img.data;
@@ -349,7 +351,7 @@ F.openStudio = (data, host, onDone) => {
       el("div", { class: "line" }, current, hex, sbtn("Eyedropper", () => F.call("eyedropper"), { title: "Pick a color from anywhere on the screen" })),
       el("div", {}, chans.map((c) => c.row), el("div", { class: "line", style: "justify-content:flex-end;margin-top:2px" }, rgbButton)),
       el("div", {}, el("h4", {}, "Start from"), el("div", { class: "line", style: "justify-content:flex-start;gap:6px" },
-        sbtn("Blank", () => { snapshot(); S.cells = Array.from({ length: GH }, () => Array(GW).fill(null)); if (S.mode === "smooth") S.smooth = smoothCanvas(); redraw(); }),
+        sbtn("Blank", () => { snapshot(); S.cells = blank(); if (S.mode === "smooth") S.smooth = smoothCanvas(); redraw(); }),
         ...["hand", "arrow"].map((k) => sbtn(k[0].toUpperCase() + k.slice(1), async () => {
           const t = await F.call("studio_template", { kind: k });
           snapshot(); S.cells = t.cells; S.hotspot = t.hotspot; if (S.mode === "smooth") S.smooth = cellsToSmooth(); redraw();
@@ -374,12 +376,12 @@ F.openStudio = (data, host, onDone) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
     if (k === "escape") close();
-    else if (S.mode !== "image" && { p: "pencil", f: "fill", t: "hotspot" }[k]) setTool({ p: "pencil", f: "fill", t: "hotspot" }[k]);
+    else if (S.mode !== "image" && KEYS[k]) setTool(KEYS[k]);
     else if (S.mode !== "image" && k === "m") { const box = mirrorBox.querySelector("input"); box.checked = !box.checked; S.mirror = box.checked; redraw(); }
     else return;
     e.preventDefault();
   });
-  function close() { studio.remove(); offColor && offColor(); F.studioDemo = null; host.dispatchEvent(new Event("studio-closed")); }
+  function close() { studio.remove(); offColor(); F.studioDemo = null; host.dispatchEvent(new Event("studio-closed")); }
 
   host.replaceChildren(studio);
   // for the scripted demo (flippy-ask demo-pointer): the same steps a person would take
@@ -395,7 +397,7 @@ F.openStudio = (data, host, onDone) => {
     if (S.mode === "image") S.image = await loadImage(data.image);
     setTool(S.tool); showStyle(); pick("#000000"); redraw();
     studio.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    board.focus && studio.focus({ preventScroll: true });
+    studio.focus({ preventScroll: true });
   })();
   return close;
 };

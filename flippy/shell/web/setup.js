@@ -5,6 +5,8 @@
 const F = window.F, el = F.el;
 let last = null, timer = null;
 
+const onSetup = () => location.hash.slice(1) === "setup";
+const step = (ok, n, title) => el("h2", {}, el("span", { class: "step" + (ok ? " done" : "") }, ok ? F.svg("check") : n), title);
 const status = (ok, yes, no) => el("span", { class: "status" + (ok ? " ok" : "") }, F.svg(ok ? "check" : "dots"), ok ? yes : no);
 
 function providerRow(key, title, connected) {
@@ -39,7 +41,7 @@ function build(s) {
     el("div", { class: "hero" }, el("img", { class: "mark", src: s.mark, alt: "" }),
       el("div", {}, el("h1", {}, "Hi, I’m Flippy."), el("p", { class: "lede" }, "Ask about anything on your screen. I’ll point it out."))));
 
-  wrap.append(el("h2", {}, el("span", { class: "step" + (s.connected ? " done" : "") }, s.connected ? F.svg("check") : "1"), "Connect"),
+  wrap.append(step(s.connected, "1", "Connect"),
     el("p", { class: "sub" }, "Use the subscription you’ve already got."),
     el("div", { class: "card" }, providerRow("claude", "Claude", s.claude), providerRow("codex", "ChatGPT", s.codex), useRow));
 
@@ -58,14 +60,14 @@ function build(s) {
       el("div", { class: "row" }, el("div", { class: "text" }, el("span", { class: "label" }, "Restart Flippy"),
         el("div", { class: "help" }, "macOS applies new permissions after a restart. In System Settings, add Flippy with + if dragging it in doesn’t work.")),
         el("div", { class: "control" }, el("button", { class: "btn", onclick: () => act("restart") }, "Restart"))));
-    wrap.append(el("h2", {}, el("span", { class: "step" + (s.screen && s.accessibility ? " done" : "") }, s.screen && s.accessibility ? F.svg("check") : "2"), "Permissions"),
+    wrap.append(step(s.screen && s.accessibility, "2", "Permissions"),
       el("p", { class: "sub" }, "Let me see your screen and lend a hand."), perms);
   }
 
   // macOS: Flippy's own hotkeys. COSMIC: the shortcuts COSMIC runs for Flippy (flippy/linux/setup.py).
   const first = !mac && s.shortcuts && s.shortcuts.length ? s.shortcuts[0] : null;
   const shortcutsOk = mac || !(s.shortcuts_missing || []).length;
-  wrap.append(el("h2", {}, el("span", { class: "step" + (shortcutsOk ? " done" : "") }, shortcutsOk ? F.svg("check") : (mac ? "3" : "2")), "Your shortcut"),
+  wrap.append(step(shortcutsOk, mac ? "3" : "2", "Your shortcut"),
     el("p", { class: "sub" }, "That’s how you call me, from any app."),
     el("div", { class: "card" }, el("div", { class: "row" },
       el("div", { class: "text" }, el("span", { class: "label" }, mac ? "Ask about the screen" : first ? first.label : "Flippy’s shortcuts"),
@@ -75,15 +77,12 @@ function build(s) {
         !shortcutsOk ? el("button", { class: "btn", onclick: () => act("shortcuts") }, "Add them") : null,
         el("button", { class: "btn quiet", onclick: () => F.go("settings/shortcuts") }, mac ? "Change" : "All shortcuts")))));
 
-  {
-    const sw = el("input", { type: "checkbox", role: "switch", class: "switch", id: "login-item", checked: s.login_item,
-      disabled: !s.login_item_allowed, onchange: (e) => act(e.target.checked ? "login_on" : "login_off") });
-    wrap.append(el("h2", {}, "Startup"), el("div", { class: "card" }, el("div", { class: "row" },
-      el("div", { class: "text" }, el("label", { class: "label", for: "login-item" }, "Launch at login"),
-        el("div", { class: "help" }, s.login_item_allowed ? (mac ? "Flippy starts in the menu bar when you log in." : "Flippy starts in the panel when you log in.")
-          : (mac ? "Run the installed Flippy.app to turn this on." : "Not available in the development profile."))),
-      el("div", { class: "control" }, sw))));
-  }
+  wrap.append(el("h2", {}, "Startup"), el("div", { class: "card" }, el("div", { class: "row" },
+    el("div", { class: "text" }, el("label", { class: "label", for: "login-item" }, "Launch at login"),
+      el("div", { class: "help" }, s.login_item_allowed ? `Flippy starts in the ${mac ? "menu bar" : "panel"} when you log in.`
+        : mac ? "Run the installed Flippy.app to turn this on." : "Not available in the development profile.")),
+    el("div", { class: "control" }, el("input", { type: "checkbox", role: "switch", class: "switch", id: "login-item", checked: s.login_item,
+      disabled: !s.login_item_allowed, onchange: (e) => act(e.target.checked ? "login_on" : "login_off") })))));
 
   wrap.append(el("div", { class: "foot" }, el("span", { class: "sub", style: "margin:0" }, s.done ? "All set. You stay in control." : "You stay in control."),
     el("button", { class: "btn primary", onclick: () => F.call("close").catch(() => {}) }, "Done")));
@@ -92,7 +91,7 @@ function build(s) {
 
 // The native, draggable app icon sits over .drag-app (flippy/mac/shell_window.py drag_target).
 function placeDrag() {
-  const spot = location.hash.slice(1) === "setup" && document.querySelector(".drag-app");
+  const spot = onSetup() && document.querySelector(".drag-app");
   if (!spot) return F.call("drag_target", { rect: null }).catch(() => {});
   const r = spot.getBoundingClientRect(), page = document.getElementById("page").getBoundingClientRect();
   const visible = r.bottom > page.top && r.top < page.bottom;
@@ -107,7 +106,7 @@ function show(s) {
   if (pending !== F.setupPending) { F.setupPending = pending; F.renderNav(location.hash.slice(1)); }
   const changed = JSON.stringify(s) !== JSON.stringify(last);
   last = s;
-  if (location.hash.slice(1) !== "setup" || !changed) return;
+  if (!onSetup() || !changed) return;
   const page = document.getElementById("page");
   if (page.querySelector("select:focus")) return;  // don't close an open menu under the pointer
   const y = page.scrollTop;
@@ -120,11 +119,13 @@ F.checkSetup = () => F.call("setup_state").then(show).catch(() => {});
 
 F.renderSetup = () => {
   clearInterval(timer);
-  timer = setInterval(() => { if (location.hash.slice(1) === "setup") F.checkSetup(); else clearInterval(timer); }, 1000);
-  if (last) { setTimeout(() => requestAnimationFrame(placeDrag)); return build(last); }
-  else requestAnimationFrame(placeDrag);
-  F.checkSetup().then(() => { if (last && location.hash.slice(1) === "setup") { const p = document.getElementById("page"); p.replaceChildren(build(last)); requestAnimationFrame(placeDrag); } });
-  return el("div", { class: "content" }, el("h1", {}, "Setup"));
+  timer = setInterval(() => (onSetup() ? F.checkSetup() : clearInterval(timer)), 1000);
+  if (!last) {  // show() builds the page when the first state arrives
+    F.checkSetup();
+    return el("div", { class: "content" }, el("h1", {}, "Setup"));
+  }
+  requestAnimationFrame(placeDrag);
+  return build(last);
 };
-F.on("field:provider.mode", () => { if (location.hash.slice(1) === "setup") F.checkSetup(); });
+F.on("field:provider.mode", () => { if (onSetup()) F.checkSetup(); });
 })();

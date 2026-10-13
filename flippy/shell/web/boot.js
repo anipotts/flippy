@@ -3,14 +3,12 @@
   "use strict";
   const F = window.F;
   F.call("mark", { name: "script" }).catch(() => {});
-  F.state = await F.call("state");
-  for (const p of F.state.pages) for (const f of p.fields) F.fields.set(f.id, f);
+  await F.load();
   document.getElementById("version").textContent = F.state.version ? `Flippy ${F.state.version}` : "Flippy";
-  F.applyMode();
-  const route = F.state.route || location.hash.slice(1) || "settings/general";
+  const route = F.state.route || F.here();
   if (location.hash.slice(1) !== route) history.replaceState(null, "", "#" + route);
   F.render(route);
-  if (F.checkSetup) F.checkSetup();
-  if (F.state.demo) F.runPointerDemo(F.state.demo);  // the sidebar's dot until setup is done
+  if (route !== "setup") F.checkSetup();  // the sidebar's dot until setup is done (Setup checks by itself)
+  if (F.state.demo) F.runPointerDemo(F.state.demo);  // flippy-ask demo-pointer, asked before the page loaded
   requestAnimationFrame(() => F.call("mark", { name: "painted" }).catch(() => {}));
 })();

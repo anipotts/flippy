@@ -94,11 +94,11 @@ class Setup(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "custom")
             setup.add_shortcuts([0], path)
-            with patch.object(setup, "SHORTCUTS", path), patch.object(setup, "claude_logged_in", return_value=True), \
-                    patch.object(setup, "codex_logged_in", return_value=False):
+            with patch.object(setup, "SHORTCUTS", path), patch.object(setup, "logged_in", side_effect=lambda n: n == "claude"):
                 s = setup.state()
-        self.assertTrue(s["claude"] and s["screen"])
+        self.assertTrue(s["claude"])
         self.assertFalse(s["codex"])
+        self.assertNotIn("screen", s)  # nothing to grant on COSMIC: page_state counts it as done
         self.assertEqual(s["shortcuts"], [{"label": "Ask about the screen", "keys": ["Super", "Shift", "Space"],
                                            "command": "flippy-ask"}])
         self.assertEqual(len(s["shortcuts_missing"]), 3)

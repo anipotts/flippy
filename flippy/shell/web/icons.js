@@ -23,6 +23,5 @@ window.ICONS = {
   rename: '<path d="M3 15h4M11 4l5 5-7 7H4v-5z"/>',
   export: '<path d="M10 13V4M6.5 7.5L10 4l3.5 3.5M4 14.5v1A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5v-1"/>',
   play: '<path d="M6.5 4.5v11l9-5.5z"/>',
-  undo: '<path d="M7 5L3.5 8.5 7 12M4 8.5h7.5a4.5 4.5 0 0 1 0 9H9"/>',
 };
 window.icon = (name, cls) => `<svg viewBox="0 0 20 20" aria-hidden="true"${cls ? ` class="${cls}"` : ""}>${window.ICONS[name] || ""}</svg>`;

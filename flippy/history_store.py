@@ -4,7 +4,7 @@ Text only, in the profile's config folder (history.sqlite3, owner-only): never s
 Kept history.days days (30 by default); off when history.keep is off. One row per question or desktop task, so
 it doesn't need to guess which uses belong together.
 
-The page reads it through list_entries / get / delete / clear (flippy/shell/bridge.py); the daemon adds rows.
+The page reads it through list_entries / delete / clear (flippy/shell/bridge.py); the daemon adds rows.
 """
 import json
 import os
@@ -100,11 +100,6 @@ def list_entries(offset=0, limit=50, query=None):
 
 def count():
     return _conn().execute("SELECT count(*) FROM entries").fetchone()[0]
-
-
-def get(entry_id):
-    r = _conn().execute("SELECT * FROM entries WHERE id = ?", (int(entry_id),)).fetchone()
-    return _row(r) if r else None
 
 
 def delete(entry_id):
