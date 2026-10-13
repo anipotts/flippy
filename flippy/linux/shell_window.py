@@ -177,10 +177,31 @@ class GtkHost(Host):
             return os.path.basename(path), f.read()
 
     def sample_color(self, done):
-        done(None)  # Wayland has no screen color picker for apps (the page hides Eyedropper off macOS)
+        """The Screenshot portal's color picker: click anywhere on screen. done(None) when cancelled, or when the
+        portal can't (some answer PickColor with an error; COSMIC's from mid-2026 did)."""
+        from .screenshot import Screenshotter
+
+        def picked(rgb, _failed):
+            done("#" + "".join(f"{round(v * 255):02x}" for v in rgb) if rgb is not None else None)
+        try:
+            Screenshotter().pick_color(picked)
+        except Exception:  # no session bus or portal
+            done(None)
 
     def set_chrome(self, mode):
         self.window.set_chrome(mode)
+
+    def setup_state(self):
+        from . import setup
+        return setup.state()
+
+    def setup_action(self, name):
+        from . import setup
+        setup.act(name)
+
+    def close(self):
+        if self.window.win is not None:
+            GLib.idle_add(lambda: self.window.win is not None and self.window.win.close() and False)
 
 
 _css_ready = False
@@ -242,9 +263,15 @@ class AppWindow:
         rgba.parse(CHROME[mode][0])
         self.web.set_background_color(rgba)
 
+    @property
+    def route(self):
+        """The page showing now ("setup", "settings/appearance"...), or the one it's opening on."""
+        return self.bridge.current or self.bridge.route
+
     def present(self, route=None):
         if route:
             self.bridge.route = route    # read by the page when it loads
+            self.bridge.current = route
             self._push("route", route)   # and sent, in case it already has
         if self.win is not None:
             self.win.present()
