@@ -8,13 +8,13 @@ import os
 import plistlib
 import subprocess
 
-from AppKit import (NSApp, NSAppearance, NSBackingStoreBuffered, NSColor, NSImage, NSImageView,
+from AppKit import (NSAlert, NSAlertFirstButtonReturn, NSApp, NSAppearance, NSBackingStoreBuffered, NSColor, NSImage, NSImageView,
                     NSScreen, NSScrollView, NSWindow, NSWindowStyleMaskClosable,
                     NSWindowStyleMaskTitled, NSImageScaleProportionallyUpOrDown, NSControlSizeSmall, NSSwitch)
 from Foundation import NSMakeRect, NSObject
 from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 
-from .. import loop, settings
+from .. import claude_login, loop, settings
 from ..profile import current
 from . import hotkeys
 from .permission_buddy import app_icon, reveal_app
@@ -55,17 +55,19 @@ def claude_cli():
 
 # ---- actions
 def terminal_env():
-    """The environment for opening Terminal: without Flippy's own variables, which a Terminal started from here
+    """The environment for opening Terminal (Codex's sign-in): without Flippy's own variables, which a Terminal started from here
     would pass on to every shell in it (FLIPPY_BUNDLED there made later Flippy commands act like the app)."""
     return {k: v for k, v in os.environ.items()
             if not k.startswith(("FLIPPY_", "PYTHON")) and k not in ("SSL_CERT_FILE", "ANTHROPIC_API_KEY")}
 
 
-def open_login_terminal():
-    """Run `claude` in Terminal so the user can /login with their Pro/Max account."""
-    cmd = f"unset ANTHROPIC_API_KEY; '{claude_cli()}'"
-    script = f'tell application "Terminal" to do script "{cmd}"\ntell application "Terminal" to activate'
-    subprocess.Popen(["osascript", "-e", script], env=terminal_env())
+def confirm_claude_reconnect():
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_("Claude is already connected")
+    alert.setInformativeText_("Sign in again, for example with a different account? Claude's sign-in page opens in your browser.")
+    alert.addButtonWithTitle_("Sign In Again")
+    alert.addButtonWithTitle_("Cancel")
+    return alert.runModal() == NSAlertFirstButtonReturn
 
 
 def open_codex_login():
@@ -147,8 +149,8 @@ class SetupWindow:
         style.rule(b, 88, WIDTH - 48)
 
         style.section(b, 1, "Connect", "Use the subscription you've already got.", 100, WIDTH)
-        self.cards = {}
-        self._provider_card("claude", "Claude", "claude.png", 24, 148, open_login_terminal)  # centered in its row
+        self.cards, self.claude_failed = {}, False
+        self._provider_card("claude", "Claude", "claude.png", 24, 148, self._claude_login)  # centered in its row
         self._provider_card("codex", "ChatGPT", "openai.png", 286, 148, open_codex_login)
         style.text(b, "Use", 24, 222, 130, 12, bold=True)
         style.text(b, "Auto picks the only connected subscription.", 24, 240, 265, 10, muted=True)
@@ -326,6 +328,13 @@ class SetupWindow:
         self.provider_choice.layer().setBorderColor_(style.color(style.TEXT if needs_pick else style.OUTLINE).CGColor())
         self.provider_choice.layer().setBorderWidth_(2 if needs_pick else 1)
 
+    def _claude_login(self):
+        """Claude's sign-in page in the browser, no Terminal (flippy/claude_login.py)."""
+        if claude_logged_in() and not claude_login.waiting() and not confirm_claude_reconnect():
+            return
+        self.claude_failed = not claude_login.start(claude_cli())
+        self._refresh()
+
     def _choose_provider(self, value):
         settings.set("provider", "mode", value)
         self._refresh()
@@ -334,7 +343,13 @@ class SetupWindow:
         from ..providers import CONNECTION_STATUS
         claude = claude_logged_in()
         codex = CONNECTION_STATUS["codex"] is True
-        self._layout_card("claude", "Connected" if claude else "Not connected", "Reconnect…" if claude else "Log in…")
+        if claude_login.waiting():
+            status = "Finish in your browser"
+        elif self.claude_failed:
+            status = "Couldn't open sign-in"
+        else:
+            status = "Connected" if claude else "Not connected"
+        self._layout_card("claude", status, "Reconnect…" if claude else "Log in…")
         self._layout_card("codex", "Connected" if codex else "Not connected", "Reconnect…" if codex else "Sign in…")
         for key, ok in (("screen", screen_ok()), ("accessibility", hotkeys.accessibility_trusted())):
             mark = self.marks[key]

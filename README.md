@@ -50,7 +50,7 @@ If anything goes wrong, paste the error back into the same chat and ask it to fi
    If macOS asks to install the Xcode Command Line Tools, click **Install**, wait for it to finish, then paste the command again. The first run downloads about 200 MB and takes a few minutes.
 3. **Wait for the setup window.** Flippy builds `~/Applications/Flippy.app` and opens it. It lives in the menu bar (the pointer icon), with no Dock icon.
 4. **Follow the setup window:**
-   - **Connect Claude.** It opens Terminal running Claude Code. Type `/login` and sign in with your Pro/Max account.
+   - **Connect Claude.** Click **Log in…** and sign in with your Pro/Max account on the page that opens in your browser.
    - **Screen Recording.** Needed so Flippy can see your screen. Turn on **Flippy** in System Settings → Privacy & Security → Screen & System Audio Recording, then click **Restart Flippy** in the setup window.
    - **Accessibility.** Needed for `/act` desktop tasks and the double-tap ⌘ pause. Turn on **Flippy** in System Settings → Privacy & Security → Accessibility, then restart Flippy.
    - **Open at login** (optional).
