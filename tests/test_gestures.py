@@ -10,8 +10,8 @@ class TestGestures(unittest.TestCase):
     def setUp(self):
         source = ast.parse((Path(__file__).parents[1] / 'flippy/mac/ui.py').read_text())
         platform = next(n for n in source.body if isinstance(n, ast.ClassDef) and n.name == 'Platform')
-        methods = [n for n in platform.body if isinstance(n, ast.FunctionDef)
-                   and n.name in ('_gesture', 'drag', 'scroll', 'key', 'type_text', 'click', '_check_physical_input')]
+        names = ('_gesture', 'drag', 'scroll', 'key', 'type_text', 'click', '_check_physical_input')
+        methods = [n for n in platform.body if isinstance(n, ast.FunctionDef) and n.name in names]
         now = [0.0]  # a fake clock: sleep advances it, so the held-input grace period ends without waiting
         clock = SimpleNamespace(monotonic=lambda: now[0],
                                 sleep=Mock(side_effect=lambda s: now.__setitem__(0, now[0] + s)))
@@ -26,7 +26,7 @@ class TestGestures(unittest.TestCase):
                             ('kCGEventLeftMouseDragged',3),('kCGEventLeftMouseUp',4),
                             ('kCGScrollEventUnitLine',5)]:
             setattr(self.q,name,value)
-        cls = type('Adapter', (), {name: namespace[name] for name in ('_gesture','drag','scroll','key','type_text','click','_check_physical_input')})
+        cls = type('Adapter', (), {name: namespace[name] for name in names})
         self.ui = cls()
         self.ui._can_post = Mock(return_value=None)
         self.ui._mouse = Mock()

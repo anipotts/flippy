@@ -25,12 +25,11 @@ every platform has for help mode. Review drives the rest through the controller.
 import asyncio
 import base64
 import io
-import os
 import threading
 import time
 from dataclasses import dataclass, field
 
-from . import loop, settings
+from . import loop
 
 FPS = 4                     # window grabs per second while recording
 MAX_SECONDS = 90            # stop by itself after this long
@@ -181,11 +180,6 @@ def question(rec, n_cuts, q, screen_size):
                                question=q)
 
 
-async def ask(brain, frames, screen_b64, screen_size, text, on_text=None):
-    """Provider-neutral ordered stills followed by the current pointing frame."""
-    return await brain.ask(text, screen_b64, screen_size, on_text=on_text, extra_images=frames)
-
-
 # ---- the feature: commands, recording thread, asking
 
 class Review:
@@ -199,7 +193,6 @@ class Review:
         self.recording = False
         self.stop_ev = None
         self.box = None
-        self.app_name = None
         self.owner = None
 
     def command(self, cmd):
@@ -234,7 +227,7 @@ class Review:
         self.owner.pending = False
         self.owner.drained.set()
         f.busy = False
-        self.rec, self.recording, self.app_name = Recording(), True, name
+        self.rec, self.recording = Recording(), True
         self.stop_ev = threading.Event()
         threading.Thread(target=self._grab, args=(handle, self.rec, self.stop_ev), daemon=True).start()
         self._card(f"Recording {name}", "Play your edit, then stop and ask about it. Only frames in memory, "
@@ -250,13 +243,11 @@ class Review:
             except Exception as e:  # the window went away, a capture failed: stop with what we have
                 _log(f"video: grab failed: {e}")
                 img = None
-            if img is None:
-                loop.idle_add(lambda: self.recording and self.rec is rec and not stop_ev.is_set() and self.stop() and False)
-                return
-            if stop_ev.is_set():
-                return
-            rec.add(img)
-            if rec.seconds >= MAX_SECONDS:
+            if img is not None:
+                if stop_ev.is_set():
+                    return
+                rec.add(img)
+            if img is None or rec.seconds >= MAX_SECONDS:
                 loop.idle_add(lambda: self.recording and self.rec is rec and not stop_ev.is_set() and self.stop() and False)
                 return
             next_t += 1 / FPS
@@ -339,9 +330,10 @@ class Review:
         await f._action_main(lambda: f.overlay.show_text("looking at your edit…", phase="thinking"), req)
         f.last_ask = time.monotonic()
         await f._action_main(lambda: f._start_playback(req.identity, screen.size, screen.original_size, frame=screen), req)
-        raw = await ask(f.brain, frames, screen.jpeg, screen.size,
-                        question(rec, n_cuts, q, screen.size),
-                        on_text=lambda delta: loop.idle_add(lambda: f._owns(req) and f._stream_text(req.identity, delta) and False))
+        # provider-neutral: the ordered stills, then the current screen to point at
+        raw = await f.brain.ask(
+            question(rec, n_cuts, q, screen.size), screen.jpeg, screen.size, extra_images=frames,
+            on_text=lambda delta: loop.idle_add(lambda: f._owns(req) and f._stream_text(req.identity, delta) and False))
         return raw, req.identity
 
     def _card(self, head, detail, buttons, timeout=None):

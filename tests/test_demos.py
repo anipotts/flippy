@@ -5,8 +5,7 @@ from flippy.demos import dispatch
 class DemoTests(unittest.TestCase):
     def test_does_not_dispatch_action_approval(self):
         host=SimpleNamespace()
-        for cmd in ('act test','action allow','nudge Allow once'):
-            if cmd.startswith('nudge '): continue
+        for cmd in ('act test','action allow'):
             self.assertEqual(dispatch(host,cmd,lambda *a,**k:None,lambda *a:None),(False,None))
     def test_existing_preview_and_point_commands(self):
         calls=[]; host=SimpleNamespace(preview=lambda **k:calls.append(k),demo_point=lambda *a:calls.append(a))

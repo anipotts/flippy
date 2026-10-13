@@ -204,17 +204,17 @@ class DesktopTools:
                     raise ActionError("Task stopped. Start a new /act request to continue.")
                 if name == "remember":
                     return self._remember(args)
-                step, tried = None, False
-                if name not in LOOK_TOOLS and name != "use_app" and self.snapshot is not None:
-                    step = (app_id(self.snapshot.target), act_memory.step_name(name, args))
+                step, tried, report = None, False, None
                 if name in LOOK_TOOLS:
                     self._validate(name, args)
-                if name not in LOOK_TOOLS:
+                else:
                     if self.snapshot is None:
                         # Nothing was done, so this isn't a reason to end the task: Claude asked to act before
                         # (or alongside) its first screenshot. Tell it, and let it look first.
                         return {"content": [{"type": "text", "text": "No input was made. Take a screenshot first, "
                                              "then act on what it shows."}], "is_error": True}
+                    if name != "use_app":
+                        step = (app_id(self.snapshot.target), act_memory.step_name(name, args))
                     if self.actions >= self.max_actions:
                         raise ActionError("Action limit reached. Start a new /act request to continue.")
                     self._validate(name, args)
@@ -231,8 +231,6 @@ class DesktopTools:
                     report = await self.perform(name, args, shot, self.cancel)
                     self.actions += 1
                     self._journal(step, True)
-                else:
-                    report = None
                 if self.cancel.is_set():
                     raise ActionError("Task stopped.")
                 self.snapshot = await self.capture()
@@ -255,8 +253,7 @@ class DesktopTools:
                     self.snapshot = None
                     return {"content": note + [{"type": "text", "text": str(again)}], "is_error": True}
                 except Exception as fatal:
-                    err = fatal
-                    return self._fail(err)
+                    return self._fail(fatal)
             except Exception as err:
                 return self._fail(err)
 

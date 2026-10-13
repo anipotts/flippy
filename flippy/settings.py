@@ -118,8 +118,6 @@ SETTINGS = {
                            *_BOUNDS.get((section, key), (None, None, None, 0)))
     for section, values in DEFAULTS.items() for key, value in values.items()
 }
-DEFAULTS = {section: {key: SETTINGS[section, key].default for key in values}
-            for section, values in DEFAULTS.items()}
 CHOICES = {key: [value for value, _ in spec.choices]
            for key, spec in SETTINGS.items() if spec.choices}
 
@@ -141,15 +139,6 @@ ACT_LIMITS = {
     "per_app": ActionLimits(40, 2000, 600, 64),
     "auto": ActionLimits(40, 2000, 600, 64),
 }
-
-
-def action_limits(mode=None):
-    return ACT_LIMITS[mode if mode is not None else get("act", "mode")]
-
-
-def valid_bundle_id(value):
-    return (type(value) is str and len(value) <= 255
-            and re.fullmatch(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", value) is not None)
 
 
 def remove_allowed_app(bundle_id):
@@ -204,7 +193,8 @@ def _valid(section, key, value):
     default = spec.default
     if (section, key) == ("act", "allowed_apps"):
         return (type(value) is list and len(value) <= 128
-                and all(valid_bundle_id(app) for app in value)
+                and all(type(app) is str and len(app) <= 255
+                        and re.fullmatch(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", app) for app in value)
                 and len(dict.fromkeys(value)) == len(value))
     if (section, key) == ("codex", "model"):
         return type(value) is str and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value) is not None
@@ -297,10 +287,6 @@ def on_change(fn):
 def off_change(fn):
     if fn in _listeners:
         _listeners.remove(fn)
-
-
-def save():
-    _save(_data)
 
 
 def _save(data):

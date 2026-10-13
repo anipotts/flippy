@@ -93,7 +93,6 @@ class Deck:
 @dataclass
 class Dealer:
     """Feed it the same samples as watch.Watcher; it says when it's a good moment for a tip."""
-    every_s: float = EVERY_S
     _app: str | None = None
     _since: float = 0.0
     _last_tip_t: float = -1e9
@@ -120,7 +119,7 @@ class Dealer:
         self._prev_events = s.events
         while self._activity and self._activity[0][0] < s.t - 60:
             self._activity.popleft()
-        if s.t - self._since < WARMUP_S or s.t - self._last_tip_t < self.every_s:
+        if s.t - self._since < WARMUP_S or s.t - self._last_tip_t < EVERY_S:
             return False
         if s.idle_s is None or not (CALM_IDLE[0] <= s.idle_s <= CALM_IDLE[1]):
             return False

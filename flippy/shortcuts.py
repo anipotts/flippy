@@ -75,12 +75,11 @@ def mac_problem(combo, parse, register_error=None, system=None):
     clash = (system if system is not None else system_shortcuts()).get((code, ns_mods(mods)))
     if clash:
         return f"macOS uses it for {clash}"
-    combo_key = "+".join(sorted(combo.lower().split("+")[:-1]) + [combo.lower().split("+")[-1]])
-    for other, what in APP_COMBOS.items():
-        parts = other.split("+")
-        if combo_key == "+".join(sorted(parts[:-1]) + [parts[-1]]):
-            return f"it's {what}"
-    return None
+    def keys(c):  # modifiers in any order
+        *mods, key = c.lower().split("+")
+        return sorted(mods), key
+    what = next((what for other, what in APP_COMBOS.items() if keys(other) == keys(combo)), None)
+    return f"it's {what}" if what else None
 
 
 # ---- COSMIC (RON files: `(modifiers: [Super, Shift], key: "space"): Spawn("...")`)

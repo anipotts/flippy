@@ -213,15 +213,6 @@ class TestLifecycle(unittest.IsolatedAsyncioTestCase):
         release.set()
         with self.assertRaises(asyncio.CancelledError): await task
         self.assertFalse(f.input_disabled)
-    async def test_video_uses_shared_provider_with_ordered_frames(self):
-        from flippy import video
-        from unittest.mock import AsyncMock
-        brain=SimpleNamespace(ask=AsyncMock(return_value='review'))
-        frames=[('t=0.0s','first'),('t=1.0s','last')]
-        on_text=Mock()
-        result=await video.ask(brain,frames,'current',(100,100),'question',on_text)
-        self.assertEqual(result,'review')
-        brain.ask.assert_awaited_once_with('question','current',(100,100),on_text=on_text,extra_images=frames)
 
 
 class TestRequest(unittest.TestCase):

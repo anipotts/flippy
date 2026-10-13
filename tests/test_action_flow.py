@@ -39,12 +39,8 @@ def frame(app='com.apple.TextEdit'):
 
 
 class TestApprovalFlow(unittest.IsolatedAsyncioTestCase):
-    async def approve(self, obj, shot, point, button='Allow once'):
-        def choose(title, text, buttons, **kwargs):
-            next(callback for label, callback in buttons if label == button)()
-        obj.ui.action_card.card.side_effect = choose
-        return await asyncio.wait_for(obj._action_approve('click',
-            {'x': point[0], 'y': point[1], 'reason': 'fixture'}, shot, obj.request), 1)
+    async def approve(self, obj, shot, point):
+        return await self.approve_named(obj, 'click', {'x': point[0], 'y': point[1], 'reason': 'fixture'}, shot)
 
     async def test_valid_app_grant_bypasses_card(self):
         obj, _ = controller()
@@ -77,11 +73,12 @@ class TestApprovalFlow(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.approve_named(obj, 'use_app', {'name': 'Spotify', 'reason': 'r'}))
         obj.ui.action_card.card.assert_called_once()
 
-    async def approve_named(self, obj, name, args, button='Allow once'):
+    async def approve_named(self, obj, name, args, shot=None):
         def choose(title, text, buttons, **kwargs):
-            next(callback for label, callback in buttons if label == button)()
+            next(callback for label, callback in buttons if label == 'Allow once')()
         obj.ui.action_card.card.side_effect = choose
-        return await asyncio.wait_for(obj._action_approve(name, args, frame('com.apple.Terminal'), obj.request), 1)
+        return await asyncio.wait_for(obj._action_approve(name, args, shot or frame('com.apple.Terminal'),
+                                                          obj.request), 1)
 
     async def test_browser_asks_without_persistent_grant_except_in_auto(self):
         obj, _ = controller('per_app', ['com.apple.Safari'])

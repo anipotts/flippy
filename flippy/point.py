@@ -2,11 +2,9 @@
 import re
 from dataclasses import dataclass
 
-# Clicky's regex, anchored to the end of the reply. Flippy adds an optional ":click" flag after the
-# label: a tutorial step the user has to do (click that thing) before the walkthrough goes on.
-POINT_RE = re.compile(r"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(:click)?(?::screen(\d+))?)\]\s*$")
-
-# Same tag, anywhere in the text (inline pointing: one tag right after each thing mentioned).
+# Clicky's tag, anywhere in the text (inline pointing: one tag right after each thing mentioned). Flippy adds an
+# optional ":click" flag after the label: a tutorial step the user has to do (click that thing) before the
+# walkthrough goes on.
 TAG_RE = re.compile(r"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(:click)?(?::screen(\d+))?)\]")
 TAG_PREFIX = "[POINT:"
 PUNCT = ".,;:!?"
@@ -15,7 +13,6 @@ PUNCT = ".,;:!?"
 # with Opus 5.x, pointing was equally accurate at full res in our tests (~2px), and the
 # bigger image makes small tray icons recognizable. Costs ~2x the image tokens of 1366.
 TARGET_LONG_EDGE = 1920
-TARGET_SIZES = [(1024, 768), (1280, 800), (1366, 768)]  # legacy, unused
 
 
 @dataclass
@@ -26,15 +23,11 @@ class Point:
     action: bool = False  # ":click": the user has to click it before the walkthrough goes on
 
 
-def parse_reply(text: str) -> tuple[str, Point | None]:
-    """Return (display text with tag stripped, Point or None)."""
-    m = POINT_RE.search(text)
-    if not m:
-        return text.strip(), None
-    clean = text[: m.start()].rstrip()
-    if m.group(1) is None:  # [POINT:none]
-        return clean, None
-    return clean, Point(int(m.group(1)), int(m.group(2)), (m.group(3) or "").strip(), bool(m.group(4)))
+def _point(m):
+    """The Point a TAG_RE match names, or None for [POINT:none]."""
+    if m.group(1) is None:
+        return None
+    return Point(int(m.group(1)), int(m.group(2)), (m.group(3) or "").strip(), bool(m.group(4)))
 
 
 def match_tag(text: str, i: int):
@@ -42,9 +35,7 @@ def match_tag(text: str, i: int):
     tag still streaming in, or None if it's just a bracket."""
     m = TAG_RE.match(text, i)
     if m:
-        pt = None if m.group(1) is None else Point(int(m.group(1)), int(m.group(2)), (m.group(3) or "").strip(),
-                                                   bool(m.group(4)))
-        return m.end(), pt
+        return m.end(), _point(m)
     rest = text[i:]
     if "]" not in rest and (TAG_PREFIX.startswith(rest) or rest.startswith(TAG_PREFIX)):
         return "wait"
@@ -67,8 +58,7 @@ def segments(raw: str, done: bool) -> list[Segment]:
     segs: list[Segment] = []
     pos = 0
     for m in TAG_RE.finditer(raw):
-        pt = None if m.group(1) is None else Point(int(m.group(1)), int(m.group(2)), (m.group(3) or "").strip(),
-                                                   bool(m.group(4)))
+        pt = _point(m)
         end = m.end()
         while end < len(raw) and raw[end] in PUNCT:  # "...Files [POINT..]." -> the "." belongs here
             end += 1
