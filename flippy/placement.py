@@ -88,4 +88,4 @@ def _positions(lo, hi):
     if hi <= lo:
         return [max(lo, 0)]
     out = list(range(int(lo), int(hi), STEP))
-    return out + [hi] if out[-1] != hi else out
+    return out + [hi] if not out or out[-1] != hi else out

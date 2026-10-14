@@ -112,8 +112,16 @@ class Placement(Base):
         self.learn((0, 0, 100, 100))
         self.answer(SHORT)
         self.ov.pinned = True
+        self.ov.avoid = self.ov.window = self.ov.detail = (0, 0, 10, 10)
         self.ov.clear()
         self.assertFalse(self.ov.learning or self.ov.pinned or self.ov.keep or self.ov.spot)
+        self.assertIsNone(self.ov.avoid or self.ov.window or self.ov.detail)  # a video answer doesn't reuse them
+
+    def test_a_notice_after_a_pinned_answer_fades(self):
+        self.answer(SHORT)
+        self.ov.pinned = True
+        self.ov.show_text("Flippy is acting")  # no pushpin on it, so nothing could unpin it
+        self.assertFalse(self.ov.pinned or self.ov.card.pinned)
 
 
 class LearnTag(unittest.TestCase):
@@ -139,6 +147,12 @@ class LearnTag(unittest.TestCase):
         pl.append("[LEARN:1,2,3,4] main")
         self.assertEqual(pl.learn().box, (1, 2, 3, 4))
 
+    def test_a_reply_of_only_tags_shows_no_tag(self):
+        pl = playback.Playback(0)
+        pl.finish("[LEARN:1,2,3,4][POINT:none]")
+        empty = [text for kind, text in pl.tick(1, playback.Options(), lambda x, y: (x, y)) if kind == "empty"]
+        self.assertNotIn("LEARN", empty[0])
+
 
 class Spot(unittest.TestCase):
     def test_never_on_what_to_keep_when_theres_room(self):
@@ -149,6 +163,11 @@ class Spot(unittest.TestCase):
     def test_near_an_edge_on_an_empty_screen(self):
         x, y = placement.best_spot(W, H, 360, 180)
         self.assertEqual(min(x, W - 360 - x, y, H - 180 - y), placement.GAP)
+
+    def test_a_card_nearly_as_big_as_the_room(self):
+        for w, h, cw, ch in ((1440, 900, 480, 749.5), (632.5, 900, 600, 180)):  # fractional sizes, as macOS gives
+            x, y = placement.best_spot(w, h, cw, ch, top=40, bottom=110)
+            self.assertTrue(0 <= x <= w - cw)
 
     def test_detail_from_a_screenshot(self):
         from PIL import Image, ImageDraw
@@ -231,6 +250,17 @@ class PinTiming(unittest.TestCase):
 
 
 @unittest.skipUnless(sys.platform == "darwin", "macOS Accessibility")
+class WorkArea(unittest.TestCase):
+    def note(self, found, now):
+        f = types.SimpleNamespace(ui=types.SimpleNamespace(work_area=lambda: now), overlay=types.SimpleNamespace())
+        daemon.Flippy._note_focus(f, None, found)
+        return f.overlay.avoid
+
+    def test_from_the_box_else_read_now(self):
+        self.assertEqual(self.note(((1, 1, 5, 5), None), ((9, 9, 5, 5), None)), (1, 1, 5, 5))
+        self.assertEqual(self.note(None, ((9, 9, 5, 5), None)), (9, 9, 5, 5))  # flippy-ask q, or the box was closed
+
+
 class FocusedArea(unittest.TestCase):
     """flippy/mac/ax.py focused_area: what counts as the text you're working in."""
     def area(self, tree, focused):

@@ -289,6 +289,7 @@ class Flippy:
         if self.busy:
             owner = self.request
             if not owner or owner.mode != "tutor":
+                self.focus_at_open = None
                 return
             owner.cancel(loop.source_remove)
             self._stop_playback()
@@ -304,6 +305,7 @@ class Flippy:
                 return False
             loop.timeout_add(25, ready)
             return
+        focus, self.focus_at_open = getattr(self, "focus_at_open", None), None  # set if this came from the box
         if question == "/act" or question.startswith("/act "):
             status = self.act(question[4:].strip())
             if self.action_tools is None:
@@ -333,7 +335,7 @@ class Flippy:
         if offer_act:
             question += "\n(you can act: if I'm asking you to do this for me, reply [ACT] only)"
         self.marked = False
-        self._run_request(req, self._ask(question, req, keep_marks=keep_marks), self._on_answer, ASK_TIMEOUT_S)
+        self._run_request(req, self._ask(question, req, keep_marks=keep_marks, focus=focus), self._on_answer, ASK_TIMEOUT_S)
 
     def _can_infer_act(self):
         """Can a plain question turn into a desktop task ("play some jazz in Spotify"), without typing /act?
@@ -677,10 +679,10 @@ class Flippy:
             self.overlay.show_text(result)
             self._schedule_fade(settings.get("timing", "max_show_seconds"))
 
-    async def _ask(self, question, req, keep_marks=False):
+    async def _ask(self, question, req, keep_marks=False, focus=None):
         frame = await self._capture_frame(req, keep_marks=keep_marks)
         detail = placement.Detail.from_frame(frame)  # off the main thread: where a docked answer can go
-        await self._action_main(lambda: (self._note_focus(detail), self.overlay.show_text("thinking…", phase="thinking"),
+        await self._action_main(lambda: (self._note_focus(detail, focus), self.overlay.show_text("thinking…", phase="thinking"),
                                          event("thinking")), req)
         if self.brain.dirty or (self.last_ask and time.monotonic() - self.last_ask > IDLE_RESET_S):
             await self.brain.reset()
@@ -728,10 +730,9 @@ class Flippy:
                        show_seconds=settings.get("timing", "show_seconds"),
                        max_show_seconds=settings.get("timing", "max_show_seconds"))
 
-    def _note_focus(self, detail):
+    def _note_focus(self, detail, found=None):
         """What a docked answer should stay off (flippy/placement.py): the text you were working in, as the box
-        opened, else now (flippy-ask q has no box); and the screenshot's busy parts."""
-        found, self.focus_at_open = getattr(self, "focus_at_open", None), None
+        opened (found), else now (flippy-ask q has no box); and the screenshot's busy parts."""
         if not (found and any(found)) and hasattr(self.ui, "work_area"):
             found = self.ui.work_area()
         area, window = found or (None, None)
@@ -952,6 +953,7 @@ class Flippy:
 
     def dismiss(self):
         self.followup_token = None
+        self.focus_at_open = None  # the box closed without a question
         req = getattr(self, "request", None)
         if self.action_tools:
             self.action_tools.stop()

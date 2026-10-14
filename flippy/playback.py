@@ -87,7 +87,7 @@ class Playback:
         segs = segments(self.raw, self.done)
         if self.done and not segs:
             self.finished = True
-            events.append(('empty', self.raw.strip() or '(no answer)'))
+            events.append(('empty', split_learn(self.raw, True)[1].strip() or '(no answer)'))
             return events + [('finish', self._fade(self.raw, opts))]
         if self.step >= len(segs) or not segs[self.step].complete: return events
         seg = segs[self.step]

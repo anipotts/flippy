@@ -68,6 +68,8 @@ class OverlayBase:
             self.card_t0 = time.monotonic()
         self.card = themes.Card(text=text, error=error, header=header, follow=bool(follow and self.target),
                                 meta=self.meta, pinned=self.pinned, **card_fields)
+        if self.pinned and not themes.pin_shown(self.card):  # a notice after a pinned answer: no pin to undo, so it fades
+            self.pinned = self.card.pinned = False
         place = settings.get("look", "card_place")  # auto: docks when they're learning something on screen
         if themes.pin_shown(self.card) and (place == "corner" or place == "auto" and self.learning):
             self.card_mode = "dock"
@@ -94,6 +96,7 @@ class OverlayBase:
         self.card = None
         self.pinned = self.learning = False
         self.keep = self.spot = None
+        self.avoid = self.window = self.detail = None
         self.target = None
         self.pos = None
         self.move_from = None
