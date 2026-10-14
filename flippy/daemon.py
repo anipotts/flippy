@@ -269,6 +269,7 @@ class Flippy:
             self.cancel_draw()
         if self.box.visible:  # hotkey again toggles the box closed
             self.box.hide()
+            self.focus_at_open = None
             return
         self._cancel_fade()  # keep the last answer up while typing a follow-up
         self._stop_playback()
@@ -1341,6 +1342,7 @@ class Flippy:
         event("draw_cancel")
         self._end_draw_mode()
         self.marked = False
+        self.focus_at_open = None
         self.overlay.clear()
 
     # --- fading ---

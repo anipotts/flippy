@@ -204,7 +204,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `look.player_shine` | `wmp` (gloss bars) or `none`: reflections on the Media Player theme's real glass (macOS, COSMIC) |
 | `look.pointer` | `theme`, `hand`, `ring`, `arrow`, `dot`, `glass` (Liquid Glass lens), `glasshand`, or `custom:<name>` |
 | `look.pointer_size`, `look.text_size`, `look.card_opacity` | numbers |
-| `look.card_place` | `auto` (default): when you're learning something on screen, the answer docks where it covers the least (away from what Claude says you need to see, the text you're working in, and busy parts of the screen) and the pointer moves on its own; otherwise it sits by the pointer. `corner`: always docked that way. `pointer`: never |
+| `look.card_place` | `auto` (default): when you're learning something on screen, the answer docks where it covers the least (away from what Claude says you need to see, the text you're working in on macOS, and busy parts of the screen) and the pointer moves on its own; otherwise it sits by the pointer. `corner`: always docked that way. `pointer`: never |
 | `timing.show_seconds`, `timing.max_show_seconds` | how long answers stay up (the pushpin on an answer keeps it until you dismiss it) |
 | `timing.step_pace` | `slow`, `normal`, `fast` |
 | `timing.speed` | walkthrough playback speed, `0.5`–`2.0` |
