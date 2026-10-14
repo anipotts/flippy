@@ -8,17 +8,17 @@ import os
 import subprocess
 
 import cairo
-from AppKit import (NSAlert, NSAlertFirstButtonReturn, NSApp, NSAppearance, NSBackingStoreBuffered, NSEvent,
-                    NSEventMaskKeyDown, NSNoTabsNoBorder, NSScrollView, NSTabView, NSTabViewItem, NSWindow,
-                    NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskTitled, NSTextField)
-from Foundation import NSMakeRect, NSObject
+from AppKit import (NSAlert, NSAlertFirstButtonReturn, NSApp, NSAppearance, NSEvent, NSEventMaskKeyDown,
+                    NSNoTabsNoBorder, NSScrollView, NSTabView, NSTabViewItem, NSWindowStyleMaskMiniaturizable,
+                    NSTextField)
+from Foundation import NSMakeRect
 
 from .. import pointers, settings, themes, updates
 from . import hotkeys, pointer_editor
 from .cairoview import cairo_view
 from . import setup_style as style
 from .setup_style import button
-from .widgets import Form, label, popup as _popup, set_popup, slider, target
+from .widgets import Form, WindowDelegate, label, popup as _popup, set_popup, slider, target
 
 MODELS = settings.options('claude', 'model')
 EFFORTS = settings.options('claude', 'effort')
@@ -65,10 +65,6 @@ def popup(*args, **kwargs):
     return style.outline_popup(_popup(*args, **kwargs))
 
 
-def checkbox(_title, on, fn, keep):
-    return style.check(on, fn, keep)
-
-
 class StyledForm(Form):
     """Form in the setup window's look: a divider above each group, muted descriptions."""
     def group(self, title, description=None):
@@ -77,11 +73,6 @@ class StyledForm(Form):
             style.rule(self.view, self.y, self.width - 2 * self.pad, x=self.pad)
             self.y += 4
         Form.group(self, title, description)
-
-
-class WindowDelegate(NSObject):
-    def windowWillClose_(self, note):
-        self.on_close()
 
 
 class KeyRecorder:
@@ -131,16 +122,6 @@ class SettingsWindow:
         self.keep = []
         self.thumbs = []
         self.recorders = []
-        self.win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            NSMakeRect(0, 0, WIDTH, HEIGHT),
-            NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable,
-            NSBackingStoreBuffered, False)
-        self.win.setTitle_("Flippy Settings")
-        self.win.setReleasedWhenClosed_(False)
-        self.win.center()
-        dark = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
-        self.win.setAppearance_(dark)
-        self.win.setBackgroundColor_(style.color(style.BACKGROUND))
         root = style.panel(WIDTH, HEIGHT)
         # pages switch with outlined buttons along the top (the native tab strip doesn't take the look)
         tabs = NSTabView.alloc().initWithFrame_(NSMakeRect(0, TAB_BAR, WIDTH, HEIGHT - TAB_BAR))
@@ -169,8 +150,8 @@ class SettingsWindow:
         style.place(root, tabs, 0, TAB_BAR)
         self.tabs = tabs
         self._show_tab("Appearance")
-        root.setAppearance_(dark)
-        self.win.setContentView_(root)
+        root.setAppearance_(NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua"))
+        self.win = style.window("Flippy Settings", WIDTH, HEIGHT, root, NSWindowStyleMaskMiniaturizable)
 
         self._listener = lambda s, k, v: self._changed(s, k)
         settings.on_change(self._listener)
@@ -222,8 +203,7 @@ class SettingsWindow:
         self._refresh_pointers()
 
     def _pointer_saved(self, name):
-        settings.set("look", "pointer", pointers.PREFIX + name)
-        self._refresh_pointers()
+        self._pointer_chosen(pointers.PREFIX + name)
 
     def _delete_current(self):
         name = self._current_custom()
@@ -313,7 +293,7 @@ class SettingsWindow:
         f.row("Start fresh session", "Forget the conversation so far", button("Reset", on_reset, f.keep))
         f.group("Updates", f"You have Flippy {updates.current_version()}.")
         f.row("Check for updates daily", "When a new version is out, Flippy offers to install it",
-              checkbox("", settings.get("updates", "check"), lambda on: settings.set("updates", "check", on), f.keep))
+              style.check(settings.get("updates", "check"), lambda on: settings.set("updates", "check", on), f.keep))
         f.row("Check now", None, button("Check", lambda: self.command("update"), f.keep))
         return f
 
@@ -328,7 +308,7 @@ class SettingsWindow:
         self.keep.append(f)
         f.group("Desktop tasks", "Ask Flippy to do something (\"open Spotify and play jazz\"), or start with /act.")
         f.row("Do things when I ask", "Off: only /act starts a task; everything else is answered and pointed at",
-              checkbox("", settings.get("act", "infer"), lambda on: settings.set("act", "infer", on), f.keep))
+              style.check(settings.get("act", "infer"), lambda on: settings.set("act", "infer", on), f.keep))
         f.row("Approval", None, self._setting_popup(f, "act", "mode", settings.options("act", "mode")))
         f.row("Ask once per app", "Approve an app when a task first needs it; remembered apps can be removed below.")
         f.row("Act automatically", "No approval cards, browsers included. Terminals, settings and password managers "
@@ -370,8 +350,8 @@ class SettingsWindow:
         f.row("Glide time", "Seconds for the pointer to travel between steps",
               self._setting_slider(f, "timing", "glide_seconds"))
         f.row("Wait for my clicks", "Tutorials pause on steps you have to do until you click the thing",
-              checkbox("", settings.get("timing", "wait_for_clicks"),
-                       lambda on: settings.set("timing", "wait_for_clicks", on), f.keep))
+              style.check(settings.get("timing", "wait_for_clicks"),
+                          lambda on: settings.set("timing", "wait_for_clicks", on), f.keep))
         f.row("Try it", None, button("Preview", on_preview, f.keep))
         return f
 
@@ -389,8 +369,8 @@ class SettingsWindow:
         f.group("Automation", "Lets scripts click and type with flippy-ask click / type / key (used for recording demos). "
                               "Off by default: when on, any program running as you can make Flippy click. "
                               "This is separate from /act approvals. Also needs the Accessibility permission.")
-        f.row("Let scripts click and type", None, checkbox("", settings.get("automation", "clicks"),
-                                                  lambda on: settings.set("automation", "clicks", on), f.keep))
+        f.row("Let scripts click and type", None, style.check(settings.get("automation", "clicks"),
+                                                      lambda on: settings.set("automation", "clicks", on), f.keep))
         f.group("In the question box")
         for cmd, what in (("/new", "Start a fresh session"), ("/settings", "Open this window"), ("Esc", "Close")):
             f.row(what, cmd)

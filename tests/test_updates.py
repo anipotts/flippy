@@ -111,7 +111,7 @@ class TestPackageInstall(unittest.TestCase):
         platform_patch = mock.patch.object(updates, "sys", SimpleNamespace(platform=self.runtime_platform))
         platform_patch.start()
         self.addCleanup(platform_patch.stop)
-        self.platform = updates.platform_name()
+        self.platform = "macos" if self.runtime_platform == "darwin" else "linux"
         self.requirements = updates.requirements_file()
         self.tmp = tempfile.TemporaryDirectory()
         self.base = self.tmp.name

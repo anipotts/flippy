@@ -8,17 +8,16 @@ import os
 import plistlib
 import subprocess
 
-from AppKit import (NSAlert, NSAlertFirstButtonReturn, NSApp, NSAppearance, NSBackingStoreBuffered, NSColor, NSImage, NSImageView,
-                    NSScreen, NSScrollView, NSWindow, NSWindowStyleMaskClosable,
-                    NSWindowStyleMaskTitled, NSImageScaleProportionallyUpOrDown, NSControlSizeSmall, NSSwitch)
-from Foundation import NSMakeRect, NSObject
+from AppKit import (NSAlert, NSAlertFirstButtonReturn, NSApp, NSAppearance, NSColor, NSImage, NSImageView,
+                    NSScreen, NSScrollView, NSImageScaleProportionallyUpOrDown, NSControlSizeSmall, NSSwitch)
+from Foundation import NSMakeRect
 from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 
 from .. import claude_login, loop, settings
 from ..profile import current
 from . import hotkeys
 from .permission_buddy import app_icon, reveal_app
-from .widgets import popup, target
+from .widgets import WindowDelegate, popup, target
 from . import setup_style as style
 
 APP = os.environ.get("FLIPPY_APP")  # set by Flippy.app's launcher; None when run from a terminal
@@ -106,9 +105,7 @@ def temporary_path(app):
 
 
 def login_item_on():
-    if current().demo:
-        return False
-    return os.path.exists(AGENT)
+    return not current().demo and os.path.exists(AGENT)
 
 
 def set_login_item(on):
@@ -130,17 +127,13 @@ def set_login_item(on):
 
 
 # ---- window
-class _Delegate(NSObject):
-    def windowWillClose_(self, note):
-        self.on_close()
-
-
 class SetupWindow:
     def __init__(self, open_settings, on_close):
         self.keep, self.marks, self.provider_buttons = [], {}, {}
         self.open_settings = open_settings
+        dark = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
         self.body = style.panel(WIDTH, BODY_HEIGHT)
-        self.body.setAppearance_(NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua"))
+        self.body.setAppearance_(dark)
         b = self.body
         installed = bool(APP and os.path.isdir(APP)) and not temporary_path(APP)
         style.place(b, style.flippy_mark(60), 20, 16, 60, 60)
@@ -207,7 +200,7 @@ class SetupWindow:
         screen_height = NSScreen.mainScreen().visibleFrame().size.height
         content_height = min(BODY_HEIGHT + FOOTER_HEIGHT + 40, max(360, screen_height - 64))
         root = style.panel(WIDTH, content_height)
-        root.setAppearance_(NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua"))
+        root.setAppearance_(dark)
         body_height = content_height - FOOTER_HEIGHT - 40
         self.scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, WIDTH, body_height))
         self.scroll.setDrawsBackground_(False)
@@ -241,17 +234,9 @@ class SetupWindow:
         for control, following in zip(self.controls, self.controls[1:] + self.controls[:1]):
             control.setNextKeyView_(following)
 
-        self.win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            NSMakeRect(0, 0, WIDTH, content_height),
-            NSWindowStyleMaskTitled | NSWindowStyleMaskClosable, NSBackingStoreBuffered, False)
-        self.win.setTitle_("Flippy")
-        self.win.setAppearance_(NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua"))
-        self.win.setBackgroundColor_(style.color(style.BACKGROUND))
-        self.win.setReleasedWhenClosed_(False)
-        self.win.setContentView_(root)
+        self.win = style.window("Flippy", WIDTH, content_height, root)
         self.win.setInitialFirstResponder_(self.provider_buttons['claude'])
-        self.win.center()
-        self.delegate = _Delegate.alloc().init()
+        self.delegate = WindowDelegate.alloc().init()
 
         def closed():
             loop.source_remove(self.poll_id)

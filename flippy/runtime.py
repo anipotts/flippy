@@ -16,10 +16,7 @@ def install_shutdown_handlers(quit_app, idle_add):
         if requested.is_set():
             return
         requested.set()
-        def quit_once():
-            quit_app()
-            return False
-        idle_add(quit_once)
+        idle_add(lambda: quit_app() and False)
 
     for name in ('SIGTERM', 'SIGINT', 'SIGHUP'):
         sig = getattr(signal, name, None)

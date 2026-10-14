@@ -31,20 +31,25 @@ CLICK_AREA = 0.01           # ...and this fraction of them changing = something 
 _names = {}
 
 
+def desktop_info(app_id):
+    """The app's .desktop file named after its id (as is, or lowercase), or None."""
+    for cand in (app_id, app_id.lower()):
+        try:
+            info = Gio.DesktopAppInfo.new(cand + ".desktop")
+        except TypeError:
+            info = None
+        if info:
+            return info
+    return None
+
+
 def app_name(app_id):
     """The app's display name from its .desktop file, else its id's last part. The file is usually named after
     the app id; when it isn't (gedit's window says "gedit", its file is org.gnome.gedit.desktop), it's the one
     whose window class or executable is the app id."""
     if app_id not in _names:
-        name = None
-        for cand in (app_id, app_id.lower()):
-            try:
-                info = Gio.DesktopAppInfo.new(cand + ".desktop")
-            except TypeError:
-                info = None
-            if info:
-                name = info.get_name()
-                break
+        info = desktop_info(app_id)
+        name = info.get_name() if info else None
         if name is None:
             want = app_id.lower()
             name = next((a.get_name() for a in Gio.AppInfo.get_all() if isinstance(a, Gio.DesktopAppInfo)
@@ -63,20 +68,20 @@ def frontmost():
     return tl.app_id, app_name(tl.app_id)
 
 
+def image(img):
+    """A wl.py capture (width, height, stride, mode, bytes) as a PIL image."""
+    from PIL import Image
+    w, h, stride, mode, data = img
+    return Image.frombuffer("RGBA" if mode in ("RGBA", "BGRA") else "RGBX", (w, h), data, "raw", mode, stride, 1)
+
+
 def _gray(img, w, h):
     """A capture shrunk to w x h grayscale values in 0-1."""
     from PIL import Image
-    iw, ih, stride, mode, data = img
-    im = Image.frombuffer("RGBA" if mode in ("RGBA", "BGRA") else "RGBX", (iw, ih), data, "raw", mode, stride, 1)
-    return [b / 255 for b in im.convert("L").resize((w, h), Image.BOX).tobytes()]
+    return [b / 255 for b in image(img).convert("L").resize((w, h), Image.BOX).tobytes()]
 
 
-def thumbnail(conn, toplevel, w=THUMB_W, h=THUMB_H):
-    img = conn.capture_window(toplevel)
-    return _gray(img, w, h) if img else None
-
-
-def sample(want_thumb=True):
+def sample():
     conn = wl.connection()
     tl = conn.active() if conn else None
     if tl is None or not tl.app_id or tl.app_id == wl.SELF_APP_ID:
@@ -86,7 +91,7 @@ def sample(want_thumb=True):
         t=time.monotonic(), app=tl.app_id, app_name=app_name(tl.app_id),
         idle_s=conn.idle_s(),
         events=conn.motions + RESUME_EVENTS * conn.resumes,
-        thumb=thumbnail(conn, tl) if want_thumb else None,
+        thumb=_gray(img, THUMB_W, THUMB_H) if (img := conn.capture_window(tl)) else None,
         windows=sorted(((t.ext_id, t.geometry) for t in same_app), key=lambda w: -w[1][2] * w[1][3]) or None,
     )
 

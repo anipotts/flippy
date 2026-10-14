@@ -57,9 +57,6 @@ class TestSettings(unittest.TestCase):
         self.assertEqual(settings.get("act", "allowed_apps"), [])
         self.assertEqual(settings.get("codex", "model"), "default")
         self.assertEqual(settings.get("codex", "effort"), "medium")
-        for mode in ("per_app", "auto", "every_input"):
-            settings.set("act", "mode", mode)
-            self.assertEqual(settings.action_limits(), settings.ACT_LIMITS[mode])
         strict = settings.ACT_LIMITS["every_input"]
         for mode in ("per_app", "auto"):
             limits = settings.ACT_LIMITS[mode]
@@ -150,7 +147,7 @@ class TestSettings(unittest.TestCase):
         self.assertEqual(changed, [])
 
     def test_failed_save_does_not_publish_and_removes_temporary_file(self):
-        settings.save()
+        settings._save(settings._data)
         before = Path(self.path).read_bytes()
         with patch.object(settings.os, "replace", side_effect=OSError("failure")):
             with self.assertRaises(OSError):
@@ -223,11 +220,6 @@ class TestSettings(unittest.TestCase):
                          ("claude.model", "other"), ("unknown.key", "x")):
             with self.assertRaises(ValueError):
                 settings.parse_value(key, raw)
-
-    def test_choice_metadata_matches_compatibility_table(self):
-        for key, spec in settings.SETTINGS.items():
-            if spec.choices:
-                self.assertEqual([v for v, _ in settings.options(*key)], settings.CHOICES[key])
 
 
 @unittest.skipUnless(sys.platform == "darwin", "macOS settings adapter")

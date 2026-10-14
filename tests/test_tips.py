@@ -63,12 +63,11 @@ class TestDeck(unittest.TestCase):
 
 
 class TestDealer(unittest.TestCase):
-    def run_sim(self, dealer, seconds, inputs_per_sample, pause_every=0, app=APP, t0=0.0, events0=0):
+    def run_sim(self, dealer, seconds, inputs_per_sample, pause_every=0, app=APP):
         """Working (inputs each sample), with an optional short pause every `pause_every` seconds."""
-        t, events, last_input, hits = t0, events0, t0, []
-        step = watch.SAMPLE_S
-        while t < t0 + seconds:
-            t += step
+        t, events, last_input, hits = 0.0, 0, 0.0, []
+        while t < seconds:
+            t += watch.SAMPLE_S
             pausing = pause_every and (t % pause_every) < 8
             if not pausing:
                 events += inputs_per_sample

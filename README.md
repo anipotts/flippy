@@ -8,7 +8,7 @@ Runs on **macOS 13+** (Apple Silicon or Intel) and on **Linux with COSMIC on Way
 
 Flippy installs from source with one command. There's no `.dmg` or download to open: Flippy isn't notarized by Apple, so a downloaded app gets blocked by macOS. Building it on your own Mac avoids that.
 
-**You need:** a Mac with macOS 13 or newer, or Linux with COSMIC (Pop!_OS 24.04); a Claude Pro or Max subscription (or ChatGPT, through Codex); about 10 minutes.
+**You need:** a Mac with macOS 13 or newer, or Linux with COSMIC (Pop!_OS 24.04); one monitor (multi-monitor setups aren't supported yet); a Claude Pro or Max subscription (or ChatGPT, through Codex); about 10 minutes.
 
 ### Easiest: let Claude or ChatGPT install it for you
 
@@ -88,7 +88,6 @@ The installer puts the code in `~/flippy`, builds gtk4-layer-shell into `~/.loca
 
 - **Somewhere other than `~/flippy`:** `curl -fsSL https://raw.githubusercontent.com/kap-il/flippy/main/install.sh | FLIPPY_DIR=~/code/flippy bash`
 - **Read it first:** `git clone https://github.com/kap-il/flippy && cd flippy && ./install.sh` does the same thing.
-- Single monitor only for now, on both platforms.
 
 ## What it does
 
@@ -103,15 +102,13 @@ The installer puts the code in `~/flippy`, builds gtk4-layer-shell into `~/.loca
 - **Help when you're stuck, and tips.** Flippy can watch an app you're learning and offer a hand, or a tip, at the right moment (see below).
 - **Settings window** for model, effort, theme, pointer, sizes, timing, help mode and (on macOS) hotkeys.
 
-Ask Flippy to do something ("open Spotify and play some jazz") and it does it, asking you first; ask how and it shows you. Questions and tips never touch your apps (see below). Flippy uses your existing **Claude Pro/Max subscription** through the Claude Agent SDK; no API client or key is added.
+Ask Flippy to do something and it does it, asking you first ([desktop tasks](#approved-desktop-tasks)); ask how and it shows you. Questions and tips never touch your apps. Flippy uses your existing **Claude Pro/Max subscription** through the Claude Agent SDK; no API client or key is added.
 
 ## Updates
 
 Flippy checks GitHub for a new release once a day and shows a card (**Install / Later / What's new**). **Install** updates your copy and restarts Flippy. Check any time from the menu bar or panel icon (**Check for updates…**) or with `flippy-ask update`. You can also run the install command again; it pulls the latest code and rebuilds. Turn the daily check off with `updates.check = false`. If you've edited Flippy's files yourself, it won't overwrite them: update with `git pull` instead.
 
 On macOS, Flippy is signed with a certificate the installer makes on your Mac (kept in `~/.config/flippy-signing`), so rebuilds and updates keep its permissions. If that certificate can't be made, Flippy is signed ad hoc and macOS may ask for permissions again after a rebuild.
-
-Releasing (for maintainers): `scripts/release.sh 0.3 "what changed"` bumps `VERSION`, tags, pushes and publishes the GitHub Release. The notes' first line is what the update card shows.
 
 ## Usage
 
@@ -125,32 +122,18 @@ Just ask Flippy to do it: open the question box and type what you want done, for
 
 Flippy takes a screenshot, proposes a click, short text entry, shortcut, scroll or drag, and shows the exact input and its reason. Non-ASCII and control characters are escaped; proposals too long to review are refused. **Allow once** permits only that input; **Stop** or leaving the card unanswered for 60 seconds ends the task. Every completed input returns a fresh screenshot to Claude. Press the ask hotkey again or run `flippy-ask dismiss` to cancel, including while typing or dragging. Cleanup releases only input posted by Flippy before another action can start.
 
-This uses custom tools inside the existing Agent SDK, with the same configured model, effort, and Claude login. Each task gets its own session so tools and task history don't enter ordinary tutor conversations. Screenshots and tool turns consume your subscription limits. Screen Recording and Accessibility permissions are required; allow Flippy in macOS settings and restart it if needed.
+Tasks use the same model, effort and Claude login as questions, in a session of their own, so tools and task history stay out of ordinary conversations. Screenshots and tool turns count against your subscription limits. On macOS they need the Screen Recording and Accessibility permissions.
 
-The first version supports one display, at most 12 inputs per task and 160 characters per text entry, with a five-minute task timeout. Scroll uses 1–10 native wheel lines; drag follows a straight path for 0.6 seconds within the foreground window. Before dispatch, Flippy hides its preview, checks the original target geometry and compares the screen's decoded pixels with the proposed frame. Any difference stops the task, including blinking carets or animation. During drag, intentional window movement is allowed while the app, window and display must remain the same. These checks cannot eliminate the final dispatch race. Actions can affect documents or submit forms, so review every approval. Browser interaction uses your visible desktop and session; there is no browser extension or DOM driver.
+A task gets at most 12 inputs and 160 characters per text entry, and times out after five minutes. Scroll uses 1–10 native wheel lines; drag follows a straight path for 0.6 seconds within the foreground window. On macOS, tasks work through the app's own controls (Accessibility: buttons, fields, menus, keys sent to that app) without bringing it in front or moving your pointer. A click, scroll or drag that needs the real pointer waits until you pause for a second, then borrows it for a moment. Actions can affect documents or submit forms, so review every approval. Browser interaction uses your visible desktop and session; there is no browser extension or DOM driver.
 
 On COSMIC, tasks work through the app's controls (AT-SPI, Linux's accessibility layer) without bringing it in front. Keys it can't send that way, and clicks on spots that aren't controls, wait until you pause for a second, bring the app forward for a moment and give your window back. Terminals, settings and password managers always ask before each input; browsers do too, except in **Act automatically** mode. How it works: [docs/linux-port.md](docs/linux-port.md#desktop-tasks-act).
-
-## Isolated local demo
-
-With the normal source dependencies installed in `.venv`, run `scripts/dev.sh build`, `run`, `ask <command>`, `stop` or `doctor`. `scripts/dev.sh --verify` builds, launches and checks the demo socket. Builds never install login items or initiate authentication.
-
-To use the contribution as your normal app, run `scripts/dev.sh --app run`. This builds `~/Applications/Flippy.app` with the normal `dev.flippy.app` identity, configuration and hotkeys. `--app doctor` checks that profile; `--app stop` stops it only if this checkout owns the process. An existing app belonging to another checkout is never replaced. This is a local build of the contribution branch, not an upstream release.
-
-Setup shows the exact running app and a draggable icon for adding it to macOS permission lists. Use the direct Screen Recording and Accessibility links; if a pane does not accept a drop, reveal the app in Finder and select it using the pane’s `+` button. macOS owns permission approval. Restart Flippy afterward and let its live checks confirm access.
-
-The separate `~/Applications/Flippy Demo.app` uses `dev.flippy.demo`, `~/.config/flippy-demo`, its own socket, logs and caches. Updates and autostart are disabled. Its defaults are `⌘⌥⇧Space` to ask, `⌃⌥⇧Space` to draw, `⌃⌥⇧V` for video and double-Option to pause. It's signed with the same local certificate as the normal app, so its permissions also survive rebuilds. The normal app is not stopped or replaced.
-
-For acceptance, `scripts/action_fixture.py` provides a disposable native window, and `tests/fixtures/desktop.html` provides a deterministic browser page. Test approval/refusal, focus and pixel changes, typing/drag cancellation and released input. Automated tests do not prove live macOS permissions or input. Release decisions are tracked in [issue #2](https://github.com/kap-il/flippy/issues/2).
-
-For a first check, use a disposable empty TextEdit note: allow typing, verify the text, then repeat and choose **Stop**. Also try dismissing during approval and switching apps before allowing. The automated tests use fake inputs and a real in-memory MCP transport; they never operate your desktop.
 
 Everything is also scriptable through `flippy-ask`:
 
 ```
 flippy-ask                  open the question box (same as the hotkey)
 flippy-ask draw             draw mode
-flippy-ask video            start recording your editor; again to stop and ask (COSMIC)
+flippy-ask video            start recording your editor; again to stop and ask
 flippy-ask video ask <q>    ask about the last recording without the box
 flippy-ask q <question>     ask without the box
 flippy-ask act <task>       approved desktop task
@@ -170,6 +153,20 @@ flippy-ask demo-tutorial    a sample tutorial that waits for you to click the Ap
 flippy-ask set look.theme y2k
 flippy-ask quit             stop the daemon
 ```
+
+## Development
+
+With the source dependencies installed in `.venv`, `scripts/dev.sh build`, `run`, `ask <command>`, `stop` and `doctor` work on a separate **Flippy Demo** app; `scripts/dev.sh --verify` builds, launches and checks its socket. Builds never install login items or start authentication.
+
+Flippy Demo (`~/Applications/Flippy Demo.app`) uses `dev.flippy.demo`, `~/.config/flippy-demo`, and its own socket, logs and caches; updates and autostart are off. Its defaults are `⌘⌥⇧Space` to ask, `⌃⌥⇧Space` to draw, `⌃⌥⇧V` for video and double-Option to pause. It's signed with the same local certificate as the normal app, so its permissions also survive rebuilds, and the normal app is never stopped or replaced.
+
+To use your checkout as your normal app, run `scripts/dev.sh --app run`: it builds `~/Applications/Flippy.app` with the normal `dev.flippy.app` identity, configuration and hotkeys. `--app doctor` checks that profile; `--app stop` stops it only if this checkout owns the process. An app built from another checkout is never replaced. It's a local build of your branch, not a release.
+
+Setup shows the exact running app, direct links to the Screen Recording and Accessibility panes, and a draggable icon for adding it to them. If a pane doesn't accept the drop, reveal the app in Finder and add it with the pane's `+` button, then restart Flippy and let its live checks confirm access.
+
+To test desktop tasks by hand, `scripts/action_fixture.py` opens a disposable native window and `tests/fixtures/desktop.html` is a deterministic browser page. Try approval and refusal, switching apps mid-task, cancelling while typing or dragging, and released input. A disposable empty TextEdit note works too: allow typing, check the text, then repeat and choose **Stop**; also dismiss during approval and switch apps before allowing. The automated tests use fake inputs and an in-memory MCP transport, so they never touch your desktop, and can't prove live macOS permissions or input. Release decisions are tracked in [issue #2](https://github.com/kap-il/flippy/issues/2).
+
+Releasing (for maintainers): `scripts/release.sh 0.3 "what changed"` bumps `VERSION`, tags, pushes and publishes the GitHub Release. The notes' first line is what the update card shows.
 
 ## Help mode
 
@@ -251,7 +248,6 @@ flippy-ask quit
 rm -f ~/.local/bin/flippy-ask ~/.local/bin/flippy-daemon ~/.local/share/applications/dev.flippy.daemon.desktop \
       ~/.config/autostart/dev.flippy.daemon.desktop ~/.local/share/icons/hicolor/*/apps/dev.flippy.daemon.png
 rm -rf ~/.config/flippy   # settings and custom pointers, if you want them gone too
-security delete-keychain ~/.config/flippy-signing/flippy-signing.keychain-db; rm -rf ~/.config/flippy-signing   # Flippy's local signing certificate
 ```
 
 ## Project layout
@@ -264,12 +260,14 @@ flippy/linux/  GTK + gtk4-layer-shell windows, portal screenshots, Wayland watch
                /act through AT-SPI, the pointer (RemoteDesktop portal), real glass (background blur)
 flippy/mac/    AppKit overlay and windows, screencapture, Carbon hotkeys, menu bar, first-run setup
 packaging/  make_icon.py: the app icon (Flippy.app's and COSMIC's); macos/: Flippy.app's launcher (Swift)
-scripts/    the macOS and Linux installers, release.sh, package.sh (the per-platform release downloads)
+scripts/    the macOS and Linux installers, build_mac.sh (builds Flippy.app), release.sh, package.sh (the per-platform
+            release downloads), dev.sh and doctor.py (development)
 tests/      python -m unittest discover tests
 docs/       linux-port.md: how the macOS features work on COSMIC;
             linux-0.3.0.md: instructions for bringing COSMIC up to macOS (/act, pointer input, glass, the new look);
             linux-catch-up.md: what changed after 0.3.0 and how to update and check COSMIC;
-            video-review.md: video review, and how to build it on macOS;
+            video-review.md: how video review works on both platforms;
+            chatgpt-subscription-gate.md: why ChatGPT uses only included usage, and what a direct sign-in would need;
             errors.md: every error code Flippy shows, what it means and what to do
 ```
 

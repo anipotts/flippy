@@ -7,8 +7,7 @@ import colorsys
 import math
 
 import cairo
-from AppKit import (NSAlert, NSApp, NSAppearance, NSBackingStoreBuffered, NSOpenPanel, NSTextField, NSWindow,
-                    NSWindowStyleMaskClosable, NSWindowStyleMaskTitled, NSColorSpace)
+from AppKit import NSAlert, NSApp, NSOpenPanel, NSTextField, NSColorSpace
 from Foundation import NSMakeRect
 from PIL import Image
 
@@ -16,23 +15,15 @@ from .. import pointers
 from ..pixelart import BRUSHES, CELL, GRID_H, GRID_W, PALETTE, PixelArt, checker, from_hex, to_hex
 from . import setup_style as style
 from .cairoview import cairo_view
-from .setup_style import button
+from .setup_style import button, place as _place
 from .widgets import FlippedView, label, target
 
 _open = []  # keep editor windows alive while they're up
 
 
 def _window(title, w, h):
-    win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-        NSMakeRect(0, 0, w, h), NSWindowStyleMaskTitled | NSWindowStyleMaskClosable, NSBackingStoreBuffered, False)
-    win.setTitle_(title)
-    win.setReleasedWhenClosed_(False)
-    win.setAppearance_(NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua"))
-    win.setBackgroundColor_(style.color(style.BACKGROUND))
-    win.center()
     content = style.panel(w, h)  # flipped, painted black
-    win.setContentView_(content)
-    return win, content
+    return style.window(title, w, h, content), content
 
 
 def checkbox(title, on, fn, keep):
@@ -43,13 +34,6 @@ def checkbox(title, on, fn, keep):
     lab.setFrameOrigin_((30, (22 - lab.frame().size.height) / 2))
     box.addSubview_(lab)
     return box
-
-
-def _place(parent, view, x, y, w=None, h=None):
-    f = view.frame()
-    view.setFrame_(NSMakeRect(x, y, w or f.size.width, h or f.size.height))
-    parent.addSubview_(view)
-    return view
 
 
 def _name_field(text, width=220):
@@ -173,8 +157,7 @@ class PixelEditor(_Editor):
         self.mode_button.setToolTip_("Switch between hue/saturation/brightness and red/green/blue (0-255) sliders")
         _place(root, self.mode_button, x + side_w - self.mode_button.frame().size.width, y + 2)
         self._show_mode()
-        y += 34
-        y += 10
+        y += 44
 
         _place(root, label("Start from", 13, bold=True), x, y)
         y += 22
@@ -366,15 +349,6 @@ class PixelEditor(_Editor):
         self.preview.setNeedsDisplay_(True)
 
     def _swatch(self, cr, w, h, col, current=False):
-        self._fill_swatch(cr, w, h, col)
-        chosen = current or col == self.color
-        cr.rectangle(0.5, 0.5, w - 1, h - 1)
-        cr.set_source_rgb(*(style.TEXT if chosen and not current else style.OUTLINE))
-        cr.set_line_width(2 if chosen and not current else 1)
-        cr.stroke()
-
-    @staticmethod
-    def _fill_swatch(cr, w, h, col):
         if col is None:
             checker(cr, 0, 0, w, h, 6)
             cr.set_source_rgb(1, 0.2, 0.2)
@@ -386,6 +360,11 @@ class PixelEditor(_Editor):
             cr.set_source_rgb(*col)
             cr.rectangle(0, 0, w, h)
             cr.fill()
+        chosen = current or col == self.color
+        cr.rectangle(0.5, 0.5, w - 1, h - 1)
+        cr.set_source_rgb(*(style.TEXT if chosen and not current else style.OUTLINE))
+        cr.set_line_width(2 if chosen and not current else 1)
+        cr.stroke()
 
     def _save(self):
         name = self.art.save(str(self.name.stringValue()), self.editing, self.flip)

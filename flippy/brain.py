@@ -6,7 +6,6 @@ from dataclasses import replace
 from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, RateLimitEvent, ResultMessage, StreamEvent,
                               TextBlock, query)
 
-from .frames import prepare_image
 from .usage_guard import GUARDS, PlanLimitReached
 
 # The pointing instructions are adapted from Clicky (MIT: see THIRD_PARTY_NOTICES.md).
@@ -78,7 +77,6 @@ class Brain:
         )
         self.client: ClaudeSDKClient | None = None
         self.dirty = False  # options changed; next question starts a fresh session
-        self.last_model = None
         self._lock = asyncio.Lock()
         self.history = []
         self.replay_context = False
@@ -154,7 +152,6 @@ class Brain:
                 if isinstance(msg, RateLimitEvent):
                     self._usage(msg)
                 elif isinstance(msg, AssistantMessage):
-                    self.last_model = msg.model
                     if getattr(msg, "error", None):
                         raise BrainError(str(msg.error), kind=str(msg.error))
                     # Only the last assistant message is the task's final answer.
@@ -172,10 +169,8 @@ class Brain:
 
     async def write_tips(self, app_name: str, goal: str, n: int, skip: list[str]) -> list[dict]:
         """One text-only call, outside the conversation: n tips for app_name. skip: tips they already have."""
-        opts = ClaudeAgentOptions(system_prompt=TIPS_PROMPT, tools=[], allowed_tools=[], mcp_servers={},
-                                  strict_mcp_config=True, setting_sources=[], max_turns=1,
-                                  model=self.options.model, effort="low", cwd=os.path.expanduser("~"),
-                                  extra_args=dict(NO_TRANSCRIPTS))
+        opts = replace(self.options, system_prompt=TIPS_PROMPT, effort="low", include_partial_messages=False,
+                       extra_args=dict(NO_TRANSCRIPTS))
         ask = f"App: {app_name}\n"
         if goal:
             ask += f"What they want to do: {goal}\n"
@@ -262,7 +257,6 @@ class Brain:
                     if on_text:
                         on_text(delta)
             elif isinstance(msg, AssistantMessage):
-                self.last_model = msg.model
                 if getattr(msg, "error", None):
                     raise BrainError(str(msg.error), kind=str(msg.error))
                 parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))

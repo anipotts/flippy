@@ -289,7 +289,7 @@ class _RPC:
 
 class CodexProvider:
     def __init__(self):
-        self.model, self.effort, self.last_model = None, "low", None
+        self.model, self.effort = None, "low"
         self.dirty = False
         self.blocked_reason = None
         self.auth_source = None
@@ -446,7 +446,6 @@ class CodexProvider:
                                ("workspace_roots", result.get("runtimeWorkspaceRoots"))):
             if leaked:
                 raise _not_isolated(reason)
-        self.last_model = result.get("model")
         thread_id = result["thread"]["id"]
         cursor = None
         while True:

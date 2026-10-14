@@ -10,8 +10,8 @@ class TestGestures(unittest.TestCase):
     def setUp(self):
         source = ast.parse((Path(__file__).parents[1] / 'flippy/mac/ui.py').read_text())
         platform = next(n for n in source.body if isinstance(n, ast.ClassDef) and n.name == 'Platform')
-        methods = [n for n in platform.body if isinstance(n, ast.FunctionDef)
-                   and n.name in ('_gesture', 'drag', 'scroll', 'key', 'type_text', 'click', '_check_physical_input')]
+        names = ('_gesture', 'drag', 'scroll', 'key', 'type_text', 'click', '_check_physical_input')
+        methods = [n for n in platform.body if isinstance(n, ast.FunctionDef) and n.name in names]
         now = [0.0]  # a fake clock: sleep advances it, so the held-input grace period ends without waiting
         clock = SimpleNamespace(monotonic=lambda: now[0],
                                 sleep=Mock(side_effect=lambda s: now.__setitem__(0, now[0] + s)))
@@ -26,7 +26,7 @@ class TestGestures(unittest.TestCase):
                             ('kCGEventLeftMouseDragged',3),('kCGEventLeftMouseUp',4),
                             ('kCGScrollEventUnitLine',5)]:
             setattr(self.q,name,value)
-        cls = type('Adapter', (), {name: namespace[name] for name in ('_gesture','drag','scroll','key','type_text','click','_check_physical_input')})
+        cls = type('Adapter', (), {name: namespace[name] for name in names})
         self.ui = cls()
         self.ui._can_post = Mock(return_value=None)
         self.ui._mouse = Mock()
@@ -44,28 +44,6 @@ class TestGestures(unittest.TestCase):
         self.assertEqual(events[12].args,(3,120,60,1))
         self.assertEqual(events[-1].args,(4,240,120,1))
         self.assertEqual(self.ui._modifier.call_args_list[-1].args,('cmd',0))
-
-    def test_cancel_each_boundary_releases_owned_input(self):
-        for boundary in range(1,29):
-            with self.subTest(boundary=boundary):
-                self.ui._gesture_mouse.reset_mock()
-                self.ui._modifier.reset_mock()
-                count = 0
-                def check():
-                    nonlocal count
-                    count += 1
-                    if count == boundary:
-                        raise RuntimeError('cancel')
-                try:
-                    self.ui.drag(0,0,24,24,['cmd'],check)
-                except RuntimeError:
-                    pass
-                kinds = [call.args[0] for call in self.ui._gesture_mouse.call_args_list]
-                if 2 in kinds:
-                    self.assertEqual(kinds.count(4),1)
-                    self.assertEqual(kinds[-1],4)
-                if self.ui._modifier.call_count:
-                    self.assertEqual(self.ui._modifier.call_args.args,('cmd',0))
 
     def test_failed_mouse_post_still_releases(self):
         def post(kind,*args):
@@ -94,20 +72,10 @@ class TestGestures(unittest.TestCase):
             self.ui.drag(0,0,1,1)
         self.ui._gesture_mouse.assert_not_called()
 
-    def test_scroll_directions_and_cancel_before_wheel(self):
+    def test_scroll_directions(self):
         for direction,v,h in [('up',3,0),('down',-3,0),('left',0,3),('right',0,-3)]:
             self.ui.scroll(1,2,direction,3)
             self.assertEqual(self.q.CGEventCreateScrollWheelEvent.call_args.args[-2:],(v,h))
-        self.q.CGEventCreateScrollWheelEvent.reset_mock()
-        n=0
-        def check():
-            nonlocal n
-            n+=1
-            if n==2:
-                raise RuntimeError('cancel')
-        with self.assertRaises(RuntimeError):
-            self.ui.scroll(1,2,'down',3,check)
-        self.q.CGEventCreateScrollWheelEvent.assert_not_called()
 
     def test_physical_held_click_posts_no_events(self):
         from flippy.actions import ActionError
@@ -165,15 +133,4 @@ class TestGestures(unittest.TestCase):
         self.q.CGEventPost.side_effect = post
         with self.assertRaises(RuntimeError):
             self.ui.type_text('a', wait=True)
-        self.assertEqual([c.args[-1] for c in self.q.CGEventCreateKeyboardEvent.call_args_list],[True,False])
-
-    def test_key_cancellation_releases_posted_key(self):
-        n=0
-        def check():
-            nonlocal n
-            n+=1
-            if n==2:
-                raise RuntimeError('cancel')
-        with self.assertRaises(RuntimeError):
-            self.ui.key('cmd+return',check)
         self.assertEqual([c.args[-1] for c in self.q.CGEventCreateKeyboardEvent.call_args_list],[True,False])

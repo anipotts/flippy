@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from flippy.actions import BACKGROUND_CATALOG, BACKGROUND_PROMPT, RetryableActionError
+from flippy.actions import BACKGROUND_CATALOG, BACKGROUND_PROMPT, AppFrame, DesktopTools, RetryableActionError
 
 
 @unittest.skipUnless(sys.platform == "darwin", "AppleScript")
@@ -52,13 +52,8 @@ class Tool(unittest.TestCase):
         self.assertEqual(order, sorted(order))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ResultReachesTheModel(unittest.IsolatedAsyncioTestCase):
     async def test_a_scripted_result_comes_back_with_the_next_look(self):
-        from flippy.actions import AppFrame, DesktopTools
         frame = AppFrame("x", (10, 10), ("com.spotify.client", 1, 1, (0, 0, 10, 10), 0), {}, "App: Spotify")
 
         async def capture():
@@ -75,3 +70,7 @@ class ResultReachesTheModel(unittest.IsolatedAsyncioTestCase):
         r = await tools.invoke("app_action", {"action": "spotify.now_playing", "args": {}, "reason": "check"})
         self.assertEqual(r["content"][0]["text"], "app_action result: No L's — Smino (playing)")
         self.assertIn("App: Spotify", r["content"][1]["text"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -115,10 +115,10 @@ def _shape(style, theme):
     return None  # round styles are drawn directly
 
 
-def render(style=None):
-    """PNG bytes (@2x) of the icon for `style` (default: the equipped pointer)."""
+def render():
+    """PNG bytes (@2x) of the icon for the equipped pointer."""
     theme = themes.get(settings.get("look", "theme"))
-    style = style or settings.get("look", "pointer")
+    style = settings.get("look", "pointer")
     if style == "theme":
         style = theme.pointer
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, W * S, H * S)
@@ -152,8 +152,8 @@ def render(style=None):
     return buf.getvalue()
 
 
-def image(style=None):
-    png = render(style)
+def image():
+    png = render()
     img = NSImage.alloc().initWithData_(NSData.dataWithBytes_length_(png, len(png)))
     img.setSize_((W, H))
     img.setTemplate_(True)  # macOS tints it for the menu bar

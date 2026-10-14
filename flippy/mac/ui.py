@@ -30,7 +30,7 @@ from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyAccessory
                     NSTrackingInVisibleRect, NSTrackingMouseMoved, NSVariableStatusItemLength, NSView,
                     NSWindowCollectionBehaviorCanJoinAllSpaces, NSWindowCollectionBehaviorFullScreenAuxiliary,
                     NSWindowCollectionBehaviorIgnoresCycle, NSWindowCollectionBehaviorStationary,
-                    NSWindowStyleMaskBorderless, NSWindowStyleMaskNonactivatingPanel, NSFloatingWindowLevel)
+                    NSWindowStyleMaskBorderless, NSWindowStyleMaskNonactivatingPanel)
 from Foundation import NSAttributedString, NSMakeRect, NSObject
 from PyObjCTools import AppHelper
 from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
@@ -349,9 +349,8 @@ class Overlay(OverlayBase):
 
 def box_style(theme):
     """The question box's look per theme (the macOS counterpart of Theme.box_css)."""
-    sys_font = (None, 16)
     st = {"bg": _rgba(24 / 255, 24 / 255, 28 / 255, 0.94), "border": _rgba(90 / 255, 160 / 255, 1, 0.55),
-          "border_w": 1, "radius": 14, "fg": _hex("f2f2f2"), "font": sys_font, "field_bg": None,
+          "border_w": 1, "radius": 14, "fg": _hex("f2f2f2"), "font": (None, 16), "field_bg": None,
           "field_border": None, "field_radius": 0, "hint": _rgba(1, 1, 1, 0.5), "hint_font": (None, 12)}
     if theme.key == "mono":
         st.update(bg=_rgba(0, 0, 0, 0.96), border=_rgba(*theme.outline), radius=0, fg=_rgba(*theme.fg),
@@ -371,12 +370,11 @@ def box_style(theme):
                   hint=_hex("7dffa9"), hint_font=(themes.PIXEL_FONT, 16))
     elif theme.key == "mediaplayer" and GLASS:  # Liquid Glass box; the field is a frostier, smokier pane
         st.update(glass=True, bg=None, border=_rgba(1, 1, 1, 0.35), radius=theme.LIQUID_R, fg=_hex("ffffff"),
-                  font=(None, 16), field_bg=glass_tint("field"), field_border=_rgba(1, 1, 1, 0.3),
+                  field_bg=glass_tint("field"), field_border=_rgba(1, 1, 1, 0.3),
                   field_radius=12, hint=_rgba(1, 1, 1, 0.9), hint_shadow=True)
     elif theme.key == "glass" and GLASS:  # same glass box, the lock screen's rounder corners
         st.update(glass=True, bg=None, border=_rgba(1, 1, 1, 0.3), radius=theme.R, fg=_hex("ffffff"),
-                  font=(None, 16), field_bg=_rgba(1, 1, 1, 0.12), field_border=None,
-                  field_radius=12, hint=_rgba(1, 1, 1, 0.75), hint_shadow=True)
+                  field_bg=_rgba(1, 1, 1, 0.12), field_radius=12, hint=_rgba(1, 1, 1, 0.75), hint_shadow=True)
     elif theme.key == "glass":  # (no Liquid Glass on this macOS)
         st.update(bg=_rgba(40 / 255, 40 / 255, 46 / 255, 0.85), border=_rgba(1, 1, 1, 0.3), radius=theme.R,
                   field_bg=_rgba(1, 1, 1, 0.12), field_radius=12)
@@ -652,19 +650,14 @@ class Platform:
     def open_setup(self):
         from .setup_window import SetupWindow
         if self.setup_win is None:
-            self.setup_win = SetupWindow(lambda: self.command("settings"), self._setup_closed)
+            self.setup_win = SetupWindow(lambda: self.command("settings"), lambda: self._closed("setup_win"))
         self.setup_win.present()
 
-    def _setup_closed(self):
+    def _closed(self, which):
+        """Setup or Settings closed: with neither left open, give the app you were in back the front."""
         from . import ax
-        self.setup_win = None
-        if self.settings_win is None:
-            ax.give_back_front()
-
-    def _settings_closed(self):
-        from . import ax
-        self.settings_win = None
-        if self.setup_win is None:
+        setattr(self, which, None)
+        if self.setup_win is None and self.settings_win is None:
             ax.give_back_front()
 
     def _bind_keys(self):
@@ -772,13 +765,10 @@ class Platform:
         """That one window as a PIL image (nothing above it, so Flippy's cards stay out), or None if it closed.
         Called from the recording thread."""
         from PIL import Image
-        img = Quartz.CGWindowListCreateImage(
-            Quartz.CGRectNull, Quartz.kCGWindowListOptionIncludingWindow, wid,
-            Quartz.kCGWindowImageBoundsIgnoreFraming | Quartz.kCGWindowImageNominalResolution)
-        if img is not None and Quartz.CGImageGetWidth(img) > 1:
-            w, h = Quartz.CGImageGetWidth(img), Quartz.CGImageGetHeight(img)
-            data = Quartz.CGDataProviderCopyData(Quartz.CGImageGetDataProvider(img))
-            return Image.frombuffer("RGBA", (w, h), bytes(data), "raw", "BGRA", Quartz.CGImageGetBytesPerRow(img), 1)
+        from .ax import _capture
+        img = _capture(wid)
+        if img is not None:
+            return img
         if not sensors.window_exists(wid):
             return None
         # CGWindowListCreateImage is deprecated (macOS 14+): if it stops returning frames, screencapture still can
@@ -898,7 +888,7 @@ class Platform:
     def open_settings(self, on_preview, on_reset):
         from .settings_window import SettingsWindow  # local: only built when asked for
         if self.settings_win is None:
-            self.settings_win = SettingsWindow(on_preview, on_reset, self._settings_closed,
+            self.settings_win = SettingsWindow(on_preview, on_reset, lambda: self._closed("settings_win"),
                                                command=self.command)
         self.settings_win.present()
 
@@ -908,15 +898,12 @@ class Platform:
         from .. import pixelart, pointers
         ed = pointer_editor.PixelEditor(lambda n: None)
         ed.present()
-        def set_tool(key):
-            ed.tool = key
-            ed.seg.setSelectedSegment_(ed.tools.index(key))
 
         def done():
             ed.name.setStringValue_(name)
             ed._save()
             on_saved(pointers.PREFIX + name)
-        pixelart.demo_paint(ed.art, ed._redraw, set_tool, lambda col: setattr(ed, "color", col), done)
+        pixelart.demo_paint(ed.art, ed._redraw, ed._set_tool, lambda col: setattr(ed, "color", col), done)
 
     # --- demo recording (scripts/demo_mac.py): run as Flippy's children, so they use its Screen Recording ---
     def screenshot_to(self, path):
@@ -944,7 +931,7 @@ class Platform:
                 json.dump({"stopped": stopped}, f)
         self.recorder = None
 
-    def click(self, x, y, double=False, check=None):
+    def click(self, x, y, double=False):
         """Post a real left click at (x, y) on the main display (logical px, top-left origin)."""
         if not Quartz.CGPreflightPostEventAccess():
             Quartz.CGRequestPostEventAccess()  # the system prompt, the first time
@@ -956,8 +943,6 @@ class Platform:
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, move)
         time.sleep(0.05)
         for n in (1, 2) if double else (1,):
-            if check:
-                check()  # moving the pointer must not turn a canceled proposal into a click
             try:
                 ev = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDown, pt, Quartz.kCGMouseButtonLeft)
                 Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventClickState, n)
@@ -1011,7 +996,7 @@ class Platform:
     def move(self, x, y):
         return self._can_post() or self._mouse(Quartz.kCGEventMouseMoved, x, y) or "ok"
 
-    def _gesture(self, points, drag, modifiers=(), check=None):
+    def _gesture(self, points, drag, modifiers=()):
         """Synchronous worker body; completion acknowledges release of owned input."""
         if drag and Quartz.CGEventSourceButtonState(Quartz.kCGEventSourceStateCombinedSessionState, Quartz.kCGMouseButtonLeft):
             raise RuntimeError("Release the physical mouse button before dragging.")
@@ -1021,8 +1006,6 @@ class Platform:
         flags = 0
         try:
             for mod in modifiers:
-                if check:
-                    check()
                 code = self.MOD_KEYS[mod]
                 if Quartz.CGEventSourceKeyState(Quartz.kCGEventSourceStateCombinedSessionState, code):
                     raise RuntimeError("Release physical modifiers before dragging.")
@@ -1030,14 +1013,10 @@ class Platform:
                 flags |= self.FLAGS[mod]
                 self._modifier(mod, flags)
             for i, (x, y, dt) in enumerate(points):
-                if check:
-                    check()
                 position = x, y
                 if drag and i == 0:
                     self._mouse(Quartz.kCGEventMouseMoved, x, y)
                     time.sleep(0.025)
-                    if check:
-                        check()
                     down = True  # release even if posting reports a failure after delivery
                     self._gesture_mouse(Quartz.kCGEventLeftMouseDown, x, y, flags)
                 else:
@@ -1085,31 +1064,27 @@ class Platform:
         threading.Thread(target=self._gesture, args=(points, drag), daemon=True).start()
         return "ok"
 
-    def drag(self, x, y, to_x, to_y, modifiers=(), check=None):
+    def drag(self, x, y, to_x, to_y, modifiers=()):
         err = self._can_post()
         if err:
             return err
         points = [(x + (to_x - x) * i / 24, y + (to_y - y) * i / 24,
                    0.6 / 24 if i < 24 else 0) for i in range(25)]
-        return self._gesture(points, True, modifiers, check)
+        return self._gesture(points, True, modifiers)
 
-    def scroll(self, x, y, direction, lines, check=None):
+    def scroll(self, x, y, direction, lines):
         err = self._can_post()
         if err:
             return err
-        if check:
-            check()
         self._mouse(Quartz.kCGEventMouseMoved, x, y)
         time.sleep(0.025)
-        if check:
-            check()
         vertical = lines if direction == "up" else -lines if direction == "down" else 0
         horizontal = lines if direction == "left" else -lines if direction == "right" else 0
         ev = Quartz.CGEventCreateScrollWheelEvent(None, Quartz.kCGScrollEventUnitLine, 2, vertical, horizontal)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
         return "ok"
 
-    def type_text(self, text, on_key=None, wait=False, check=None):
+    def type_text(self, text, on_key=None, wait=False):
         """Real keystrokes, at a human-ish pace. on_key(ch) runs as each one is posted (on a worker thread)."""
         err = self._can_post()
         if err:
@@ -1118,8 +1093,6 @@ class Platform:
         def run():
             import random
             for ch in text:
-                if check:
-                    check()  # agent input can stop between characters or if focus changes
                 # The real key code where there is one (apps that read key codes, like GarageBand's
                 # shortcuts, would otherwise see "a"), no stray modifiers, and the text for the field.
                 from .keymap import type_key
@@ -1291,80 +1264,6 @@ class Platform:
                 return win.get("kCGWindowOwnerPID")
         return None
 
-    def action_preflight(self):
-        """Check task eligibility before inference without inspecting foreground focus."""
-        from ..actions import ActionError
-        if len(NSScreen.screens()) != 1:
-            raise ActionError("Desktop tasks require one display. Disconnect extra displays before /act.")
-        if not Quartz.CGPreflightPostEventAccess():
-            raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
-
-    def action_state(self):
-        """Identity and geometry of the foreground target. One display, like the tutor."""
-        from ..actions import ActionError
-        screens = NSScreen.screens()
-        if len(screens) != 1:
-            raise ActionError("Desktop tasks currently require a single display.")
-        app, _, pid = sensors.frontmost()
-        if pid is None or pid == os.getpid():
-            raise ActionError("Put the app you want to use in front, then start /act again.")
-        window = sensors.front_window(pid)
-        bounds = next((bounds for wid, bounds in sensors.windows(pid) if wid == window), None)
-        if window is None or bounds is None:
-            raise ActionError("Could not identify the foreground window. Start a new /act request.")
-        try:
-            display = int(screens[0].deviceDescription()["NSScreenNumber"])
-        except (KeyError, TypeError, ValueError):
-            raise ActionError("Could not identify the display. Start a new /act request.") from None
-        return app, pid, window, bounds, (display, self.screen_size())
-
-    def action_input(self, name, args, shot, cancel):
-        """An approved action. Recheck focus after approval and throughout typing."""
-        from ..actions import ActionError
-
-        def check():
-            if cancel.is_set():
-                raise ActionError("Task canceled.")
-            if self.action_state() != shot.target:
-                raise ActionError("The foreground window or display changed. Start a new /act request.")
-        check()
-        if not Quartz.CGPreflightPostEventAccess():
-            raise ActionError("Allow Flippy in macOS Accessibility settings, then restart it.")
-        if name == "click":
-            x = args["x"] * shot.logical_size[0] / shot.size[0]
-            y = args["y"] * shot.logical_size[1] / shot.size[1]
-            result = self.click(x, y, check=check)
-        elif name == "type":
-            result = self.type_text(args["text"], wait=True, check=check)
-        elif name == "key":
-            result = self.key(args["combo"], check=check)
-        elif name == "scroll":
-            x = args["x"] * shot.logical_size[0] / shot.size[0]
-            y = args["y"] * shot.logical_size[1] / shot.size[1]
-            result = self.scroll(x, y, args["direction"], args["lines"], check=check)
-        elif name == "drag":
-            start = shot.to_logical(args["x"], args["y"])
-            end = shot.to_logical(args["to_x"], args["to_y"])
-            bounds = shot.target[3] if len(shot.target) >= 5 else None
-            if not bounds or any(not (bounds[0] <= px < bounds[0] + bounds[2]
-                                      and bounds[1] <= py < bounds[1] + bounds[3]) for px, py in (start, end)):
-                raise ActionError("Both drag endpoints must be inside the foreground window.")
-            def identity_check():
-                if cancel.is_set():
-                    raise ActionError("Task canceled.")
-                state = self.action_state()
-                if state[:3] != shot.target[:3] or state[-1] != shot.target[-1]:
-                    raise ActionError("The foreground window or display changed.")
-            result = self.drag(args["x"] * shot.logical_size[0] / shot.size[0],
-                               args["y"] * shot.logical_size[1] / shot.size[1],
-                               args["to_x"] * shot.logical_size[0] / shot.size[0],
-                               args["to_y"] * shot.logical_size[1] / shot.size[1],
-                               args["modifiers"], check=identity_check)
-        else:
-            raise ActionError("Unsupported desktop action.")
-        if result != "ok":
-            raise ActionError("Desktop input failed. Check Accessibility permission.")
-
     FLAGS = {"cmd": Quartz.kCGEventFlagMaskCommand, "shift": Quartz.kCGEventFlagMaskShift,
              "option": Quartz.kCGEventFlagMaskAlternate, "ctrl": Quartz.kCGEventFlagMaskControl}
     MOD_KEYS = {"cmd": 55, "shift": 56, "option": 58, "ctrl": 59}
@@ -1398,7 +1297,7 @@ class Platform:
         app = ax.running_app(pid) if type(pid) is int else None
         return str(app.localizedName()) if app is not None and app.localizedName() else None
 
-    def key(self, combo, check=None):
+    def key(self, combo):
         """A shortcut like cmd+shift+space, escape or return, pressed for real."""
         err = self._can_post()
         if err:
@@ -1411,16 +1310,12 @@ class Platform:
         flags = 0
         for m in parts[:-1]:
             flags |= self.FLAGS.get({"opt": "option", "alt": "option", "control": "ctrl"}.get(m, m), 0)
-        if check:
-            check()
         self._check_physical_input(code=code)
         try:
             ev = Quartz.CGEventCreateKeyboardEvent(None, code, True)
             Quartz.CGEventSetFlags(ev, flags)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
             time.sleep(0.03)
-            if check:
-                check()
         finally:
             try:
                 ev = Quartz.CGEventCreateKeyboardEvent(None, code, False)

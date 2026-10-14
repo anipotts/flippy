@@ -121,7 +121,7 @@ def playing(card):
 _measure_ctx = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1))
 
 
-def layout(cr, text, family, px, width=None, bold=False, mono=False):
+def layout(cr, text, family, px, width=None, bold=False):
     if sys.platform == "darwin":
         return mactext.Layout(cr, text, family, px, width, bold)
     lay = PangoCairo.create_layout(cr)
@@ -165,11 +165,6 @@ def round_rect(cr, x, y, w, h, r):
     cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
     cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
     cr.close_path()
-
-
-def hexrgb(h):
-    h = h.lstrip("#")
-    return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
 
 
 # ---------------------------------------------------------------- pointers
@@ -243,9 +238,6 @@ def pointer_extent(style, size):
         return (len(HAND[0]) - HAND_TIP_COL) * px, HAND_TIP_COL * px, len(HAND) * px, len(HAND) * px
     if style == "arrow":
         return len(ARROW[0]) * px, 0, len(ARROW) * px, 0
-    if style == "glass":
-        r = 26 * size
-        return r, r, r, r
     if style == "glasshand":
         return 20 * size, 26 * size, 50 * size, 50 * size
     r = 26 * size
@@ -260,7 +252,7 @@ def glass_lens(x, y, t, size):
     return x, y + drop, 22 * size * breathe
 
 
-def _draw_lens(cr, theme, x, y, t, size, backdrop):
+def _draw_lens(cr, x, y, t, size, backdrop):
     """Light on the lens: shadow, rim, specular arcs, and a precise dot at the tip.
     With a backdrop (macOS) the real glass sits underneath; without, a faint fill stands in for it."""
     cx, cy, r = glass_lens(x, y, t, size)
@@ -350,7 +342,7 @@ def _union(cr, pieces, paint):
     paint(cr)
 
 
-def _draw_glass_hand(cr, theme, x, y, t, size, screen_h, backdrop):
+def _draw_glass_hand(cr, x, y, t, size, screen_h, backdrop):
     pieces = glass_hand(x, y, t, size, screen_h)
     cr.save()  # shadow
     cr.translate(2, 3)
@@ -403,10 +395,10 @@ def draw_pointer(cr, theme, style, x, y, t, size, screen_h, backdrop=False):
             return
         style = theme.pointer  # missing/broken custom pointer: fall back to the theme's
     if style == "glass":
-        _draw_lens(cr, theme, x, y, t, size, backdrop)
+        _draw_lens(cr, x, y, t, size, backdrop)
         return
     if style == "glasshand":
-        _draw_glass_hand(cr, theme, x, y, t, size, screen_h, backdrop)
+        _draw_glass_hand(cr, x, y, t, size, screen_h, backdrop)
         return
     if style in ("hand", "arrow"):
         cr.set_source_rgba(tr, tg, tb, 0.25 + 0.2 * pulse)  # tap ring at the exact spot
@@ -455,7 +447,11 @@ class Theme:
     tap = (1.0, 0.25, 0.2)
     pen = (1.0, 0.25, 0.2)
     placeholder = "ask about your screen…"
+    widths = (360, 520)  # card width: riding next to the pointer, elsewhere
     backdrop = None   # {"radius": r}: wants a real blurred-glass backdrop behind the card where the platform has one
+
+    def _w(self, card):
+        return self.widths[0] if card.follow else self.widths[1]
 
     def box_css(self):
         return ""
@@ -481,12 +477,8 @@ class Midnight(Theme):
     font = "Noto Sans"
     radius = 14
 
-    def _width(self, card):
-        return 360 if card.follow else 520
-
     def _layouts(self, cr, card, opts):
-        w = self._width(card)
-        body = layout(cr, card.text or " ", self.font, opts["text_size"], width=w)
+        body = layout(cr, card.text or " ", self.font, opts["text_size"], width=self._w(card))
         head = layout(cr, card.header, self.font, opts["text_size"] - 2, bold=True) if card.header else None
         return body, head
 
@@ -532,16 +524,13 @@ class Midnight(Theme):
         # step dots: past dimmed, current filled accent, future hollow
         if n > 1:
             for i in range(n):
-                dx = G["dot0"] + i * 14
-                cr.arc(dx, cy, 4.5 if i == card.step else 3.5, 0, 2 * math.pi)
-                if i == card.step:
-                    cr.set_source_rgba(*self.head, 1)
-                    cr.fill()
-                elif i < card.step:
-                    cr.set_source_rgba(*self.fg, 0.45)
+                cur = i == card.step
+                cr.arc(G["dot0"] + i * 14, cy, 4.5 if cur else 3.5, 0, 2 * math.pi)
+                rgb, a = (self.head, 1) if cur else (self.fg, 0.45)
+                cr.set_source_rgba(*rgb, a)
+                if i <= card.step:
                     cr.fill()
                 else:
-                    cr.set_source_rgba(*self.fg, 0.45)
                     cr.set_line_width(1)
                     cr.stroke()
         # slim pill: prev / play-pause / next + speed chip
@@ -626,8 +615,7 @@ class Cosmic(Midnight):
                 s = open(f"{d}/{fname}").read()
                 for p in path:
                     s = s[s.index(p + ":"):]
-                vals = [float(re.search(rf"{c}:\s*([0-9.]+)", s).group(1)) for c in ("red", "green", "blue")]
-                return tuple(vals)
+                return tuple(float(re.search(rf"{c}:\s*([0-9.]+)", s).group(1)) for c in ("red", "green", "blue"))
             except (OSError, ValueError, AttributeError):
                 return None
         self.accent = color("accent") or (0.39, 0.82, 0.87)
@@ -646,7 +634,7 @@ class Cosmic(Midnight):
     def _cgeom(self, x, y, w, h):
         row = y + h - self.CTRL_H - 2
         ox, cy = x + w / 2, row + 46
-        return {"row": row, "cy": cy, "ox": ox, "x0": x + 18, "x1": x + w - 18,
+        return {"row": row, "cy": cy, "x0": x + 18, "x1": x + w - 18,
                 "prev": (ox - 48, cy), "toggle": (ox, cy), "next": (ox + 48, cy),
                 "chip": (x + 16, cy - 12, 42, 24), "close": (x + w - 16 - 24, cy - 12, 24, 24)}
 
@@ -729,19 +717,19 @@ class Terminal(Theme):
     dim = (0.15, 0.6, 0.3)
     font = "Fira Mono"
     placeholder = "$ ask "
+    widths = (380, 540)
 
     def _layouts(self, cr, card, opts):
         px = opts["text_size"] - 1
-        w = 380 if card.follow else 540
         cursor = "█" if (card.typing or card.phase == "thinking") else ""
-        body = layout(cr, (card.text or "") + cursor, self.font, px, width=w)
+        body = layout(cr, (card.text or "") + cursor, self.font, px, width=self._w(card))
         head = layout(cr, f"> {card.header}", self.font, px, bold=True) if card.header else None
         bar = layout(cr, PROMPT, self.font, px - 3)
         return body, head, bar
 
     BAR_CHARS = 12
 
-    def _status(self, cr, card, opts):
+    def _status(self, card):
         """[(name or None, text, inverse)] tokens of the status line."""
         n = max(len(card.steps), 1)
         fill = round(max(0.0, min(card.progress, 1.0)) * self.BAR_CHARS)
@@ -754,7 +742,7 @@ class Terminal(Theme):
         """Token layouts with their positions: [(name, layout, x, w, h)]."""
         px = opts["text_size"] - 2
         out, cx = [], x
-        for name, text in self._status(cr, card, opts):
+        for name, text in self._status(card):
             lay = layout(cr, text, self.font, px)
             tw, th = lsize(lay)
             out.append((name, lay, cx, tw, th))
@@ -804,7 +792,7 @@ class Terminal(Theme):
             ty += lsize(head)[1] + 4
         blink = (card.typing or card.phase == "thinking") and int(t * 2.5) % 2
         if blink:  # hide the block cursor every other beat
-            body = layout(cr, card.text or " ", self.font, opts["text_size"] - 1, width=380 if card.follow else 540)
+            body = layout(cr, card.text or " ", self.font, opts["text_size"] - 1, width=self._w(card))
         show(cr, body, x + 14, ty, (1.0, 0.45, 0.4, 1) if card.error else (*self.green, 1))
         if lean_controls(card, opts):
             sy = self._status_y(card, opts, y, h)
@@ -838,7 +826,7 @@ _SEG = {  # 7-segment: a b c d e f g
 }
 
 
-def seven_seg(cr, text, x, y, dw, dh, rgb, glow=True):
+def seven_seg(cr, text, x, y, dw, dh, rgb):
     """Draw text as LCD 7-segment digits; returns width used."""
     t = max(2.0, dw * 0.18)
     segs = {
@@ -868,12 +856,11 @@ def seven_seg(cr, text, x, y, dw, dh, rgb, glow=True):
         cr.set_source_rgba(*rgb, 0.08)
         cr.fill()
         on = _SEG.get(ch, "")
-        if glow:
-            for s in on:
-                sx, sy, sw, sh = segs[s]
-                cr.rectangle(sx + cx - 1.5, sy - 1.5, sw + 3, sh + 3)
-            cr.set_source_rgba(*rgb, 0.25)
-            cr.fill()
+        for s in on:  # glow
+            sx, sy, sw, sh = segs[s]
+            cr.rectangle(sx + cx - 1.5, sy - 1.5, sw + 3, sh + 3)
+        cr.set_source_rgba(*rgb, 0.25)
+        cr.fill()
         for s in on:
             sx, sy, sw, sh = segs[s]
             cr.rectangle(sx + cx, sy, sw, sh)
@@ -899,7 +886,6 @@ def bevel(cr, x, y, w, h, light, dark, width=1):
 
 class Y2K(Theme):
     key, name = "y2k", "Y2K Player"
-    pointer = "hand"
     hand_fill = (0.72, 1.0, 0.69)
     hand_outline = (0.02, 0.08, 0.02)
     accent = (0.0, 1.0, 0.42)
@@ -913,22 +899,19 @@ class Y2K(Theme):
     METAL_HI = (0.61, 0.63, 0.70)
     METAL_LO = (0.05, 0.05, 0.07)
     TITLE_H, LCD_H, BTN_H, PAD = 20, 54, 30, 6
-
-    def _w(self, card):
-        return 400 if card.follow else 460
-
+    widths = (400, 460)
     THINK_H = 34      # the LCD while thinking: a line of text and the visualizer
 
     def hit_regions(self, card, x, y, w, h, opts=None):
         P = self.PAD
+        window = {"close": (x + w - 17, y + 8, 10, 10), "min": (x + w - 29, y + 8, 10, 10)}
         if card.phase == "thinking":  # only the window buttons: there's nothing to play yet
-            return {"close": (x + w - 17, y + 8, 10, 10), "min": (x + w - 29, y + 8, 10, 10)}
+            return window
         by = y + h - self.BTN_H - P + 4
         hits = {name: (x + P + i * 26, by, 23, 18) for i, name in enumerate(("prev", "play", "pause", "stop", "next"))}
         sx = x + P + 5 * 26 + 8
         hits["seek"] = (sx, by, x + w - P - sx, 18)
-        hits["close"] = (x + w - 17, y + 8, 10, 10)
-        hits["min"] = (x + w - 29, y + 8, 10, 10)
+        hits.update(window)
         ly = y + 3 + self.TITLE_H + P
         hits["speed_cycle"] = (x + w - P - 60, ly + 14, 56, 16)
         return hits
@@ -1151,8 +1134,6 @@ window.flippy-box .flippy-hint {{ color: #7dffa9; font-family: "{PIXEL_FONT}"; f
 class MediaPlayer(Theme):
     key, name = "mediaplayer", "Media Player"
     pointer = "arrow"
-    hand_fill = (1, 1, 1)
-    hand_outline = (0, 0, 0)
     accent = (0.35, 0.72, 1.0)
     tap = (0.35, 0.72, 1.0)
     pen = (0.3, 0.7, 1.0)
@@ -1161,9 +1142,7 @@ class MediaPlayer(Theme):
     TITLE_H, CTRL_H, R = 26, 46, 9
     LIQUID_R = 20
     backdrop = {"radius": LIQUID_R}  # macOS: Liquid Glass (NSGlassEffectView) behind the card
-
-    def _w(self, card):
-        return 380 if card.follow else 470
+    widths = (380, 470)
 
     def _body(self, cr, card, opts):
         return layout(cr, card.text or " ", self.font, opts["text_size"], width=self._w(card) - 44)
@@ -1322,6 +1301,8 @@ class MediaPlayer(Theme):
         a = opts["card_opacity"]
         if liquid:  # the rounder liquid corners: pull the edge controls in a little
             x, w = x + 4, w - 8
+        G = self._geom(x, y, w, h)
+        cy, ox, bx, sy, sx0, sx1 = (G[k] for k in ("cy", "ox", "bx", "sy", "sx0", "sx1"))
         # title bar: orange "now playing" icon, glowing title, window buttons
         ix, iy = x + 9, y + 6
         round_rect(cr, ix, iy, 14, 14, 3)
@@ -1343,7 +1324,6 @@ class MediaPlayer(Theme):
         for dx, dy, al in halo:  # dark glow behind the text
             show(cr, tl, ix + 21 + dx, iy - 1 + dy, (0, 0, 0, al))
         show(cr, tl, ix + 21, iy - 1, (1, 1, 1, 1))
-        bx = x + w - 9 - 3 * 22
         for i in range(3):  # min, max, close
             close = i == 2
             self._gloss_button(cr, bx + i * 22, y + 5, 21 if not close else 24, 15, 3,
@@ -1395,8 +1375,6 @@ class MediaPlayer(Theme):
             return
 
         # seek line with a tick per walkthrough step and a glowing nub
-        sy = y + h - self.CTRL_H - 4
-        sx0, sx1 = x + 14, x + w - 14
         cr.rectangle(sx0, sy, sx1 - sx0, 2)
         cr.set_source_rgba(0, 0, 0, 0.55)
         cr.fill()
@@ -1417,11 +1395,9 @@ class MediaPlayer(Theme):
             cr.fill()
 
         # controls: counter, stop, prev|next pill, blue orb, volume
-        cy = y + h - self.CTRL_H / 2 - 2
         counter = f"{card.step + 1} / {max(n, 1)}"
         cl = layout(cr, counter, self.font, 12)
         self._label(cr, cl, x + 14, cy - lsize(cl)[1] / 2, (0.9, 0.95, 1.0, 0.95), liquid)
-        ox = x + w / 2
         # stop
         self._gloss_button(cr, ox - 92, cy - 9, 22, 18, 4, pressed=pressed == "stop")
         cr.rectangle(ox - 85, cy - 4, 8, 8)
@@ -1433,12 +1409,12 @@ class MediaPlayer(Theme):
         for d, bxx in ((-1, ox - 44), (1, ox + 44)):
             for k in (0, 1):
                 tip = bxx + d * (k * 6 + 4)
-                cr.move_to(tip - d * 7 + d * k * 0, cy - 5)
+                cr.move_to(tip - d * 7, cy - 5)
                 cr.line_to(tip - d * 7, cy + 5)
                 cr.line_to(tip, cy)
                 cr.close_path()
                 cr.fill()
-            cr.rectangle(bxx + d * 11 - (1 if d > 0 else 1), cy - 5, 2, 10)
+            cr.rectangle(bxx + d * 11 - 1, cy - 5, 2, 10)
             cr.fill()
         # orb: glossy blue
         orb_r = 17
@@ -1481,7 +1457,6 @@ class MediaPlayer(Theme):
             cr.close_path()
         cr.fill()
         # where the volume knob was: playback speed readout + slider
-        G = self._geom(x, y, w, h)
         vx, vs0, vs1 = G["vx"], G["vs0"], G["vs1"]
         sl = layout(cr, f"{card.speed:g}×", self.font, 11, bold=True)
         self._label(cr, sl, vx - 4, cy - lsize(sl)[1] / 2, (0.85, 0.92, 1.0, 0.95), liquid)
@@ -1525,9 +1500,7 @@ class Glass(Theme):
     font = "Noto Sans"
     R, PAD, BAR_H, CTRL_H, BTN = 24, 18, 14, 46, 34
     backdrop = {"radius": R, "frost": 0.06, "smoke": 0.32}
-
-    def _w(self, card):
-        return 360 if card.follow else 440
+    widths = (360, 440)
 
     def _title(self, card):
         return card.header or ("Something went wrong" if card.error else "Flippy")
@@ -1621,10 +1594,9 @@ class Glass(Theme):
         left = f"{card.step + 1} of {n}"
         right = "done" if card.finished else f"{n - card.step - 1} left"
         for text, rx, align in ((left, x + P, 0), (right, x + w - P, 1)):
-            if text:
-                lay = layout(cr, text, self.font, 11)
-                lw, lh = lsize(lay)
-                show(cr, lay, rx - lw * align, by - lh / 2, (1, 1, 1, 0.6))
+            lay = layout(cr, text, self.font, 11)
+            lw, lh = lsize(lay)
+            show(cr, lay, rx - lw * align, by - lh / 2, (1, 1, 1, 0.6))
         bx0, bx1 = G["bx0"], G["bx1"]
         round_rect(cr, bx0, by - 2, bx1 - bx0, 4, 2)
         cr.set_source_rgba(1, 1, 1, 0.22)
@@ -1637,8 +1609,8 @@ class Glass(Theme):
 
         # transport: bare white glyphs, like the lock screen
         cy, ox = G["cy"], G["ox"]
-        for name, gx, sz in (("prev", ox - 58, 8), ("next", ox + 58, 8)):
-            glyph(cr, name, gx, cy, sz, (1, 1, 1, 1.0 if pressed == name else 0.85))
+        for name, gx in (("prev", ox - 58), ("next", ox + 58)):
+            glyph(cr, name, gx, cy, 8, (1, 1, 1, 1.0 if pressed == name else 0.85))
         glyph(cr, "pause" if playing(card) else "play", ox, cy, 12, (1, 1, 1, 1.0 if pressed != "toggle" else 0.7))
         # round glass buttons: speed (left), close (right)
         sx, sy = G["speed"]
@@ -1662,7 +1634,6 @@ class Mono(Theme):
     """Black with gray outlines and sharp corners, like the setup and settings windows; grayscale pointers.
     Playback is a seek slider and a speed slider (white fill, dark track, light pill knob) plus square buttons."""
     key, name = "mono", "Mono"
-    pointer = "hand"
     hand_fill = (0.94, 0.945, 0.95)
     hand_outline = (0.36, 0.36, 0.38)
     accent = (0.94, 0.945, 0.95)
@@ -1674,11 +1645,8 @@ class Mono(Theme):
     muted = (0.62, 0.64, 0.68)
     err = (1.0, 0.55, 0.5)
     font = "Noto Sans"
-    radius = 0
     P, BTN, ROW = 16, 26, 30
-
-    def _w(self, card):
-        return 360 if card.follow else 480
+    widths = (360, 480)
 
     def _layouts(self, cr, card, opts):
         w = self._w(card) - 2 * self.P
@@ -1736,16 +1704,20 @@ class Mono(Theme):
             cr.set_source_rgba(0.85, 0.85, 0.86, 1)
             cr.fill()
 
-    def _button(self, cr, bx, by, name, pressed):
-        B = self.BTN
+    def _frame(self, cr, bx, by, bw, bh, pressed):
+        """A square-cornered button: an outline, filled darker while pressed."""
         if pressed:
-            cr.rectangle(bx, by, B, B)
+            cr.rectangle(bx, by, bw, bh)
             cr.set_source_rgba(0.16, 0.16, 0.17, 1)
             cr.fill()
-        cr.rectangle(bx + 0.5, by + 0.5, B - 1, B - 1)
+        cr.rectangle(bx + 0.5, by + 0.5, bw - 1, bh - 1)
         cr.set_source_rgba(*self.outline, 1)
         cr.set_line_width(1)
         cr.stroke()
+
+    def _button(self, cr, bx, by, name, pressed):
+        B = self.BTN
+        self._frame(cr, bx, by, B, B, pressed)
         glyph(cr, name, bx + B / 2, by + B / 2, 5 if name != "close" else 4.5, (*self.fg, 1))
 
     def draw(self, cr, x, y, w, h, card, t, opts):
@@ -1778,15 +1750,8 @@ class Mono(Theme):
             g = name if name != "toggle" else ("pause" if playing(card) else "play")
             self._button(cr, *G[name], g, pressed == name)
         vx, vy, vw = G["speed"]
-        bx, by, bw, bh = G["speed_cycle"]  # a square-cornered button: click steps through the speeds
-        if pressed == "speed_cycle":
-            cr.rectangle(bx, by, bw, bh)
-            cr.set_source_rgba(0.16, 0.16, 0.17, 1)
-            cr.fill()
-        cr.rectangle(bx + 0.5, by + 0.5, bw - 1, bh - 1)
-        cr.set_source_rgba(*self.outline, 1)
-        cr.set_line_width(1)
-        cr.stroke()
+        bx, by, bw, bh = G["speed_cycle"]  # click steps through the speeds
+        self._frame(cr, bx, by, bw, bh, pressed == "speed_cycle")
         sl = layout(cr, f"{card.speed:g}×", self.font, 11, bold=True)
         show(cr, sl, bx + (bw - lsize(sl)[0]) / 2, by + (bh - lsize(sl)[1]) / 2, (*self.fg, 1))
         self._slider(cr, vx, vy, vw, speed_to_frac(card.speed), pressed == "speed")

@@ -1,6 +1,5 @@
 """Small AppKit helpers for the settings window and pointer editors: callbacks, labels, a form layout."""
-from AppKit import (NSButton, NSColor, NSFont, NSPopUpButton, NSSlider, NSTextField, NSView,
-                    NSBezelStyleRounded, NSButtonTypeSwitch)
+from AppKit import NSButton, NSColor, NSFont, NSPopUpButton, NSSlider, NSTextField, NSView, NSBezelStyleRounded
 from Foundation import NSMakeRect, NSObject
 
 
@@ -20,6 +19,11 @@ def target(fn):
 class FlippedView(NSView):
     def isFlipped(self):
         return True
+
+
+class WindowDelegate(NSObject):
+    def windowWillClose_(self, note):
+        self.on_close()
 
 
 def label(text, size=13, bold=False, color=None, wrap_width=None):
@@ -44,19 +48,6 @@ def button(title, fn, keep, primary=False):
     b.setBezelStyle_(NSBezelStyleRounded)
     if primary:
         b.setKeyEquivalent_("\r")
-    b.sizeToFit()
-    return b
-
-
-def checkbox(title, on, fn, keep):
-    b = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 10, 10))
-    b.setButtonType_(NSButtonTypeSwitch)
-    b.setTitle_(title)
-    b.setState_(1 if on else 0)
-    t = target(lambda s: fn(bool(s.state())))
-    keep.append(t)
-    b.setTarget_(t)
-    b.setAction_("fire:")
     b.sizeToFit()
     return b
 
@@ -131,10 +122,8 @@ class Form:
             self.y += d.frame().size.height + 2
         self.y += 6
 
-    def row(self, title, subtitle=None, control=None, mark=None):
-        """mark: an optional small view (e.g. a status tick) to the left of the title."""
-        indent = 28 if mark is not None else 0
-        left_w = self.width - 2 * self.pad - indent - (control.frame().size.width + 16 if control else 0)
+    def row(self, title, subtitle=None, control=None):
+        left_w = self.width - 2 * self.pad - (control.frame().size.width + 16 if control else 0)
         t = label(title, 13, wrap_width=max(left_w, 120))  # wraps rather than running under the control
         h = t.frame().size.height
         s = None
@@ -143,21 +132,14 @@ class Form:
             h += s.frame().size.height + 2
         row_h = max(h, control.frame().size.height if control else 0) + 12
         top = self.y + (row_h - h) / 2
-        if mark is not None:
-            self._place(mark, self.pad, top - 3)
-        self._place(t, self.pad + indent, top)
+        self._place(t, self.pad, top)
         if s:
-            self._place(s, self.pad + indent, top + t.frame().size.height + 2)
+            self._place(s, self.pad, top + t.frame().size.height + 2)
         if control:
             cw, ch = control.frame().size.width, control.frame().size.height
             self._place(control, self.width - self.pad - cw, self.y + (row_h - ch) / 2)
         self.y += row_h
         return control
-
-    def add(self, view, x=None, height=None):
-        self._place(view, self.pad if x is None else x, self.y)
-        self.y += (height or view.frame().size.height) + 8
-        return view
 
     def buttons(self, *btns):
         """A right-aligned row of controls."""

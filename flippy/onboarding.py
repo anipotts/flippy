@@ -148,9 +148,7 @@ class Tour:
             loop.timeout_add(PREFILL_MS, lambda: self._fill(text) and False)
             self._card("Press Return", "I filled in a question to start with. Or type your own.")
             return
-        if step == "ask" and name == "ask":
-            return self.next()
-        if step == "followup" and name == "ask":
+        if step in ("ask", "followup") and name == "ask":
             return self.next()
 
         if step == "pause":

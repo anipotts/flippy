@@ -17,8 +17,6 @@ from gi.repository import Adw, GLib, Gtk  # noqa: E402
 from . import pointer_editor, style  # noqa: E402
 from .. import pointers, settings, themes, updates  # noqa: E402
 
-_adw_ready = False
-
 MODELS = settings.options('claude', 'model')
 EFFORTS = settings.options('claude', 'effort')
 IMAGES = settings.options('claude', 'image')
@@ -169,10 +167,7 @@ class SettingsWindow(Gtk.Window):
 
     def __init__(self, app, on_preview, on_reset, command=lambda cmd: None, glass=False):
         """glass: the compositor can blur behind the overlay (real glass), so Frosted glass, tint and reflections apply."""
-        global _adw_ready
-        if not _adw_ready:
-            Adw.init()
-            _adw_ready = True
+        Adw.init()
         super().__init__(application=app, title="Flippy Settings", default_width=WIDTH, default_height=HEIGHT)
         style.apply(self)
         self.set_titlebar(style.headerbar("Flippy Settings"))

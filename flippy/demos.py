@@ -103,12 +103,9 @@ def preview(host, tutorial=False):
     if tutorial:
         spots = [(22, 12, 'Apple menu:click'), (W // 2, H - 40, 'Dock')]
         texts = ('Click the Apple menu to open it', "Nice. That's how tutorials wait for you, then go on")
-        raw = ' '.join((f'{txt} [POINT:{int(x * sc)},{int(y * sc)}:{lbl}].' for (x, y, lbl), txt in zip(spots, texts)))
-        shot = (int(W * sc), int(H * sc))
-        host._start_playback(host.gen, shot, shot)
-        host.play.finish(raw)
-        return
-    raw = ' '.join((f'{txt} [POINT:{int(x * sc)},{int(y * sc)}:{lbl}].' for (x, y, lbl), txt in zip(spots, (f'This is a preview of how answers look: the pointer starts at {first}', 'then glides to the clock while the panel follows it', 'and ends on the dock, one step per thing it explains'))))
+    else:
+        texts = (f'This is a preview of how answers look: the pointer starts at {first}', 'then glides to the clock while the panel follows it', 'and ends on the dock, one step per thing it explains')
+    raw = ' '.join((f'{txt} [POINT:{int(x * sc)},{int(y * sc)}:{lbl}].' for (x, y, lbl), txt in zip(spots, texts)))
     shot = (int(W * sc), int(H * sc))
     host._start_playback(host.gen, shot, shot)
     host.play.finish(raw)

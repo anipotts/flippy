@@ -60,10 +60,6 @@ class Brain:
         self._lock = asyncio.Lock()
         self._revision = 0
 
-    @property
-    def last_model(self):
-        return self.providers[self.selected].last_model if self.selected else None
-
     def configure(self, model=None, effort="low"):
         self.providers["claude"].configure(model, effort)
         codex_model = settings.get("codex", "model")
@@ -82,8 +78,8 @@ class Brain:
                                              + " with your subscription in Setup. API-key connections are refused.",
                                              kind=mode + "-login")
             return mode
-        claude, codex = await asyncio.gather(claude_available(), self.providers["codex"].available())
-        CONNECTION_STATUS.update(claude=claude, codex=codex)
+        status = await self.connections()
+        claude, codex = status["claude"], status["codex"]
         if claude != codex:
             return "claude" if claude else "codex"
         raise ProviderChoiceRequired("Both subscriptions are connected. Choose Claude or ChatGPT in Settings → Models."

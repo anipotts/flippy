@@ -115,21 +115,16 @@ def due():
     return time.time() - _state().get("checked_at", 0) >= CHECK_EVERY_S
 
 
-def mark_checked():
-    st = _state()
-    st["checked_at"] = time.time()
-    _save_state(st)
-
-
 def check(force=False):
     """The release to offer, or None: newer than this install and not put off with "Later" today."""
     if current().demo:
         raise UpdateError("Updates are disabled in Flippy Demo; rebuild the demo instead.")
     rel = latest_release()
-    mark_checked()
+    st = _state()
+    st["checked_at"] = time.time()
+    _save_state(st)
     if not rel or not is_newer(rel["version"], current_version()):
         return None
-    st = _state()
     if not force and st.get("later") == rel["version"] and time.time() - st.get("later_at", 0) < CHECK_EVERY_S:
         return None
     return rel
@@ -148,10 +143,6 @@ def _git(*args, root=ROOT, timeout=120):
         raise UpdateError((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout) else
                           f"git {args[0]} failed")
     return r.stdout.strip()
-
-
-def platform_name():
-    return "macos" if sys.platform == "darwin" else "linux"
 
 
 def package_platform(root=ROOT):

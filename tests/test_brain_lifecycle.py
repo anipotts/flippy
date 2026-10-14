@@ -169,7 +169,6 @@ class TestBrainLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.brain.client, first)
         self.assertEqual(len(first.queries), 2)
         self.assertFalse(first.disconnected)
-        self.assertEqual(self.brain.last_model, "fixture-model")
 
     async def test_model_change_replaces_completed_transport(self):
         await self.brain.ask("first", "image", (80, 40))

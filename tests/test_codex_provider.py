@@ -271,7 +271,6 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
                           "data:image/jpeg;base64,second", "data:image/jpeg;base64,screen",
                           "(screenshot is 1920x1080 pixels)\n\nquestion"])
         self.assertTrue(all(turn["environments"] == [] for turn in self.rpc.turns))
-        self.assertEqual(self.provider.last_model, "fixture-model")
 
     async def test_failed_and_interrupted_terminal_states_never_return_partial_success(self):
         self.allow_fixture_turns()
