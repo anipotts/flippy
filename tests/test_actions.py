@@ -2,7 +2,6 @@
 import asyncio
 import base64
 import sys
-import threading
 import unittest
 from unittest.mock import patch
 
@@ -10,7 +9,8 @@ import anyio
 from mcp import ClientSession
 from mcp.shared.memory import create_client_server_memory_streams
 
-from flippy.actions import ActionError, DesktopTools, MAX_ACTIONS, TOOL_CATALOG, Screenshot, approval_text
+from flippy.actions import DesktopTools, MAX_ACTIONS, TOOL_CATALOG, approval_text
+from flippy.frames import ScreenFrame as Screenshot
 from flippy.brain import Brain, BrainError
 from claude_agent_sdk import ResultMessage
 
@@ -312,39 +312,6 @@ class TestNativeAdapter(unittest.TestCase):
             mock.start()
             self.addCleanup(mock.stop)
         self.ui = self.module.Platform.__new__(self.module.Platform)
-        self.shot = Screenshot("image", (1920, 1080), (1280, 720), ("dev.flippy.fixture", 1, 7, (0, 0, 1280, 720), (1, (1280, 720))))
-        self.ui.action_state = lambda: self.shot.target
-        self.cancel = threading.Event()
-
-    def test_retina_click_uses_logical_coordinates(self):
-        with patch.object(self.module.Quartz, "CGPreflightPostEventAccess", return_value=True), \
-                patch.object(self.ui, "click", return_value="ok") as click:
-            self.ui.action_input("click", {"x": 960, "y": 540}, self.shot, self.cancel)
-            click.assert_called_once_with(640, 360, check=unittest.mock.ANY)
-
-    def test_cancel_after_pointer_move_prevents_click(self):
-        def check():
-            if self.cancel.is_set():
-                raise ActionError("Canceled.")
-        with patch.object(self.module.Quartz, "CGPreflightPostEventAccess", return_value=True), \
-                patch.object(self.module.Quartz, "CGEventCreateMouseEvent") as create, \
-                patch.object(self.module.Quartz, "CGEventPost"), \
-                patch.object(self.module.time, "sleep", side_effect=lambda _: self.cancel.set()):
-            with self.assertRaises(ActionError):
-                self.ui.click(10, 20, check=check)
-            self.assertEqual(create.call_count, 1)  # pointer movement only, no button down
-
-    def test_focus_change_after_approval_prevents_events(self):
-        self.ui.action_state = lambda: ("another app", 2)
-        with patch.object(self.ui, "click") as click, self.assertRaises(ActionError):
-            self.ui.action_input("click", {"x": 20, "y": 20}, self.shot, self.cancel)
-        click.assert_not_called()
-
-    def test_missing_accessibility_prevents_events(self):
-        with patch.object(self.module.Quartz, "CGPreflightPostEventAccess", return_value=False), \
-                patch.object(self.ui, "key") as key, self.assertRaises(ActionError):
-            self.ui.action_input("key", {"combo": "return", "reason": "press"}, self.shot, self.cancel)
-        key.assert_not_called()
 
     def test_typing_waits_for_all_characters(self):
         posted = []
@@ -356,20 +323,6 @@ class TestNativeAdapter(unittest.TestCase):
             self.assertEqual(self.ui.type_text("abc", on_key=posted.append, wait=True), "ok")
             self.assertEqual(posted, ["a", "b", "c"])
 
-    def test_typing_stops_between_characters(self):
-        posted = []
-
-        def check():
-            if posted:
-                raise ActionError("Canceled.")
-        with patch.object(self.ui, "_can_post", return_value=None), \
-                patch.object(self.module.Quartz, "CGEventCreateKeyboardEvent", return_value=object()), \
-                patch.object(self.module.Quartz, "CGEventSetFlags"), \
-                patch.object(self.module.Quartz, "CGEventKeyboardSetUnicodeString"), \
-                patch.object(self.module.Quartz, "CGEventPost"), patch.object(self.module.time, "sleep"):
-            with self.assertRaises(ActionError):
-                self.ui.type_text("abc", on_key=posted.append, wait=True, check=check)
-        self.assertEqual(posted, ["a"])
 
 
 if __name__ == "__main__":

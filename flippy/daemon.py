@@ -69,7 +69,6 @@ class Flippy:
         self.gen = 0
         self.request = None
         self.input_disabled = False
-        self.input_worker = None
         self.quitting = False
         self.followup_token = None
         # Give Python's OS signal handlers a bounded main-thread wakeup while idle.
@@ -399,10 +398,10 @@ class Flippy:
             except OSError:
                 pass
 
-    async def _capture_frame_once(self, req, keep_marks=False, targeted=False):
+    async def _capture_frame(self, req, keep_marks=False):
         running = asyncio.get_running_loop()
         future = running.create_future()
-        def deliver(path, error, target, logical):
+        def deliver(path, error, logical):
             if future.done() or not self._owns(req):
                 self._unlink(path)
                 if not future.done():
@@ -413,14 +412,10 @@ class Flippy:
                     "Check Screen Recording permission." if sys.platform == "darwin"
                     else "Allow the screenshot when COSMIC asks.")))
             else:
-                future.set_result((path, target, logical))
+                future.set_result((path, logical))
         def begin():
             self.overlay.clear(keep_marks=keep_marks)
             self.box.hide()
-            if targeted:
-                self.ui.action_card.hide()
-                self.ui.hide_nudge()
-            target = self.ui.action_state() if targeted else None
             logical = self.ui.screen_size()
             timer_box = []
             def take():
@@ -428,9 +423,9 @@ class Flippy:
                     req.timers.discard(timer_box[0])
                 if not future.done() and self._owns(req):
                     try:
-                        self.shooter.take(lambda path, err: running.call_soon_threadsafe(deliver, path, err, target, logical))
+                        self.shooter.take(lambda path, err: running.call_soon_threadsafe(deliver, path, err, logical))
                     except Exception:
-                        running.call_soon_threadsafe(deliver, None, True, target, logical)
+                        running.call_soon_threadsafe(deliver, None, True, logical)
                 elif not future.done():
                     running.call_soon_threadsafe(future.cancel)
                 return False
@@ -440,9 +435,9 @@ class Flippy:
         path = None
         try:
             await self._action_main(begin, req)
-            path, target, logical = await future
+            path, logical = await future
             worker = asyncio.create_task(asyncio.to_thread(prepare_frame, path, settings.get("claude", "image"),
-                                                           logical_size=logical, target=target))
+                                                           logical_size=logical))
             try:
                 frame = await asyncio.shield(worker)
             except asyncio.CancelledError:
@@ -450,8 +445,6 @@ class Flippy:
                 raise
             if not self._owns(req):
                 raise asyncio.CancelledError()
-            if targeted and await self._action_main(self.ui.action_state, req) != target:
-                raise ActionError("The foreground window or display changed. Start a new /act request.")
             return frame
         finally:
             if path is None and future.done() and not future.cancelled() and future.exception() is None:
@@ -469,21 +462,6 @@ class Flippy:
         label = key_label and (key_label("pause") or key_label("ask"))  # pause shortcut off: the ask hotkey stops it too
         return plain_keys(label or "the pause shortcut")
 
-    async def _capture_frame(self, req, keep_marks=False, targeted=False):
-        # Opening an app can change its window during capture. Retry capture only,
-        # never an input, and never reuse coordinates from an unsettled frame.
-        for attempt in range(4 if targeted else 1):
-            try:
-                frame = await self._capture_frame_once(req, keep_marks, targeted)
-                if targeted:
-                    await self._action_main(lambda: self._acting(req), req)
-                return frame
-            except ActionError as error:
-                if not targeted or "foreground" not in str(error).lower() or attempt == 3:
-                    raise
-                if not self._owns(req):
-                    raise asyncio.CancelledError()
-                await asyncio.sleep(.7)
 
     # --- explicit desktop tasks; ordinary asks never receive tools ---
     def act(self, question):
@@ -505,8 +483,7 @@ class Flippy:
         limits = settings.ACT_LIMITS[self.action_policy.mode]
         self.box.hide()
         # Background: the task works on one app's window and controls (flippy/mac/ax.py), never the real pointer
-        # or keyboard, so you keep using your Mac. (The pointer-driving path below, _capture_frame and
-        # _action_perform, is kept for the borrow-the-mouse-while-you're-idle fallback.)
+        # or keyboard, so you keep using your Mac.
         tools = DesktopTools(lambda: self._app_look(req),
                              lambda name, args, shot: self._action_approve(name, args, shot, req),
                              lambda name, args, shot, cancel: self._app_perform(name, args, shot, cancel, req),
@@ -638,34 +615,6 @@ class Flippy:
         finally:
             future.cancel()
             loop.idle_add(lambda: self.request is req and self.ui.action_card.hide() and False)
-
-    async def _action_perform(self, name, args, shot, cancel, req):
-        fresh = await self._capture_frame(req, targeted=True)
-        if fresh.target != shot.target:
-            raise ActionError("The foreground window or display changed. Take a new screenshot before acting.")
-        # Clicks check the spot they aim at. Typing and shortcuts only compare the whole window when this exact
-        # input was approved on a card: between steps the app is expected to change (Notes just made the note),
-        # and the same-app/window check above still stops input that would land somewhere else.
-        policy = getattr(self, "action_policy", None)
-        exact = policy is None or policy.mode == "every_input" or policy.sensitive(shot.target)
-        if (name in ("click", "scroll", "drag") or exact) and shot.substantial_change(fresh, name, args):
-            raise ActionError("The screen changed before Flippy could act. Start a new /act request.")
-        await self._action_main(lambda: self._acting(req, name), req)
-        worker = asyncio.create_task(asyncio.to_thread(self.ui.action_input, name, args, fresh, cancel))
-        self.input_worker = worker
-        try:
-            await asyncio.shield(worker)
-        except asyncio.CancelledError:
-            cancel.set()
-            try:
-                await asyncio.wait_for(asyncio.shield(worker), 5)
-            except (Exception, asyncio.CancelledError):
-                self.input_disabled = True
-                raise ActionError("Input cleanup could not be confirmed. Restart Flippy before acting again.") from None
-            raise
-        finally:
-            if worker.done():
-                self.input_worker = None
 
     def _action_done(self, tools, req, result, error):
         if not self._owns(req) or self.action_tools is not tools:
@@ -988,12 +937,6 @@ class Flippy:
         async def stop():
             if req and req.pending:
                 await asyncio.to_thread(req.drained.wait)
-            worker = self.input_worker
-            if worker is not None:
-                try:
-                    await asyncio.shield(worker)
-                except Exception:
-                    pass  # worker finished; its cleanup-failure lockout remains visible
             await self.brain.stop()
             loop.idle_add(lambda: self.ui.quit() and False)
         asyncio.run_coroutine_threadsafe(stop(), self.loop)

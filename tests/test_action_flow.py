@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import Mock
 
 from flippy.actions import ActionError, ApprovalPolicy, approval_text
 from flippy.frames import ScreenFrame
@@ -98,20 +98,3 @@ class TestApprovalFlow(unittest.IsolatedAsyncioTestCase):
         obj, _ = controller(remembered=['com.apple.TextEdit'])
         self.assertTrue(await self.approve(obj, frame(), (30, 30)))
         obj.ui.action_card.card.assert_not_called()
-
-    async def test_cancel_during_foreground_retry_never_captures_again(self):
-        obj, namespace = controller()
-        obj._capture_frame_once = AsyncMock(side_effect=ActionError('The foreground window changed.'))
-        obj._owns.return_value = False
-        with self.assertRaises(asyncio.CancelledError):
-            await obj._capture_frame(obj.request, targeted=True)
-        self.assertEqual(obj._capture_frame_once.await_count, 1)
-        obj._acting.assert_not_called()
-
-    async def test_permission_error_is_not_retried(self):
-        obj, _ = controller()
-        obj._capture_frame_once = AsyncMock(side_effect=ActionError('Check Screen Recording permission.'))
-        with self.assertRaises(ActionError):
-            await obj._capture_frame(obj.request, targeted=True)
-        self.assertEqual(obj._capture_frame_once.await_count, 1)
-        obj._acting.assert_not_called()

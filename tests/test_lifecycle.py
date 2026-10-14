@@ -4,7 +4,6 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
-import threading
 import time
 import unittest
 from unittest.mock import Mock
@@ -40,8 +39,8 @@ class MainQueue:
 def controller(queue):
     tree = ast.parse((Path(__file__).parents[1] / 'flippy/daemon.py').read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'Flippy')
-    names = ('_owns', '_run_request', '_action_main', '_capture_frame', '_capture_frame_once', '_unlink',
-             '_action_perform', '_on_answer', '_begin_request', '_schedule_fade', '_action_approve', '_start_playback', '_play_coords')
+    names = ('_owns', '_run_request', '_action_main', '_capture_frame', '_unlink',
+             '_on_answer', '_begin_request', '_schedule_fade', '_action_approve', '_start_playback', '_play_coords')
     from flippy.playback import Playback
     ns = {'asyncio': asyncio, 'loop': queue, 'Request': Request, 'Playback': Playback, 'ActionError': ActionError, 'approval_text': lambda *args: 'proposal',
           'time': time, 'event': Mock(), 'os': __import__('os'), 'prepare_frame': Mock(), 'settings': SimpleNamespace(get=lambda *args: 1920)}
@@ -63,7 +62,6 @@ def controller(queue):
     adapter.box = SimpleNamespace(hide=Mock())
     adapter.overlay = SimpleNamespace(clear=Mock(), point=Mock(), queue_draw=Mock())
     adapter.ui = SimpleNamespace(screen_size=lambda: (100,100), hide_settle_ms=0,
-                                 action_state=lambda: ('app',1,2,(0,0,100,100),(100,100)),
                                  action_card=SimpleNamespace(hide=Mock(), card=Mock()), hide_nudge=Mock())
     return adapter, ns
 
@@ -184,35 +182,6 @@ class TestLifecycle(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ActionError): await task
         f.ui.action_card.card.assert_not_called()
 
-    async def test_changed_pixels_never_reach_native_input(self):
-        q=MainQueue(); f,_=controller(q)
-        original=ScreenFrame('jpeg',(100,100),(100,100),('target',),'first',(100,100))
-        async def capture(*args,**kwargs):
-            return ScreenFrame('jpeg',(100,100),(100,100),('target',),'changed',(100,100))
-        f._capture_frame=capture; f.ui.action_input=Mock()
-        with self.assertRaises(ActionError):
-            await f._action_perform('click',{},original,threading.Event(),f.request)
-        f.ui.action_input.assert_not_called()
-
-    async def test_native_worker_cancel_waits_for_release_ack(self):
-        from unittest.mock import AsyncMock
-        q=MainQueue(); f,_=controller(q)
-        f._action_main = AsyncMock(side_effect=lambda fn, req=None: fn())
-        shot=ScreenFrame('jpeg',(100,100),(100,100),('target',),'same',(100,100))
-        async def capture(*args,**kwargs): return shot
-        f._capture_frame=capture
-        started=threading.Event(); release=threading.Event(); cancel=threading.Event()
-        def perform(*args):
-            started.set(); release.wait(2)
-        f.ui.action_input=perform
-        task=asyncio.create_task(f._action_perform('drag',{},shot,cancel,f.request))
-        await asyncio.to_thread(started.wait,1)
-        task.cancel(); await asyncio.sleep(.02)
-        self.assertFalse(task.done())
-        self.assertTrue(cancel.is_set())
-        release.set()
-        with self.assertRaises(asyncio.CancelledError): await task
-        self.assertFalse(f.input_disabled)
 
 
 class TestRequest(unittest.TestCase):

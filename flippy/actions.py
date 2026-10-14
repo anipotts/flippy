@@ -9,7 +9,6 @@ import re
 import json
 import threading
 from . import act_memory
-from .frames import ScreenFrame as Screenshot
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
