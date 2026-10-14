@@ -30,6 +30,7 @@ from . import demos
 PROFILE = current()
 SOCK_PATH = PROFILE.socket
 ASK_TIMEOUT_S = 90
+WORK_AREA_S = 1.0           # longest an answer waits to learn where you're working (a busy app)
 IDLE_RESET_S = 15 * 60      # fresh Claude session after this much idle (keeps context/usage small)
 DRAW_TIMEOUT_S = 60         # leave draw mode (and give the mouse back) if nothing happens
 NOT_HERE = "not available on this platform yet (see docs/linux-port.md)"
@@ -277,10 +278,8 @@ class Flippy:
 
     def _show_box(self):
         event("box")
-        if hasattr(self.ui, "prime_focused_area"):
-            self.ui.prime_focused_area()
-        # Read before the box takes the keyboard: Electron apps (VS Code) stop reporting their focus once it does.
-        self.focus_at_open = self.ui.work_area() if hasattr(self.ui, "work_area") else None
+        # Before the box takes the keyboard: Electron apps (VS Code) stop reporting their focus once it does.
+        self.focus_at_open = self.ui.focused() if hasattr(self.ui, "focused") else None
         self.box.show()
 
     def submit(self, question, tutorial=None):
@@ -683,7 +682,8 @@ class Flippy:
     async def _ask(self, question, req, keep_marks=False, focus=None):
         frame = await self._capture_frame(req, keep_marks=keep_marks)
         detail = placement.Detail.from_frame(frame)  # off the main thread: where a docked answer can go
-        await self._action_main(lambda: (self._note_focus(detail, focus), self.overlay.show_text("thinking…", phase="thinking"),
+        found = await self._work_area(focus)
+        await self._action_main(lambda: (self._note_focus(detail, found), self.overlay.show_text("thinking…", phase="thinking"),
                                          event("thinking")), req)
         if self.brain.dirty or (self.last_ask and time.monotonic() - self.last_ask > IDLE_RESET_S):
             await self.brain.reset()
@@ -731,11 +731,20 @@ class Flippy:
                        show_seconds=settings.get("timing", "show_seconds"),
                        max_show_seconds=settings.get("timing", "max_show_seconds"))
 
-    def _note_focus(self, detail, found=None):
-        """What a docked answer should stay off (flippy/placement.py): the text you were working in, as the box
-        opened (found), else now (flippy-ask q has no box); and the screenshot's busy parts."""
-        if not (found and any(found)) and hasattr(self.ui, "work_area"):
-            found = self.ui.work_area()
+    async def _work_area(self, focus):
+        """The text you were working in and its window (focus: as the box opened; flippy-ask q has no box). Read
+        off the main thread, and given up on after WORK_AREA_S: a busy app never holds up Flippy or the answer."""
+        if not hasattr(self.ui, "work_area"):
+            return None, None
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(self.ui.work_area, focus), WORK_AREA_S)
+        except asyncio.TimeoutError:
+            log("placement: work area timed out")
+            return None, None
+
+    def _note_focus(self, detail, found):
+        """What a docked answer should stay off (flippy/placement.py): the text you were working in and its window
+        (found), and the screenshot's busy parts."""
         area, window = found or (None, None)
         self.overlay.avoid, self.overlay.window, self.overlay.detail = area, window, detail
         log(f"placement: work area {_rounded(area)}, window {_rounded(window)}")

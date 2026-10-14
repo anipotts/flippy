@@ -1,7 +1,10 @@
 """Where answers show (flippy/overlay.py, flippy/placement.py: by the pointer, or docked out of the way) and the card's pushpin (flippy/themes.py)."""
+import asyncio
 import os
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
 from unittest.mock import MagicMock, patch
@@ -250,14 +253,32 @@ class PinTiming(unittest.TestCase):
 
 
 class WorkArea(unittest.TestCase):
-    def note(self, found, now):
-        f = types.SimpleNamespace(ui=types.SimpleNamespace(work_area=lambda: now), overlay=types.SimpleNamespace())
-        daemon.Flippy._note_focus(f, None, found)
-        return f.overlay.avoid
+    def read(self, work_area=None, focus=None):
+        f = types.SimpleNamespace(ui=types.SimpleNamespace(**({"work_area": work_area} if work_area else {})))
+        running = asyncio.new_event_loop()  # like Flippy's, it doesn't wait for a stuck lookup thread to end
+        try:
+            return running.run_until_complete(daemon.Flippy._work_area(f, focus))
+        finally:
+            running.close()
 
-    def test_from_the_box_else_read_now(self):
-        self.assertEqual(self.note(((1, 1, 5, 5), None), ((9, 9, 5, 5), None)), (1, 1, 5, 5))
-        self.assertEqual(self.note(None, ((9, 9, 5, 5), None)), (9, 9, 5, 5))  # flippy-ask q, or the box was closed
+    def test_read_off_the_main_thread_with_what_the_box_took(self):
+        seen = []
+        def work_area(focus):
+            seen.append((focus, threading.current_thread() is threading.main_thread()))
+            return (1, 1, 5, 5), None
+        self.assertEqual(self.read(work_area, focus="taken"), ((1, 1, 5, 5), None))
+        self.assertEqual(seen, [("taken", False)])
+
+    def test_a_busy_app_does_not_hold_up_the_answer(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        with patch.object(daemon, "WORK_AREA_S", 0.05), patch.object(daemon, "log"):
+            start = time.monotonic()
+            self.assertEqual(self.read(lambda focus: release.wait(5)), (None, None))
+        self.assertLess(time.monotonic() - start, 1)
+
+    def test_no_work_area_on_this_platform(self):
+        self.assertEqual(self.read(), (None, None))
 
     def test_closing_the_box_forgets_it(self):
         stale = ((10, 10, 800, 600), (0, 0, 1000, 800))
@@ -272,14 +293,23 @@ class WorkArea(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == "darwin", "macOS Accessibility")
 class FocusedArea(unittest.TestCase):
-    """flippy/mac/ax.py focused_area: what counts as the text you're working in."""
+    """flippy/mac/ax.py text_area: what counts as the text you're working in."""
     def area(self, tree, focused):
         from flippy.mac import ax
-        attrs = {"root": {"AXFocusedUIElement": focused}, **tree}
-        with patch.object(ax, "trusted", return_value=True), patch.object(ax, "_working_app", return_value="root"), \
-                patch.object(ax, "_attr", side_effect=lambda el, name: attrs.get(el, {}).get(name)), \
-                patch.object(ax, "_frame", side_effect=lambda el: attrs.get(el, {}).get("frame")):
-            return ax.focused_area()
+        with patch.object(ax, "_quick", side_effect=lambda el: el), \
+                patch.object(ax, "_attr", side_effect=lambda el, name: tree.get(el, {}).get(name)), \
+                patch.object(ax, "_frame", side_effect=lambda el: tree.get(el, {}).get("frame")):
+            return ax.text_area(focused)
+
+    def test_what_the_box_took_else_the_focus_now(self):
+        from flippy.mac import ax, ui
+        platform = ui.Platform.__new__(ui.Platform)
+        frames = {"field": (1, 1, 50, 20), "now": (9, 9, 50, 20)}
+        with patch.object(ax, "text_area", side_effect=frames.get), patch.object(ax, "window_frame", return_value=None), \
+                patch.object(ax, "focused", return_value=("now", None)):
+            self.assertEqual(platform.work_area(("field", None)), ((1, 1, 50, 20), None))
+            self.assertEqual(platform.work_area(None), ((9, 9, 50, 20), None))  # flippy-ask q: no box
+            self.assertEqual(platform.work_area(("gone", None)), ((9, 9, 50, 20), None))  # it took nothing usable
 
     def test_vs_code_cursor_field_means_the_editor_around_it(self):
         tree = {"cursor": {"AXRole": "AXTextArea", "frame": (669, 252, 217, 18), "AXParent": "pane"},
