@@ -37,7 +37,7 @@ picking on synthetic thumbnails.
 
 | Piece | Where | Platform? |
 |---|---|---|
-| Recording buffer, preview/cut detection, frame picking, prompt, multi-image ask | `flippy/video.py` (`Recording`, `preview_box`, `step_scores`, `find_cuts`, `pick`, `prepare`, `question`, `ask`) | shared |
+| Recording buffer, preview/cut detection, frame picking, prompt, multi-image ask | `flippy/video.py` (`Recording`, `preview_box`, `step_scores`, `find_cuts`, `pick`, `prepare`, `question`) | shared |
 | The feature: commands, recording thread, cards, question box, asking, playback | `flippy/video.py` `Review` | shared |
 | Which window to record | `Platform.video_window() -> (handle, app name)` or `(None, why not)` | **per platform** |
 | A grab of that window | `Platform.video_frame(handle) -> PIL.Image or None` (worker thread; `None` = window gone, stops) | **per platform** |
@@ -65,8 +65,8 @@ Video means recording while the edit plays (not an exported file), with no audio
 tested on synthetic thumbnails first. Each platform records the editor's **window**, not the screen, so Flippy's
 overlay, its "Recording" card and the panel never end up in the frames. `Review` drives the controller through the
 attributes and methods the normal ask uses (`busy`, `gen`, `shooter`, `_run`, `_start_playback`, `_stream_text`,
-`_on_answer`, `_fail`, `overlay`), and `video.ask` talks to `brain.client` itself in the same session, because
-`Brain.ask` sends one image. `Flippy` owns `self.video` and routes `video …` (`NOT_HERE` without `video_window`).
+`_on_answer`, `_fail`, `overlay`), and asks through the shared `brain.ask` with the frames as `extra_images`, in the
+same session. `Flippy` owns `self.video` and routes `video …` (`NOT_HERE` without `video_window`).
 Still open: moving `Review`'s use of those private methods into a public `Flippy.ask_with(...)`, so the normal ask
 and video review share one path.
 
