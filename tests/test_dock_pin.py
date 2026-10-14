@@ -249,7 +249,6 @@ class PinTiming(unittest.TestCase):
         timeout_add.assert_not_called()
 
 
-@unittest.skipUnless(sys.platform == "darwin", "macOS Accessibility")
 class WorkArea(unittest.TestCase):
     def note(self, found, now):
         f = types.SimpleNamespace(ui=types.SimpleNamespace(work_area=lambda: now), overlay=types.SimpleNamespace())
@@ -271,6 +270,7 @@ class WorkArea(unittest.TestCase):
         self.assertIsNone(f.focus_at_open)
 
 
+@unittest.skipUnless(sys.platform == "darwin", "macOS Accessibility")
 class FocusedArea(unittest.TestCase):
     """flippy/mac/ax.py focused_area: what counts as the text you're working in."""
     def area(self, tree, focused):
