@@ -9,7 +9,7 @@ import math
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 
 import cairo
@@ -49,6 +49,7 @@ class Card:
     speed: float = 1.0            # playback speed (shown on player skins)
     controls: bool = False        # a real answer: show playback controls on themes that hide them otherwise
     pinned: bool = False          # kept on screen until dismissed (the pushpin)
+    actions: tuple = ()           # ((control name, label), ...): buttons in a row above the controls (#26)
 
 
 SPEED_MIN, SPEED_MAX = 0.5, 2.0
@@ -180,6 +181,16 @@ def thought_block(cr, card, x, y, w, opts, open_, accent, text_rgba):
     return row
 
 
+# ---- the action row: a walkthrough's "Follow up", a side answer's way back to it (#26), above the card's controls
+# in every theme (Theme.draw_actions)
+
+def _action_layouts(cr, card, opts):
+    px = max(9, opts["text_size"] - 4)
+    return [(name, layout(cr, label.upper(), THOUGHT_FONT, px, bold=True)) for name, label in card.actions]
+
+
+def action_row_height(card, opts):
+    return max((lsize(lay)[1] for _, lay in _action_layouts(_measure_ctx, card, opts)), default=0) + 10
 
 
 def glyph(cr, name, cx, cy, s, rgba):
@@ -567,7 +578,50 @@ class Theme:
         w, h = self.size(card, opts)
         if card.task and card.thought:  # a theme that fits its card to the text ("Done.") still leaves room to read
             w = max(w, self._w(card))
-        return w, h + self.thought_space(card, w, opts)
+        if card.actions:
+            w = max(w, self.actions_width(card, opts) + 2 * self.thought_inset)
+        return w, h + self.thought_space(card, w, opts) + self.action_space(card, opts)
+
+    ACTION_SEP = 16  # between the card's text and the action row, a hairline in the middle
+
+    def action_space(self, card, opts):
+        return self.ACTION_SEP + action_row_height(card, opts) if card.actions else 0
+
+    def actions_width(self, card, opts):
+        lays = _action_layouts(_measure_ctx, card, opts)
+        return sum(lsize(lay)[0] + 20 for _, lay in lays) + 8 * (len(lays) - 1)
+
+    def controls_height(self, card, opts):
+        """How much of the card's bottom its controls take (the action row goes just above them)."""
+        return self.size(card, opts)[1] - self.size(replace(card, controls=False), opts)[1]
+
+    def draw_actions(self, cr, card, x, y, w, h, opts):
+        """The action row: small outlined buttons, right-aligned above the controls, under a hairline. Returns
+        {control name: rect}."""
+        inset, a = self.thought_inset, opts["card_opacity"]
+        lays = _action_layouts(cr, card, opts)
+        rh = action_row_height(card, opts)
+        top = y + h - self.controls_height(card, opts) - rh - 9
+        cr.rectangle(x + inset, top - self.ACTION_SEP / 2, w - 2 * inset, 1)
+        cr.set_source_rgba(*self.thought_text[:3], 0.18 * a)
+        cr.fill()
+        accent = (*(self.thought_label or self.accent), 0.9 * a)
+        hits, bx = {}, x + w - inset
+        for name, lay in reversed(lays):
+            lw, lh = lsize(lay)
+            bw = lw + 20
+            bx -= bw
+            round_rect(cr, bx + 0.5, top + 0.5, bw - 1, rh - 1, rh / 2)
+            if opts.get("pressed") == name:
+                cr.set_source_rgba(*accent[:3], 0.25 * a)
+                cr.fill_preserve()
+            cr.set_source_rgba(*accent)
+            cr.set_line_width(1)
+            cr.stroke()
+            show(cr, lay, bx + 10, top + (rh - lh) / 2, accent)
+            hits[name] = (bx, top, bw, rh)
+            bx -= 8
+        return hits
 
     def thought_space(self, card, w, opts):
         if not (card.task and card.thought):
@@ -1062,6 +1116,9 @@ class MediaPlayer(Theme):
             return self._w(card), self.TITLE_H + bh + 30
         return self._w(card), self.TITLE_H + bh + 26 + self.CTRL_H + 8
 
+    def controls_height(self, card, opts):
+        return 0 if card.phase == "thinking" or card.task else self.CTRL_H + 12
+
     @staticmethod
     def _gloss_button(cr, x, y, w, h, r, base=(0.16, 0.22, 0.25), hi=0.35, pressed=False):
         if pressed:  # lit up while clicked
@@ -1407,6 +1464,9 @@ class Glass(Theme):
             return self._w(card), self.PAD + (lsize(head)[1] + 3 if head else 0) + lsize(body)[1] + self.PAD
         h = self.PAD + lsize(head)[1] + 3 + lsize(body)[1] + 14 + self.BAR_H + 8 + self.CTRL_H + 12
         return self._w(card), h
+
+    def controls_height(self, card, opts):
+        return 0 if card.phase == "thinking" or card.task else 12 + self.CTRL_H + 8 + self.BAR_H + 4
 
     def pin_spot(self, card, x, y, w, h, opts):
         return x + w - self.PAD - 6, y + self.PAD + 10
