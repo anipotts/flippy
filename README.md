@@ -96,7 +96,7 @@ The installer puts the code in `~/flippy`, builds gtk4-layer-shell into `~/.loca
 - **Circle and ask.** A second hotkey lets you draw on the screen to mark something, then ask about it ("what does this say?").
 - **Tutorials that wait for you.** When Claude walks you through doing something, the steps you have to do yourself wait until you click the thing (on COSMIC, Flippy infers the click from the mouse and the screen reacting; see [docs/linux-port.md](docs/linux-port.md#tutorials-that-wait-for-clicks)). If that click opens a menu or dialog Claude couldn't see yet, Flippy takes a fresh screenshot and Claude carries on from there. Next on the card skips a step. Turn it off with `timing.wait_for_clicks`.
 - **Follow-ups.** Questions share one session, so "and where's bluetooth?" works. `/new` starts fresh; sessions also reset after 15 idle minutes.
-- **Themes.** Midnight, Y2K Player, Media Player (a 2000s media player skin), Glass (a lock-screen style card), Terminal, and one that follows your system's accent color (macOS or COSMIC). On macOS 26+ and COSMIC Epoch 1.7+, Media Player and Glass sit on real glass.
+- **Themes.** Mono, Midnight, Media Player (a 2000s media player skin), Glass (a lock-screen style card), Terminal, and one that follows your system's accent color (macOS or COSMIC). On macOS 26+ and COSMIC Epoch 1.7+, Media Player and Glass sit on real glass.
 - **Custom pointers.** Built-in hand, ring, arrow and dot, or draw your own in the 20×24 pixel editor, or import an image and pick its tip.
 - **Check a video edit.** Press `⌃⌥V` on macOS or `Super+Shift+V` on COSMIC in your editor, play the edit back, press it again and ask ("is the cut at 0:12 clean?", "does the title stay up long enough?"). Flippy grabs the editor's window a few times a second, in memory only, finds the preview and the cuts, and shows Claude the frames that matter. Claude sees stills, not motion, and can't hear the audio. How it works: [docs/video-review.md](docs/video-review.md).
 - **Help when you're stuck, and tips.** Flippy can watch an app you're learning and offer a hand, or a tip, at the right moment (see below).
@@ -150,7 +150,7 @@ flippy-ask demo-tip         show a tip card
 flippy-ask click <x> <y>    click on screen (only with automation.clicks on)
 flippy-ask preview          play a sample walkthrough with the current look
 flippy-ask demo-tutorial    a sample tutorial that waits for you to click the Apple menu (the Workspaces button on COSMIC)
-flippy-ask set look.theme y2k
+flippy-ask set look.theme glass
 flippy-ask quit             stop the daemon
 ```
 
@@ -199,7 +199,7 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `claude.model` | `default`, `opus`, `sonnet`, `haiku` |
 | `claude.effort` | `low`, `medium`, `high`, `max` |
 | `claude.image` | screenshot size sent to Claude: `1366`, `1920`, `0` (full) |
-| `look.theme` | `midnight`, `y2k`, `mediaplayer`, `glass`, `terminal`, `cosmic` |
+| `look.theme` | `mono` (default), `midnight`, `mediaplayer`, `glass`, `terminal`, `cosmic` |
 | `look.frosted` | `true` (default) or `false`: on COSMIC, real blur behind the Glass and Media Player panels; off, they're painted and `look.card_opacity` applies |
 | `look.player_shine` | `wmp` (gloss bars) or `none`: reflections on the Media Player theme's real glass (macOS, COSMIC) |
 | `look.pointer` | `theme`, `hand`, `ring`, `arrow`, `dot`, `glass` (Liquid Glass lens), `glasshand`, or `custom:<name>` |
@@ -276,4 +276,3 @@ docs/       linux-port.md: how the macOS features work on COSMIC;
 
 - Pointing protocol and prompt adapted from [farzaa/clicky](https://github.com/farzaa/clicky) (MIT, Copyright (c) 2026 Farza). License text in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - [gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell) for the Linux overlay; [PyObjC](https://github.com/ronaldoussoren/pyobjc) for the macOS one.
-- [VT323](https://fonts.google.com/specimen/VT323) font (SIL Open Font License, see `flippy/fonts/OFL.txt`).

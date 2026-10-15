@@ -386,7 +386,7 @@ class SettingsWindow(Gtk.Window):
         answers.add(slider_row("Longest stay", "Cap for long answers, in seconds", "timing", "max_show_seconds"))
         walk = group("Walkthroughs")
         walk.add(combo_row("Step pace", "How long each pointed step stays", "timing", "step_pace", PACES))
-        walk.add(slider_row("Playback speed", "Also on the Media Player/Y2K players' slider", "timing", "speed"))
+        walk.add(slider_row("Playback speed", "Also on the Media Player's slider", "timing", "speed"))
         walk.add(slider_row("Glide time", "Seconds for the pointer to travel between steps", "timing",
                             "glide_seconds"))
         walk.add(check_row("Wait for my clicks", "Tutorials pause on steps you have to do until you click the thing",

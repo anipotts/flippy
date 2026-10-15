@@ -18,7 +18,7 @@ class TestMigrate(unittest.TestCase):
     def test_v1_theme_names(self):
         self.assertEqual(settings._migrate({"look": {"theme": "glass"}})["look"]["theme"], "mediaplayer")
         self.assertEqual(settings._migrate({"look": {"theme": "nowplaying"}})["look"]["theme"], "glass")
-        self.assertEqual(settings._migrate({"look": {"theme": "y2k"}})["look"]["theme"], "y2k")
+        self.assertEqual(settings._migrate({"look": {"theme": "midnight"}})["look"]["theme"], "midnight")
 
     def test_v1_shine_setting_moves(self):
         look = settings._migrate({"look": {"glass_shine": "none"}})["look"]
@@ -186,6 +186,12 @@ class TestSettings(unittest.TestCase):
         self.assertEqual(settings.get("look", "text_size"), 15)
         self.assertEqual(settings.get("look", "card_opacity"), .8)
         self.assertEqual(settings.get("timing", "speed"), 1.)
+
+    def test_the_vaulted_y2k_theme_falls_back_to_the_default(self):
+        Path(self.path).write_text('version = 2\n[look]\ntheme = "y2k"\n')
+        with contextlib.redirect_stdout(io.StringIO()):
+            settings.load()
+        self.assertEqual(settings.get("look", "theme"), "mono")
 
     def test_malformed_file_and_legacy_bad_theme_do_not_crash(self):
         for content in ('[broken content', '[look]\ntheme = ["bad"]\n'):

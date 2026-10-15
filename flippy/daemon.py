@@ -216,7 +216,7 @@ class Flippy:
         elif cmd.startswith("control "):  # same as clicking a player button: control <name> [0-1 for seek/speed]
             parts = cmd.split()
             self.control(parts[1], float(parts[2]) if len(parts) > 2 else 0.0)
-        elif cmd.startswith("set "):  # set <section.key> <value>, e.g. `flippy-ask set look.theme y2k`
+        elif cmd.startswith("set "):  # set <section.key> <value>, e.g. `flippy-ask set look.theme glass`
             return self.set_command(cmd[4:])
         elif cmd == "update":  # check for a new release now (offers it, or says you're up to date)
             self.check_for_update(force=True)
@@ -1440,7 +1440,6 @@ def wants_tutorial(question):
 
 def main():
     diagnostics.record_content = "--demo-record-content" in sys.argv
-    themes.load_fonts()  # bundled pixel font for the Y2K theme, process-local
     if sys.platform == "darwin":
         from .mac import ui
     else:

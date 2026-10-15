@@ -34,10 +34,3 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-
-## VT323 font
-
-<https://fonts.google.com/specimen/VT323>, Copyright 2011, The VT323 Project Authors. SIL Open Font License 1.1.
-
-Bundled as `flippy/fonts/VT323-Regular.ttf` (the Y2K Player theme). The full license is in
-[`flippy/fonts/OFL.txt`](flippy/fonts/OFL.txt).
