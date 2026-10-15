@@ -112,7 +112,7 @@ On macOS, Flippy is signed with a certificate the installer makes on your Mac (k
 
 ## Usage
 
-Press the ask hotkey (`⇧⌘Space` on macOS, `Super+Shift+Space` on COSMIC), type, hit Enter. `Up`/`Down` bring back earlier questions, like a terminal (kept in memory only, never on disk). The usual editing keys work in the box: `⌘A` `⌘C` `⌘X` `⌘V` `⌘Z` `⇧⌘Z` on macOS (`Ctrl` on COSMIC), word and line jumps with `⌥`/`⌘` and the arrows, `⌥⌫` and `⌘⌫`. `Esc` closes the box; answers fade on their own (or `flippy-ask dismiss`). Type `/new` for a fresh session or `/settings` for the settings window.
+Press the ask hotkey (`⇧⌘Space` on macOS, `Super+Shift+Space` on COSMIC), type, hit Enter. `Up`/`Down` bring back earlier questions, like a terminal (kept in memory only, never on disk). The usual editing keys work in the box: `⌘A` `⌘C` `⌘X` `⌘V` `⌘Z` `⇧⌘Z` on macOS (`Ctrl` on COSMIC), word and line jumps with `⌥`/`⌘` and the arrows, `⌥⌫` and `⌘⌫`. `Esc` closes the box; answers fade on their own (or `flippy-ask dismiss`). Click the pushpin on an answer to keep it up until you dismiss it or ask again. When you're learning something on screen, the answer docks out of the way of it and the pointer moves on its own (`look.card_place`). Type `/new` for a fresh session or `/settings` for the settings window.
 
 For draw mode, press the draw hotkey (`⌃⇧Space` / `Super+Alt`), drag to circle something, release, then type your question. Esc, right-click, the hotkey again, or 60 s of nothing cancels it.
 
@@ -204,7 +204,8 @@ Settings live in `~/.config/flippy/config.toml`. Edit them in the settings windo
 | `look.player_shine` | `wmp` (gloss bars) or `none`: reflections on the Media Player theme's real glass (macOS, COSMIC) |
 | `look.pointer` | `theme`, `hand`, `ring`, `arrow`, `dot`, `glass` (Liquid Glass lens), `glasshand`, or `custom:<name>` |
 | `look.pointer_size`, `look.text_size`, `look.card_opacity` | numbers |
-| `timing.show_seconds`, `timing.max_show_seconds` | how long answers stay up |
+| `look.card_place` | `auto` (default): when you're learning something on screen, the answer docks where it covers the least (away from what Claude says you need to see, the text you're working in on macOS, and busy parts of the screen) and the pointer moves on its own; otherwise it sits by the pointer. `corner`: always docked that way. `pointer`: never |
+| `timing.show_seconds`, `timing.max_show_seconds` | how long answers stay up (the pushpin on an answer keeps it until you dismiss it) |
 | `timing.step_pace` | `slow`, `normal`, `fast` |
 | `timing.speed` | walkthrough playback speed, `0.5`–`2.0` |
 | `timing.wait_for_clicks` | `true` (default): tutorial steps wait until you click the thing |

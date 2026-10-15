@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 
-from . import act_memory, errors, loop, onboarding, settings, setup_gate, themes, tips, updates, video, watch
+from . import act_memory, errors, loop, onboarding, placement, settings, setup_gate, themes, tips, updates, video, watch
 from .providers import Brain
 from .frames import prepare_frame
 from .requests import Request
@@ -22,7 +22,7 @@ from .usage_guard import PlanLimitReached
 from .profile import current, Instance
 from .actions import (BACKGROUND_CATALOG, BACKGROUND_PROMPT, ActionError, AppFrame, ApprovalPolicy, DesktopTools,
                       app_id, approval_text)
-from .point import image_to_logical
+from .point import Point, image_to_logical
 from .playback import Playback, Options
 from .diagnostics import Diagnostics
 from . import demos
@@ -30,6 +30,7 @@ from . import demos
 PROFILE = current()
 SOCK_PATH = PROFILE.socket
 ASK_TIMEOUT_S = 90
+WORK_AREA_S = 1.0           # longest an answer waits to learn where you're working (a busy app)
 IDLE_RESET_S = 15 * 60      # fresh Claude session after this much idle (keeps context/usage small)
 DRAW_TIMEOUT_S = 60         # leave draw mode (and give the mouse back) if nothing happens
 NOT_HERE = "not available on this platform yet (see docs/linux-port.md)"
@@ -54,6 +55,10 @@ def event(name, **data):
             fn(name, data)
         except Exception:
             log("event listener failed")
+
+
+def _rounded(rect):
+    return tuple(round(v) for v in rect) if rect else None
 
 
 class Flippy:
@@ -265,6 +270,7 @@ class Flippy:
             self.cancel_draw()
         if self.box.visible:  # hotkey again toggles the box closed
             self.box.hide()
+            self.focus_at_open = None
             return
         self._cancel_fade()  # keep the last answer up while typing a follow-up
         self._stop_playback()
@@ -272,6 +278,8 @@ class Flippy:
 
     def _show_box(self):
         event("box")
+        # Before the box takes the keyboard: Electron apps (VS Code) stop reporting their focus once it does.
+        self.focus_at_open = self.ui.focused() if hasattr(self.ui, "focused") else None
         self.box.show()
 
     def submit(self, question, tutorial=None):
@@ -281,6 +289,7 @@ class Flippy:
         if self.busy:
             owner = self.request
             if not owner or owner.mode != "tutor":
+                self.focus_at_open = None
                 return
             owner.cancel(loop.source_remove)
             self._stop_playback()
@@ -296,6 +305,7 @@ class Flippy:
                 return False
             loop.timeout_add(25, ready)
             return
+        focus, self.focus_at_open = getattr(self, "focus_at_open", None), None  # set if this came from the box
         if question == "/act" or question.startswith("/act "):
             status = self.act(question[4:].strip())
             if self.action_tools is None:
@@ -325,7 +335,7 @@ class Flippy:
         if offer_act:
             question += "\n(you can act: if I'm asking you to do this for me, reply [ACT] only)"
         self.marked = False
-        self._run_request(req, self._ask(question, req, keep_marks=keep_marks), self._on_answer, ASK_TIMEOUT_S)
+        self._run_request(req, self._ask(question, req, keep_marks=keep_marks, focus=focus), self._on_answer, ASK_TIMEOUT_S)
 
     def _can_infer_act(self):
         """Can a plain question turn into a desktop task ("play some jazz in Spotify"), without typing /act?
@@ -669,9 +679,12 @@ class Flippy:
             self.overlay.show_text(result)
             self._schedule_fade(settings.get("timing", "max_show_seconds"))
 
-    async def _ask(self, question, req, keep_marks=False):
+    async def _ask(self, question, req, keep_marks=False, focus=None):
         frame = await self._capture_frame(req, keep_marks=keep_marks)
-        await self._action_main(lambda: (self.overlay.show_text("thinking…", phase="thinking"), event("thinking")), req)
+        detail = placement.Detail.from_frame(frame)  # off the main thread: where a docked answer can go
+        found = await self._work_area(focus)
+        await self._action_main(lambda: (self._note_focus(detail, found), self.overlay.show_text("thinking…", phase="thinking"),
+                                         event("thinking")), req)
         if self.brain.dirty or (self.last_ask and time.monotonic() - self.last_ask > IDLE_RESET_S):
             await self.brain.reset()
         self.last_ask = time.monotonic()
@@ -717,6 +730,36 @@ class Flippy:
                        pointer_size=settings.get("look", "pointer_size"),
                        show_seconds=settings.get("timing", "show_seconds"),
                        max_show_seconds=settings.get("timing", "max_show_seconds"))
+
+    async def _work_area(self, focus):
+        """The text you were working in and its window (focus: as the box opened; flippy-ask q has no box). Read
+        off the main thread, and given up on after WORK_AREA_S: a busy app never holds up Flippy or the answer."""
+        if not hasattr(self.ui, "work_area"):
+            return None, None
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(self.ui.work_area, focus), WORK_AREA_S)
+        except asyncio.TimeoutError:
+            log("placement: work area timed out")
+            return None, None
+
+    def _note_focus(self, detail, found):
+        """What a docked answer should stay off (flippy/placement.py): the text you were working in and its window
+        (found), and the screenshot's busy parts."""
+        area, window = found or (None, None)
+        self.overlay.avoid, self.overlay.window, self.overlay.detail = area, window, detail
+        log(f"placement: work area {_rounded(area)}, window {_rounded(window)}")
+
+    def _note_learning(self, pl):
+        """The reply says they're learning something on screen ([LEARN]): the answer docks away from its box."""
+        ov = self.overlay
+        if getattr(ov, "learning", True) or (found := pl.learn()) is None:  # (True: an overlay without docking)
+            return
+        ov.learning = True
+        if found.box:
+            x1, y1, x2, y2 = found.box
+            (ax, ay), (bx, by) = self._play_coords(Point(x1, y1, "")), self._play_coords(Point(x2, y2, ""))
+            ov.keep = (min(ax, bx), min(ay, by), abs(bx - ax), abs(by - ay))
+        log(f"placement: learning, keep {_rounded(ov.keep)}")
 
     def _start_playback(self, gen, img_size, shot_size, frame=None):
         if gen != self.gen:
@@ -772,6 +815,9 @@ class Flippy:
             elif kind in ("finish", "fade"):
                 if kind == "finish":
                     event("answer_done")
+                    ov = self.overlay
+                    log(f"placement: answer shown {ov.card_mode}" + (f" at {tuple(round(v) for v in ov.spot if v is not None)}"
+                                                                      if ov.card_mode == "dock" and ov.spot else ""))
                 if self.play and not self.play.paused:
                     self._schedule_fade(payload)
             elif kind == "cancel_fade":
@@ -797,6 +843,7 @@ class Flippy:
         return True
 
     def _render_step(self, pl, now):
+        self._note_learning(pl)
         card = pl.card(now, self._play_options())
         if card:
             card["at_bottom"] = self._card_at_bottom(pl.known())
@@ -828,6 +875,9 @@ class Flippy:
         if name in ("stop", "close", "min"):
             self.dismiss()
             return
+        if name == "pin":
+            self.toggle_pin()
+            return
         if name == "speed":
             settings.set("timing", "speed", themes.frac_to_speed(frac))
             return
@@ -841,6 +891,19 @@ class Flippy:
             if self.play and not self.play.stopped:
                 self._resume_ticking()
                 self._refresh_card()
+
+    def toggle_pin(self):
+        """The card's pushpin: a pinned answer stays until it's dismissed or you ask again."""
+        ov = self.overlay
+        ov.pinned = not ov.pinned
+        if ov.card:
+            ov.card.pinned = ov.pinned
+        event("pin", pinned=ov.pinned)
+        if ov.pinned:
+            self._cancel_fade()
+        elif ov.card and not (self.play and (self.play.paused or not self.play.finished)):
+            self._schedule_fade(settings.get("timing", "show_seconds"))  # done playing: fades as usual from here
+        ov.queue_draw()
 
     def pause_toggle(self):
         """Pause or resume the answer playing on screen; nothing if there isn't one (or it already finished).
@@ -900,6 +963,7 @@ class Flippy:
 
     def dismiss(self):
         self.followup_token = None
+        self.focus_at_open = None  # the box closed without a question
         req = getattr(self, "request", None)
         if self.action_tools:
             self.action_tools.stop()
@@ -1287,11 +1351,14 @@ class Flippy:
         event("draw_cancel")
         self._end_draw_mode()
         self.marked = False
+        self.focus_at_open = None
         self.overlay.clear()
 
     # --- fading ---
     def _schedule_fade(self, seconds):
         self._cancel_fade()
+        if getattr(self.overlay, "pinned", False):
+            return
         owner, gen = getattr(self, "request", None), self.gen
         timer_box = []
         def fade():

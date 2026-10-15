@@ -62,6 +62,7 @@ class Card:
     finished: bool = False        # the whole answer has played
     speed: float = 1.0            # playback speed (shown on player skins)
     controls: bool = False        # a real answer: show playback controls on themes that hide them otherwise
+    pinned: bool = False          # kept on screen until dismissed (the pushpin)
 
 
 SPEED_MIN, SPEED_MAX = 0.5, 2.0
@@ -79,6 +80,32 @@ def lean_controls(card, opts):
     """Controls on the non-player themes: answers only, and only if enabled in settings."""
     return (card.controls and opts.get("controls", "all") == "all"
             and card.phase != "thinking" and not card.error)
+
+
+def pin_shown(card):
+    """Answers get a pushpin; "thinking…", errors and notices don't."""
+    return card.controls and card.phase != "thinking" and not card.error
+
+
+PIN_ROOM = 22  # kept free of text beside the pushpin
+
+
+def pin_glyph(cr, cx, cy, s, rgba, pinned):
+    """A pushpin centered at (cx, cy): upright when pinned, tilted and dimmer when not."""
+    cr.save()
+    cr.translate(cx, cy)
+    if not pinned:
+        cr.rotate(math.radians(40))
+        rgba = (*rgba[:3], rgba[3] * 0.6)
+    cr.set_source_rgba(*rgba)
+    for x0, y0, x1, y1 in ((-0.5, -1.0, 0.5, -0.7), (-0.3, -0.7, 0.3, -0.12), (-0.75, -0.12, 0.75, 0.12)):
+        cr.rectangle(x0 * s, y0 * s, (x1 - x0) * s, (y1 - y0) * s)  # cap, body, plate
+    cr.fill()
+    cr.set_line_width(max(1.2, s * 0.17))
+    cr.move_to(0, 0.12 * s)
+    cr.line_to(0, 1.0 * s)  # needle
+    cr.stroke()
+    cr.restore()
 
 
 def glyph(cr, name, cx, cy, s, rgba):
@@ -466,6 +493,25 @@ class Theme:
     def draw(self, cr, x, y, w, h, card, t, opts):
         raise NotImplementedError
 
+    # the pushpin (pin_shown): each theme says where it goes, its sizes keep text out from under it
+    pin_rgba = (1, 1, 1, 0.85)
+    pin_size = 7  # half-height
+
+    def pin_spot(self, card, x, y, w, h, opts):
+        return x + w - 18, y + 18
+
+    def pin_rect(self, card, x, y, w, h, opts):
+        cx, cy = self.pin_spot(card, x, y, w, h, opts)
+        return cx - 11, cy - 11, 22, 22
+
+    def draw_pin(self, cr, card, x, y, w, h, opts):
+        cx, cy = self.pin_spot(card, x, y, w, h, opts)
+        if opts.get("pressed") == "pin":
+            cr.arc(cx, cy, 11, 0, 2 * math.pi)
+            cr.set_source_rgba(*self.pin_rgba[:3], 0.2)
+            cr.fill()
+        pin_glyph(cr, cx, cy, self.pin_size, self.pin_rgba, card.pinned)
+
 
 class Midnight(Theme):
     key, name = "midnight", "Midnight"
@@ -490,9 +536,18 @@ class Midnight(Theme):
         bw, bh = lsize(body)
         hh = lsize(head)[1] + 3 if head else 0
         w, h = max(bw, lsize(head)[0] if head else 0) + 32, bh + hh + 24
+        if pin_shown(card):
+            w += PIN_ROOM
         if lean_controls(card, opts):
             w, h = max(w, self.CTRL_MIN_W), h + self.CTRL_H
         return w, h
+
+    @property
+    def pin_rgba(self):
+        return (*self.head, 0.95)
+
+    def pin_spot(self, card, x, y, w, h, opts):
+        return x + w - 18, y + 21
 
     def draw(self, cr, x, y, w, h, card, t, opts):
         round_rect(cr, x + 0.5, y + 0.5, w - 1, h - 1, self.radius)
@@ -760,6 +815,18 @@ class Terminal(Theme):
             h += toks[0][4] + 12
         return w, h
 
+    pin_rgba = (0.25, 1.0, 0.45, 1)
+    pin_size = 6
+
+    def _bar_h(self, opts):
+        return lsize(layout(_measure_ctx, PROMPT, self.font, opts["text_size"] - 4))[1] + 6
+
+    def pin_spot(self, card, x, y, w, h, opts):
+        return x + w - 14, y + self._bar_h(opts) / 2
+
+    def pin_rect(self, card, x, y, w, h, opts):
+        return x + w - 25, y, 22, self._bar_h(opts)  # the title bar's height
+
     def _status_y(self, card, opts, y, h):
         toks = self._status_layout(_measure_ctx, card, opts, 0, 0)
         return y + h - toks[0][4] - 7
@@ -901,6 +968,19 @@ class Y2K(Theme):
     TITLE_H, LCD_H, BTN_H, PAD = 20, 54, 30, 6
     widths = (400, 460)
     THINK_H = 34      # the LCD while thinking: a line of text and the visualizer
+    pin_rgba = (0.85, 0.87, 0.93, 1)
+
+    def pin_spot(self, card, x, y, w, h, opts):
+        return x + w - 40, y + 3 + self.TITLE_H / 2
+
+    def pin_rect(self, card, x, y, w, h, opts):
+        cx, cy = self.pin_spot(card, x, y, w, h, opts)
+        return cx - 8, cy - 8, 16, 16  # clear of the "_" button
+
+    def draw_pin(self, cr, card, x, y, w, h, opts):
+        cx, cy = self.pin_spot(card, x, y, w, h, opts)
+        rgba = self.LCD + (1,) if card.pinned or opts.get("pressed") == "pin" else self.pin_rgba
+        pin_glyph(cr, cx, cy, 6, rgba, card.pinned)
 
     def hit_regions(self, card, x, y, w, h, opts=None):
         P = self.PAD
@@ -960,7 +1040,7 @@ class Y2K(Theme):
         title = layout(cr, "FLIPPY", PIXEL_FONT, 17)
         tl_w, tl_h = lsize(title)
         mid = tx + tw / 2
-        for gx0, gx1 in ((tx + 22, mid - tl_w / 2 - 8), (mid + tl_w / 2 + 8, tx + tw - 34)):
+        for gx0, gx1 in ((tx + 22, mid - tl_w / 2 - 8), (mid + tl_w / 2 + 8, tx + tw - (50 if pin_shown(card) else 34))):
             for k in range(4):
                 yy = ty + 5 + k * 3
                 cr.set_source_rgb(0.42, 0.44, 0.52)
@@ -1144,6 +1224,13 @@ class MediaPlayer(Theme):
     backdrop = {"radius": LIQUID_R}  # macOS: Liquid Glass (NSGlassEffectView) behind the card
     widths = (380, 470)
 
+    pin_rgba = (1, 1, 1, 1)  # on the light title bar
+
+    def pin_spot(self, card, x, y, w, h, opts):
+        if opts.get("backdrop"):  # same inset as _chrome
+            x, w = x + 4, w - 8
+        return x + w - 9 - 3 * 22 - 13, y + 12.5
+
     def _body(self, cr, card, opts):
         return layout(cr, card.text or " ", self.font, opts["text_size"], width=self._w(card) - 44)
 
@@ -1318,7 +1405,7 @@ class MediaPlayer(Theme):
         cr.set_source_rgb(1, 1, 1)
         cr.fill()
         title = card.header or ("Error" if card.error else "Flippy")
-        tl = layout(cr, title, self.font, 13, width=w - 120)
+        tl = layout(cr, title, self.font, 13, width=w - (140 if pin_shown(card) else 120))
         ellipsize_end(tl)
         halo = ((0, 1, 0.7), (1, 0, 0.45), (-1, 0, 0.45), (0, -1, 0.3)) if liquid else ((0, 1, 0.55), (1, 0, 0.25), (-1, 0, 0.25))
         for dx, dy, al in halo:  # dark glow behind the text
@@ -1507,7 +1594,8 @@ class Glass(Theme):
 
     def _layouts(self, cr, card, opts):
         w = self._w(card) - 2 * self.PAD
-        head = layout(cr, self._title(card), self.font, opts["text_size"], width=w, bold=True)
+        head = layout(cr, self._title(card), self.font, opts["text_size"], width=w - (PIN_ROOM if pin_shown(card) else 0),
+                      bold=True)
         ellipsize_end(head)
         body = layout(cr, card.text or " ", self.font, opts["text_size"] - 1, width=w)
         return head, body
@@ -1518,6 +1606,9 @@ class Glass(Theme):
             return self._w(card), self.PAD + lsize(body)[1] + self.PAD
         h = self.PAD + lsize(head)[1] + 3 + lsize(body)[1] + 14 + self.BAR_H + 8 + self.CTRL_H + 12
         return self._w(card), h
+
+    def pin_spot(self, card, x, y, w, h, opts):
+        return x + w - self.PAD - 6, y + self.PAD + 10
 
     def _geom(self, x, y, w, h):
         cy = y + h - 12 - self.CTRL_H / 2
@@ -1650,9 +1741,15 @@ class Mono(Theme):
 
     def _layouts(self, cr, card, opts):
         w = self._w(card) - 2 * self.P
-        head = layout(cr, card.header, self.font, opts["text_size"] - 1, width=w, bold=True) if card.header else None
-        body = layout(cr, card.text or " ", self.font, opts["text_size"], width=w)
+        room = PIN_ROOM if pin_shown(card) else 0  # the top line runs beside the pin
+        head = layout(cr, card.header, self.font, opts["text_size"] - 1, width=w - room, bold=True) if card.header else None
+        body = layout(cr, card.text or " ", self.font, opts["text_size"], width=w if head else w - room)
         return head, body
+
+    pin_rgba = (0.94, 0.945, 0.95, 1)
+
+    def pin_spot(self, card, x, y, w, h, opts):
+        return x + w - self.P - 6, y + self.P + 9
 
     def size(self, card, opts):
         head, body = self._layouts(_measure_ctx, card, opts)

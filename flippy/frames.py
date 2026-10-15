@@ -1,7 +1,7 @@
 """Screenshot preparation and coordinates shared by tutoring and desktop tools."""
 import base64
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PIL import Image
 
@@ -15,6 +15,7 @@ class ScreenFrame:
     logical_size: tuple[float, float]
     target: tuple | None = None
     original_size: tuple[int, int] = (0, 0)
+    pixels: bytes = field(default=b"", repr=False, compare=False)  # the JPEG's RGB, for flippy/placement.py
 
     def to_logical(self, x, y, *, clamp=False):
         w, h = self.size
@@ -40,4 +41,4 @@ def prepare_frame(path, long_edge=1920, *, logical_size=None):
     buf = io.BytesIO()
     small.save(buf, format="JPEG", quality=85)
     return ScreenFrame(base64.b64encode(buf.getvalue()).decode(), size,
-                       logical_size or original, original_size=original)
+                       logical_size or original, original_size=original, pixels=small.tobytes())

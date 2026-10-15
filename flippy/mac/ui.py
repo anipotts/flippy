@@ -1391,6 +1391,31 @@ subprocess.run(sys.argv[2:], check=False)
         self.stop_recording()
         AppHelper.callAfter(NSApp.terminate_, None)
 
+    def focused(self):
+        """As the question box opens (Electron apps stop reporting their focus once it takes the keyboard): the
+        focused element and window of the app you're in, for work_area. A few quick lookups, so the box isn't held up."""
+        from . import ax
+        try:
+            ax.prime_focused_area()
+            return ax.focused()
+        except Exception as e:
+            print(f"flippy: focused: {type(e).__name__}", flush=True)
+            return None
+
+    def work_area(self, focus=None):
+        """(the text you were working in, its window), each (x, y, w, h) or None: a docked answer stays off them
+        (flippy/placement.py). focus: what focused() took as the box opened; else, or if it gives nothing, the app's
+        focus now. Lookups to another app: call it off the main thread."""
+        from . import ax
+        try:
+            def frames(el, window):
+                return ax.text_area(el), ax.window_frame(window)
+            found = frames(*(focus or (None, None)))
+            return found if any(found) else frames(*ax.focused())
+        except Exception as e:  # never in the way of an answer
+            print(f"flippy: work_area: {type(e).__name__}", flush=True)
+            return None, None
+
     def screen_size(self):
         f = main_screen().frame()
         return f.size.width, f.size.height

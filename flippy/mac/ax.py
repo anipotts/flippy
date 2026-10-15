@@ -172,6 +172,76 @@ def front_app():
     return FINDER, str(finder.localizedName()), finder.processIdentifier()
 
 
+TEXT_ROLES = ("AXTextArea", "AXTextField")
+EDITOR_MIN = (200, 80)  # a multi-line text area smaller than this is a stand-in for the editor around it
+
+
+QUICK_S = 0.25  # how long a lookup for answer placement waits on a busy app
+
+
+def _quick(el):
+    """el, with lookups on it giving up after QUICK_S: placement never waits on a busy app."""
+    if el is not None:
+        AX.AXUIElementSetMessagingTimeout(el, QUICK_S)
+    return el
+
+
+def _working_app():
+    """The AX element of the app you were in (Flippy's question box may be in front by now), or None."""
+    app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+    pid = app.processIdentifier() if app is not None and not _is_flippy(app) else (_last_front or (0, 0, 0))[2]
+    return _quick(AX.AXUIElementCreateApplication(pid)) if pid else None
+
+
+def prime_focused_area():
+    """Electron apps (VS Code, Slack...) only build their accessibility tree when asked to: ask now, as the question
+    box opens, so it's there by the time the question is sent. Other apps ignore it."""
+    if trusted() and (root := _working_app()) is not None:
+        AX.AXUIElementSetAttributeValue(root, "AXManualAccessibility", True)
+
+
+def focused():
+    """(the focused element, its app's focused window) of the app you're working in: two quick lookups, cheap enough
+    for the main thread as the box opens. Their frames are read later, off it (work_area)."""
+    root = _working_app() if trusted() else None
+    if root is None:
+        return None, None
+    return _quick(_attr(root, "AXFocusedUIElement")), _quick(_attr(root, "AXFocusedWindow"))
+
+
+def window_frame(window):
+    """(x, y, w, h) in screen points of a window element, or None. Apps that report no text area (browsers) still
+    report their window."""
+    frame = _frame(window) if window is not None else None
+    return frame if frame and frame[2] > 0 and frame[3] > 0 else None
+
+
+def text_area(el):
+    """(x, y, w, h) in screen points of the text you're working in (an editor, a terminal, a document) when el is
+    the focused element, or None. Only the part inside its window: an editor's text area can be the whole
+    document."""
+    role = _attr(el, "AXRole") if el is not None else None
+    if role not in TEXT_ROLES:
+        return None
+    frame = _frame(el)
+    if role == "AXTextArea":
+        for _ in range(6):  # VS Code focuses a hidden one-line field at the cursor: use the editor around it
+            if not frame or frame[2] >= EDITOR_MIN[0] and frame[3] >= EDITOR_MIN[1]:
+                break
+            el = _quick(_attr(el, "AXParent"))
+            frame = _frame(el) if el is not None else None
+    window = _quick(_attr(el, "AXWindow")) if el is not None else None
+    bounds = _frame(window) if window is not None else None
+    if not frame:
+        return None
+    if bounds:
+        x0, y0 = max(frame[0], bounds[0]), max(frame[1], bounds[1])
+        x1 = min(frame[0] + frame[2], bounds[0] + bounds[2])
+        y1 = min(frame[1] + frame[3], bounds[1] + bounds[3])
+        frame = (x0, y0, x1 - x0, y1 - y0)
+    return frame if frame[2] > 0 and frame[3] > 0 else None
+
+
 def find_app(name):
     """A running app by name (case-insensitive), or None."""
     want = name.strip().lower()
