@@ -634,7 +634,10 @@ class Midnight(Theme):
 
     def _layouts(self, cr, card, opts):
         body = layout(cr, card.text or " ", self.font, opts["text_size"], width=self._w(card))
-        head = layout(cr, card.header, self.font, opts["text_size"] - 2, bold=True) if card.header else None
+        head = None
+        if card.header:  # one line, at most as wide as the text can be: a long step ends in "…"
+            head = layout(cr, card.header, self.font, opts["text_size"] - 2, width=self._w(card), bold=True)
+            ellipsize_end(head)
         return body, head
 
     CTRL_H = 34
