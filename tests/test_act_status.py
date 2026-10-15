@@ -84,6 +84,27 @@ class ActingCard(unittest.TestCase):
         self.assertEqual(steps, ["click with your pointer, when you pause", "scroll down",
                                  "drag (needs the pointer for a moment, waiting for you to pause)"])
 
+    def test_a_long_step_is_cut_but_keeps_its_pointer_note(self):
+        steps = []
+        async def main(fn, req):
+            fn()
+        f = types.SimpleNamespace(_action_main=main, _acting=lambda req, step, reason: steps.append(step),
+                                  ui=types.SimpleNamespace(app_act=lambda *a: "ok"))
+        frame = AppFrame("", (10, 10), ("app", 1, 2, (0, 0, 10, 10)), {3: (None, None, "Save " * 50)}, "")
+        with patch.object(daemon, "log"):
+            asyncio.run(daemon.Flippy._app_perform(f, "press", {"element": 3, "reason": "r"}, frame, None, "req"))
+            asyncio.run(daemon.Flippy._app_perform(f, "menu", {"path": ["File"] * 40, "reason": "r"}, frame, None, "req"))
+            asyncio.run(daemon.Flippy._app_perform(f, "menu", {"path": ["File"] * 40, "real_pointer": True, "reason": "r"},
+                                                   frame, None, "req"))
+            asyncio.run(daemon.Flippy._app_perform(f, "drag", {"x": 1, "y": 1, "to_x": 2, "to_y": 2, "real_pointer": True,
+                                                               "reason": "r"}, frame, None, "req"))
+        self.assertTrue(all(len(step) <= daemon.STEP_CHARS for step in steps))
+        self.assertTrue(steps[0].startswith("press 'Save Save") and steps[0].endswith("…"))
+        self.assertTrue(steps[1].startswith("choose File > File") and steps[1].endswith("…"))
+        self.assertTrue(steps[2].startswith("choose File >")
+                        and steps[2].endswith("… (needs the pointer for a moment, waiting for you to pause)"))
+        self.assertEqual(steps[3], "drag (needs the pointer for a moment, waiting for you to pause)")
+
     def test_steps_in_words(self):
         frame = AppFrame("", (0, 0), ("app", 1, 2, (0, 0, 10, 10)), {3: (None, None, "Search")}, "")
         self.assertEqual(frame.describe("press", {"element": 3, "reason": "find it"}).split("\n")[0], "press 'Search'")

@@ -65,6 +65,7 @@ def _rounded(rect):
 THOUGHT_CHARS = 240  # the acting card shows the end of what Claude last said, not all of it
 TRAIL_THOUGHTS = 6   # the result card's thinking section: this many of the latest things Claude said...
 TRAIL_CHARS = 600    # ...up to this much in all
+STEP_CHARS = 100     # the acting card's title: a long label or menu path is cut, its pointer note kept
 
 
 def _last_words(text):
@@ -560,10 +561,13 @@ class Flippy:
         step = shot.describe(name, args).split("\n")[0] if hasattr(shot, "describe") else name.replace("_", " ")
         for marked in (" at the marked spot", " the marked spot", " along the marked line"):
             step = step.replace(marked, "")  # the approval card's mark; the acting card has none
+        note = ""
         if args.get("real_pointer") and name != "click":  # (a click already says "with your pointer, when you pause")
-            step += " (needs the pointer for a moment, waiting for you to pause)"
-        elif hasattr(self.ui, "act_borrow_note") and (note := self.ui.act_borrow_note(name, args)):
-            step += f" ({note})"  # COSMIC: keys and clicks by position can need the window for a moment
+            note = " (needs the pointer for a moment, waiting for you to pause)"
+        elif hasattr(self.ui, "act_borrow_note") and (borrow := self.ui.act_borrow_note(name, args)):
+            note = f" ({borrow})"  # COSMIC: keys and clicks by position can need the window for a moment
+        room = max(STEP_CHARS - len(note), 40)
+        step = (step if len(step) <= room else step[:room - 1].rstrip() + "…") + note
         await self._action_main(lambda: self._acting(req, step, args.get("reason")), req)
         if name == "use_app":
             self.action_app = await asyncio.to_thread(self.ui.app_open, args["name"], cancel)
