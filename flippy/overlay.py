@@ -131,7 +131,7 @@ class OverlayBase:
         return self.theme.pointer if style == "theme" else style
 
     def _card_rect(self, W, H, opts):
-        cw, ch = self.theme.size(self.card, opts)
+        cw, ch = self.theme.card_size(self.card, opts)
         if self.card_mode == "follow" and self.pos:
             x, y = self.pos
             right, left, below, above = themes.pointer_extent(self.pointer_style(), settings.get("look", "pointer_size"))
@@ -256,6 +256,8 @@ class OverlayBase:
             if themes.pin_shown(self.card):
                 theme.draw_pin(cr, self.card, x, y, cw, ch, opts)
                 hits["pin"] = theme.pin_rect(self.card, x, y, cw, ch, opts)
+            if self.card.task and self.card.thought:  # a desktop task's thinking section, inside its card
+                hits["thought"] = theme.draw_thought(cr, self.card, x, y, cw, ch, opts)
         if self.target and self.pos:  # over the card: a docked card never hides what it's pointing at
             themes.draw_pointer(cr, theme, self.pointer_style(), *self.pos, now - self.t0,
                                 settings.get("look", "pointer_size"), h, backdrop=self.has_backdrop)
@@ -283,7 +285,7 @@ class OverlayBase:
                 "controls": settings.get("look", "controls"),
                 "pressed": name if (time.monotonic() - at < 0.18 or self.slider) else None,
                 "backdrop": self.has_backdrop and bool(self.theme.backdrop),
-                "player_shine": settings.get("look", "player_shine")}
+                "player_shine": settings.get("look", "player_shine"), "thought_open": self.thought_open}
         return self._card_rect(w, h, opts), opts
 
     # --- platform hooks ---

@@ -878,6 +878,13 @@ class Flippy:
         if name == "pin":
             self.toggle_pin()
             return
+        if name == "thought":  # the thinking section opens and folds
+            ov = self.overlay
+            ov.thought_open = not ov.thought_open
+            if not self.busy and ov.card and not ov.pinned:  # a finished task's card: time to read it
+                self._schedule_fade(settings.get("timing", "max_show_seconds"))
+            ov.queue_draw()
+            return
         if name == "speed":
             settings.set("timing", "speed", themes.frac_to_speed(frac))
             return

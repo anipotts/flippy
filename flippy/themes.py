@@ -33,6 +33,8 @@ PROMPT = "flippy@mac:~" if sys.platform == "darwin" else "flippy@cosmic:~"  # Te
 class Card:
     text: str = ""
     header: str | None = None     # label of the thing being pointed at
+    thought: str | None = None    # what Claude said during a desktop task: its thinking section (draw_thought)
+    task: bool = False            # a desktop task's card (acting, its result): not a walkthrough, so no player controls
     error: bool = False
     phase: str = "playing"        # thinking | playing | done | info
     steps: list = field(default_factory=list)  # walkthrough labels so far
@@ -89,6 +91,61 @@ def pin_glyph(cr, cx, cy, s, rgba, pinned):
     cr.line_to(0, 1.0 * s)  # needle
     cr.stroke()
     cr.restore()
+
+
+# ---- the thinking section: what Claude said during a desktop task, open or folded (#21), at the bottom of the
+# task's card in every theme (Theme.draw_thought)
+
+THOUGHT_FONT = "Noto Sans"
+
+
+def _thought_layouts(cr, card, w, opts, open_):
+    """(the "THINKING" label, the thought: the whole of it open, one line folded), in a block w wide."""
+    size = opts["text_size"]
+    head = layout(cr, "THINKING", THOUGHT_FONT, max(9, size - 5), bold=True)
+    if open_:
+        return head, layout(cr, card.thought, THOUGHT_FONT, max(10, size - 2), width=w, italic=True)
+    room = w - 14 - lsize(head)[0] - 10
+    body = layout(cr, " ".join(card.thought.split()), THOUGHT_FONT, max(10, size - 2), width=max(room, 20),
+                  italic=True)
+    ellipsize_end(body)
+    return head, body
+
+
+def _thought_rows(head, body, open_):
+    """(the label row's height, the whole block's)."""
+    row = max(lsize(head)[1], 12 if open_ else lsize(body)[1])
+    return row, row + (4 + lsize(body)[1] if open_ else 0)
+
+
+def thought_block_height(card, w, opts, open_):
+    """How tall thought_block is, w wide (0 without a thought)."""
+    if not card.thought:
+        return 0
+    return _thought_rows(*_thought_layouts(_measure_ctx, card, w, opts, open_), open_)[1]
+
+
+def thought_block(cr, card, x, y, w, opts, open_, accent, text_rgba):
+    """At (x, y), w wide: a fold arrow and a small "THINKING" label in accent, then the thought in italics (folded:
+    one line beside the label). Returns the label row's height: the part that opens and folds it."""
+    head, body = _thought_layouts(cr, card, w, opts, open_)
+    hw, hh = lsize(head)
+    row, _ = _thought_rows(head, body, open_)
+    ax, ay = x + 4, y + row / 2  # the fold arrow: down when open, right when folded
+    cr.move_to(*((ax - 4, ay - 2) if open_ else (ax - 2, ay - 4)))
+    cr.line_to(*((ax + 4, ay - 2) if open_ else (ax + 4, ay)))
+    cr.line_to(*((ax, ay + 3) if open_ else (ax - 2, ay + 4)))
+    cr.close_path()
+    cr.set_source_rgba(*accent)
+    cr.fill()
+    show(cr, head, x + 14, y + (row - hh) / 2, accent)
+    if open_:
+        show(cr, body, x, y + row + 4, text_rgba)
+    else:
+        show(cr, body, x + 14 + hw + 10, y + (row - lsize(body)[1]) / 2, (*text_rgba[:3], text_rgba[3] * 0.75))
+    return row
+
+
 
 
 def glyph(cr, name, cx, cy, s, rgba):
@@ -465,6 +522,36 @@ class Theme:
     def _w(self, card):
         return self.widths[0] if card.follow else self.widths[1]
 
+    # A desktop task's card (Card.task) has no player controls, and its thinking section sits at the bottom of the
+    # card: the theme's own size plus thought_space, thought_inset in from the card's sides and bottom.
+    thought_inset = 16
+    thought_label = None             # rgb of the section's label and fold arrow; None: the accent
+    thought_text = (1, 1, 1, 0.78)
+    THOUGHT_SEP = 19                 # between the card's text and the section, a hairline in the middle
+
+    def card_size(self, card, opts):
+        w, h = self.size(card, opts)
+        return w, h + self.thought_space(card, w, opts)
+
+    def thought_space(self, card, w, opts):
+        if not (card.task and card.thought):
+            return 0
+        open_ = opts.get("thought_open", True)
+        return self.THOUGHT_SEP + thought_block_height(card, w - 2 * self.thought_inset, opts, open_)
+
+    def draw_thought(self, cr, card, x, y, w, h, opts):
+        """The thinking section at the bottom of a task card, under a hairline. Returns its label row with the
+        hairline's space around it: the part that opens and folds it."""
+        open_, inset, a = opts.get("thought_open", True), self.thought_inset, opts["card_opacity"]
+        bw = w - 2 * inset
+        top = y + h - inset - thought_block_height(card, bw, opts, open_)
+        cr.rectangle(x + inset, top - self.THOUGHT_SEP / 2, bw, 1)
+        cr.set_source_rgba(*self.thought_text[:3], 0.18 * a)
+        cr.fill()
+        row = thought_block(cr, card, x + inset, top, bw, opts, open_, (*(self.thought_label or self.accent), 0.8 * a),
+                            (*self.thought_text[:3], self.thought_text[3] * a))
+        return x, top - self.THOUGHT_SEP / 2, w, row + self.THOUGHT_SEP
+
     def box_css(self):
         return ""
 
@@ -504,6 +591,7 @@ class Midnight(Theme):
     border = (0.35, 0.63, 1.0)
     fg = (0.95, 0.95, 0.95)
     head = (0.54, 0.72, 1.0)
+    thought_label = head
     err = (1.0, 0.54, 0.5)
     font = "Noto Sans"
     radius = 14
@@ -747,6 +835,7 @@ window.flippy-box .flippy-hint {{ color: {css(self.fg, 0.5)}; font-size: 12px; }
 
 class Terminal(Theme):
     key, name = "terminal", "Terminal"
+    thought_inset, thought_label, thought_text = 14, (0.25, 1.0, 0.45), (0.25, 1.0, 0.45, 0.7)
     pointer = "arrow"
     hand_fill = (0.0, 0.0, 0.0)
     hand_outline = (0.2, 1.0, 0.4)
@@ -886,6 +975,7 @@ class MediaPlayer(Theme):
     widths = (380, 470)
 
     pin_rgba = (1, 1, 1, 1)  # on the light title bar
+    thought_inset = 22  # in line with the text on its panel
 
     def pin_spot(self, card, x, y, w, h, opts):
         if opts.get("backdrop"):  # same inset as _chrome
@@ -911,7 +1001,7 @@ class MediaPlayer(Theme):
         G = self._geom(x, y, w, h)
         cy, ox, bx = G["cy"], G["ox"], G["bx"]
         window = {"min": (bx, y + 5, 21, 15), "max": (bx + 22, y + 5, 21, 15), "close": (bx + 44, y + 5, 24, 15)}
-        if card.phase == "thinking":  # only the window buttons: there's nothing to play yet
+        if card.phase == "thinking" or card.task:  # only the window buttons: nothing to play
             return window
         hits = {
             **window,
@@ -926,7 +1016,7 @@ class MediaPlayer(Theme):
 
     def size(self, card, opts):
         _, bh = lsize(self._body(_measure_ctx, card, opts))
-        if card.phase == "thinking":  # the title bar and the text: no controls yet
+        if card.phase == "thinking" or card.task:  # the title bar and the text: no controls
             return self._w(card), self.TITLE_H + bh + 30
         return self._w(card), self.TITLE_H + bh + 26 + self.CTRL_H + 8
 
@@ -998,7 +1088,7 @@ class MediaPlayer(Theme):
         liquid = opts.get("backdrop")
         if liquid:
             self._liquid(cr, x, y, w, h, a, gloss=opts.get("player_shine", "wmp") == "wmp",
-                         controls=card.phase != "thinking")
+                         controls=card.phase != "thinking" and not card.task)
         else:
             self._classic(cr, x, y, w, h, a)
         self._chrome(cr, x, y, w, h, card, t, opts, opts.get("pressed"), liquid)
@@ -1065,7 +1155,7 @@ class MediaPlayer(Theme):
         cr.close_path()
         cr.set_source_rgb(1, 1, 1)
         cr.fill()
-        title = card.header or ("Error" if card.error else "Flippy")
+        title = card.header or ("Error" if card.error else "" if card.task else "Flippy")  # a task: the step, if any
         tl = layout(cr, title, self.font, 13, width=w - (140 if pin_shown(card) else 120))
         ellipsize_end(tl)
         halo = ((0, 1, 0.7), (1, 0, 0.45), (-1, 0, 0.45), (0, -1, 0.3)) if liquid else ((0, 1, 0.55), (1, 0, 0.25), (-1, 0, 0.25))
@@ -1119,7 +1209,7 @@ class MediaPlayer(Theme):
         for dx, dy in ((1, 1), (0, 1), (1, 0), (-1, 0), (0, -1)):
             show(cr, body, px + 12 + dx, py + 8 + dy, (0, 0, 0, 0.55))
         show(cr, body, px + 12, py + 8, (1.0, 0.62, 0.58, 1) if card.error else (0.97, 0.99, 1.0, 1))
-        if card.phase == "thinking":  # no seek line or controls until there's an answer
+        if card.phase == "thinking" or card.task:  # no seek line or controls: nothing to play
             return
 
         # seek line with a tick per walkthrough step and a glowing nub
@@ -1250,14 +1340,20 @@ class Glass(Theme):
     backdrop = {"radius": R, "frost": 0.06, "smoke": 0.32}
     widths = (360, 440)
 
+    thought_inset = PAD
+
     def _title(self, card):
+        if card.task:  # a desktop task: the step it's on, else no title ("Flippy" says nothing)
+            return card.header or ("Something went wrong" if card.error else None)
         return card.header or ("Something went wrong" if card.error else "Flippy")
 
     def _layouts(self, cr, card, opts):
         w = self._w(card) - 2 * self.PAD
-        head = layout(cr, self._title(card), self.font, opts["text_size"], width=w - (PIN_ROOM if pin_shown(card) else 0),
-                      bold=True)
-        ellipsize_end(head)
+        title = self._title(card)
+        head = layout(cr, title, self.font, opts["text_size"], width=w - (PIN_ROOM if pin_shown(card) else 0),
+                      bold=True) if title else None
+        if head:
+            ellipsize_end(head)
         body = layout(cr, card.text or " ", self.font, opts["text_size"] - 1, width=w)
         return head, body
 
@@ -1265,6 +1361,8 @@ class Glass(Theme):
         head, body = self._layouts(_measure_ctx, card, opts)
         if card.phase == "thinking":  # just the glass and the text: no title or controls yet
             return self._w(card), self.PAD + lsize(body)[1] + self.PAD
+        if card.task:  # the step or nothing, and the text: no player controls
+            return self._w(card), self.PAD + (lsize(head)[1] + 3 if head else 0) + lsize(body)[1] + self.PAD
         h = self.PAD + lsize(head)[1] + 3 + lsize(body)[1] + 14 + self.BAR_H + 8 + self.CTRL_H + 12
         return self._w(card), h
 
@@ -1278,7 +1376,7 @@ class Glass(Theme):
                 "speed": (x + self.PAD + self.BTN / 2, cy), "close": (x + w - self.PAD - self.BTN / 2, cy)}
 
     def hit_regions(self, card, x, y, w, h, opts=None):
-        if card.phase == "thinking":
+        if card.phase == "thinking" or card.task:
             return {}
         G = self._geom(x, y, w, h)
         cy, ox, b = G["cy"], G["ox"], self.BTN
@@ -1335,9 +1433,12 @@ class Glass(Theme):
             show(cr, body, x + P, y + P, (1, 1, 1, 0.9))
             return
         ty = y + P
-        show(cr, head, x + P, ty, (1.0, 0.6, 0.56, 1) if card.error else (1, 1, 1, 0.96))
-        ty += lsize(head)[1] + 3
-        show(cr, body, x + P, ty, (1, 1, 1, 0.72))
+        if head:
+            show(cr, head, x + P, ty, (1.0, 0.6, 0.56, 1) if card.error else (1, 1, 1, 0.96))
+            ty += lsize(head)[1] + 3
+        show(cr, body, x + P, ty, (1, 1, 1, 0.9 if card.task else 0.72))
+        if card.task:  # no player controls
+            return
 
         G = self._geom(x, y, w, h)
         n = max(len(card.steps), 1)
@@ -1386,6 +1487,7 @@ class Mono(Theme):
     """Black with gray outlines and sharp corners, like the setup and settings windows; grayscale pointers.
     Playback is a seek slider and a speed slider (white fill, dark track, light pill knob) plus square buttons."""
     key, name = "mono", "Mono"
+    thought_text = (0.62, 0.64, 0.68, 1)
     hand_fill = (0.94, 0.945, 0.95)
     hand_outline = (0.36, 0.36, 0.38)
     accent = (0.94, 0.945, 0.95)
