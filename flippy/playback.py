@@ -67,6 +67,9 @@ class Playback:
         events = [('watch_clicks', False)] if self.waiting else []
         self.waiting = False; self.clicked_at = None
         self.paused = True; self.pointed_step = -1
+        known = self.known()
+        if known and self.step >= len(known):  # past the last step in so far, waiting for the next: the one showing
+            self.step = len(known)-1; self.shown = float(len(known[-1].text)); self.typed_at = None
         return events
 
     def resume(self, now):

@@ -273,6 +273,8 @@ class Flippy:
 
     # --- flow ---
     def open_box(self):
+        if self.overlay.drawing:
+            self.cancel_draw()
         if self.parked and self.box.visible:  # hotkey again: never mind, back to the walkthrough
             self._resume_walkthrough()
             return
@@ -285,7 +287,7 @@ class Flippy:
             self._cancel_fade()
             self._show_box()
             return
-        if self.play and self.play.known() and not self.play.finished and not self.action_tools:
+        if self._walkthrough_up() and not self.action_tools:
             self._follow_up()  # a walkthrough on screen: paused at its step, the rest still streaming in
             return
         if self.busy:
@@ -299,8 +301,6 @@ class Flippy:
                 self.overlay.clear()
                 self._show_box()
             return
-        if self.overlay.drawing:
-            self.cancel_draw()
         if self.box.visible:  # hotkey again toggles the box closed
             self.box.hide()
             self.focus_at_open = None
@@ -308,6 +308,13 @@ class Flippy:
         self._cancel_fade()  # keep the last answer up while typing a follow-up
         self._stop_playback()
         self._show_box()
+
+    def _walkthrough_up(self):
+        """A walkthrough you asked for is playing: more than one step, or more still coming."""
+        pl = self.play
+        if not (pl and getattr(pl, "asked", False)) or pl.finished:
+            return False
+        return len(pl.known()) > 1 or (bool(pl.known()) and not pl.done)
 
     def _follow_up(self):
         """Ask about the step a walkthrough is on (#26): it's set aside at that step while the question box is up,
@@ -329,7 +336,7 @@ class Flippy:
         card = pl.card(time.monotonic(), self._play_options())
         if card:
             card["at_bottom"] = self._card_at_bottom(pl.known(), pl)
-            self.overlay.show_text(**card)
+            self.overlay.show_text(**card, **self._resume_action())  # a way back besides Esc
 
     def _resume_walkthrough(self):
         """Back to the walkthrough at the step it was on; a side answer still coming is dropped."""
@@ -344,6 +351,8 @@ class Flippy:
         self.box.hide()
         self._stop_playback()
         self._cancel_fade()
+        self.marked = False  # a mark drawn for the follow-up, and the side answer's card, go with it
+        self.overlay.clear()
         self.tutorial = self.parked_tutorial
         self.play = pl
         pl.resume(time.monotonic())
@@ -831,7 +840,8 @@ class Flippy:
         if self.brain.dirty or (self.last_ask and time.monotonic() - self.last_ask > IDLE_RESET_S):
             await self.brain.reset()
         self.last_ask = time.monotonic()
-        await self._action_main(lambda: self._start_playback(req.identity, frame.size, frame.original_size, frame=frame), req)
+        await self._action_main(lambda: self._start_playback(req.identity, frame.size, frame.original_size, frame=frame,
+                                                                asked=True), req)
         raw = await self.brain.ask(question, frame.jpeg, frame.size,
             on_text=lambda delta: loop.idle_add(lambda: self._owns(req) and self._stream_text(req.identity, delta) and False))
         return raw, req.identity
@@ -907,12 +917,14 @@ class Flippy:
             ov.keep = (min(ax, bx), min(ay, by), abs(bx - ax), abs(by - ay))
         log(f"placement: learning, keep {_rounded(ov.keep)}")
 
-    def _start_playback(self, gen, img_size, shot_size, frame=None):
+    def _start_playback(self, gen, img_size, shot_size, frame=None, asked=False):
+        """asked: the answer to a question (not a video review or a demo): a walkthrough can take a follow-up."""
         if gen != self.gen:
             return
         self._stop_playback()
         self.play = Playback(time.monotonic())
         self.play.gen, self.play.img, self.play.shot, self.play.frame = gen, img_size, shot_size, frame
+        self.play.asked = asked
         self._resume_ticking()
 
     def _playback_of(self, gen):
@@ -999,7 +1011,8 @@ class Flippy:
         card = pl.card(now, self._play_options())
         if card:
             card["at_bottom"] = self._card_at_bottom(pl.known())
-            card.update(self._resume_action() or {"actions": (("followup", "Follow up"),)})
+            card.update(self._resume_action() or ({"actions": (("followup", "Follow up"),)} if self._walkthrough_up()
+                                                   else {}))
             self.overlay.show_text(**card)
 
     def _resume_action(self):
@@ -1035,7 +1048,7 @@ class Flippy:
         if name == "pin":
             self.toggle_pin()
             return
-        if name == "followup" and self.play and self.play.known() and not self.parked:
+        if name == "followup" and self._walkthrough_up() and not self.parked:
             self._follow_up()
             return
         if name == "resume":
@@ -1056,6 +1069,8 @@ class Flippy:
             cur = settings.get("timing", "speed")
             settings.set("timing", "speed", next((o for o in options if o > cur + 0.01), options[0]))
             return
+        if self.parked and not self.play:  # the walkthrough's own controls while it's set aside: back to it first
+            self._resume_walkthrough()
         if self.play:
             self._play_events(self.play.control(name, frac, time.monotonic(), self._play_options()))
             if self.play and not self.play.stopped:
@@ -1524,6 +1539,8 @@ class Flippy:
         self.marked = False
         self.focus_at_open = None
         self.overlay.clear()
+        if self.parked:  # drawing for a follow-up, then not: back to the walkthrough
+            self._resume_walkthrough()
 
     # --- fading ---
     def _schedule_fade(self, seconds):

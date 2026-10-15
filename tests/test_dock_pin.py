@@ -282,12 +282,12 @@ class WorkArea(unittest.TestCase):
 
     def test_closing_the_box_forgets_it(self):
         stale = ((10, 10, 800, 600), (0, 0, 1000, 800))
-        f = types.SimpleNamespace(busy=False, parked=None, play=None, focus_at_open=stale,
+        f = types.SimpleNamespace(busy=False, parked=None, _walkthrough_up=lambda: False, focus_at_open=stale,
                                   overlay=types.SimpleNamespace(drawing=False),
                                   box=types.SimpleNamespace(visible=True, hide=MagicMock()))
         daemon.Flippy.open_box(f)  # the ask hotkey again closes it
         self.assertIsNone(f.focus_at_open)
-        f = types.SimpleNamespace(focus_at_open=stale, _end_draw_mode=MagicMock(), overlay=MagicMock())
+        f = types.SimpleNamespace(focus_at_open=stale, parked=None, _end_draw_mode=MagicMock(), overlay=MagicMock())
         daemon.Flippy.cancel_draw(f)
         self.assertIsNone(f.focus_at_open)
 

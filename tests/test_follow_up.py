@@ -32,6 +32,18 @@ class Parking(unittest.TestCase):
         self.assertIn(("watch_clicks", True), events)  # and it waits for its click again
         self.assertEqual(p.step, 1)
 
+    def test_parked_while_waiting_for_more_it_holds_the_step_showing(self):
+        p = Playback(0)
+        p.append("Open File [POINT:10,20:File] then")
+        o = Options()
+        p.tick(0.1, o, at)
+        p.tick(1, o, at)
+        p.tick(9, o, at)  # its hold is over: on to a step not in yet
+        self.assertEqual(p.step, 1)
+        p.park()
+        self.assertEqual(p.step, 0)
+        self.assertEqual(p.card(10, o)["step"], 0)
+
     def test_resume_after_the_end_plays_the_step_again(self):
         p = Playback(0)
         p.finish("Only this [POINT:1,2:x]")
@@ -60,7 +72,7 @@ def flippy():
     f.ui = types.SimpleNamespace(screen_size=lambda: (1000, 800), scale=lambda: 1.0)
     f.video = types.SimpleNamespace(recording=False)
     pl = Playback(0)
-    pl.gen, pl.img, pl.shot, pl.frame = 5, (1000, 800), (1000, 800), None
+    pl.gen, pl.img, pl.shot, pl.frame, pl.asked = 5, (1000, 800), (1000, 800), None, True
     pl.append(WALKTHROUGH)
     f.play = pl
     return f
@@ -170,6 +182,44 @@ class FollowUp(unittest.TestCase):
         with patch.object(daemon.Flippy, "cancel_draw"):
             f.dismiss()
         self.assertIsNone(f.parked)
+
+    def test_a_mark_drawn_for_the_follow_up_goes_with_esc(self):
+        f = flippy()
+        self.follow_up(f)
+        f.marked = True
+        f.box.visible = True
+        f._box_cancel()
+        self.assertFalse(f.marked)
+        f.overlay.clear.assert_called()
+
+    def test_cancelling_a_drawing_goes_back_to_the_walkthrough(self):
+        f = flippy()
+        pl = self.follow_up(f)
+        f._end_draw_mode = MagicMock()
+        f.cancel_draw()
+        self.assertIs(f.play, pl)
+        self.assertIsNone(f.parked)
+
+    def test_its_own_controls_go_back_to_it(self):
+        f = flippy()
+        pl = self.follow_up(f)
+        f.control("next")
+        self.assertIs(f.play, pl)
+        self.assertEqual(pl.step, 1)
+
+    def test_a_one_step_answer_is_not_a_walkthrough(self):
+        f = flippy()
+        f.play = Playback(0)
+        f.play.gen, f.play.frame, f.play.img, f.play.shot, f.play.asked = 5, None, (1000, 800), (1000, 800), True
+        f.play.finish("It's in the File menu [POINT:10,20:File]")
+        f.play.tick(0.1, f._play_options(), f._play_coords)
+        f._render_step(f.play, 0.2)
+        self.assertNotIn("actions", f.overlay.show_text.call_args.kwargs)
+        daemon.Flippy.open_box(f)
+        self.assertIsNone(f.parked)  # the hotkey asks as before
+        f = flippy()
+        f.play.asked = False  # a video review's or a demo's
+        self.assertFalse(f._walkthrough_up())
 
     def test_a_walkthrough_card_offers_a_follow_up(self):
         f = flippy()
