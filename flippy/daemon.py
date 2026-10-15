@@ -558,7 +558,9 @@ class Flippy:
         log("act: step " + name + (f" {args.get('action')}" if name in ("app_action", "media") else "")
             + (" (real pointer)" if args.get("real_pointer") else ""))
         step = shot.describe(name, args).split("\n")[0] if hasattr(shot, "describe") else name.replace("_", " ")
-        if args.get("real_pointer"):
+        for marked in (" at the marked spot", " the marked spot", " along the marked line"):
+            step = step.replace(marked, "")  # the approval card's mark; the acting card has none
+        if args.get("real_pointer") and name != "click":  # (a click already says "with your pointer, when you pause")
             step += " (needs the pointer for a moment, waiting for you to pause)"
         elif hasattr(self.ui, "act_borrow_note") and (note := self.ui.act_borrow_note(name, args)):
             step += f" ({note})"  # COSMIC: keys and clicks by position can need the window for a moment

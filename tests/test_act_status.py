@@ -1,4 +1,5 @@
 """The acting card (#21): the step, Claude's reason, what Claude last said, and how to stop."""
+import asyncio
 import types
 import unittest
 from unittest.mock import MagicMock, patch
@@ -68,6 +69,21 @@ class ActingCard(unittest.TestCase):
         self.assertEqual(len(long), daemon.THOUGHT_CHARS)
         self.assertTrue(long.startswith("…") and long.endswith("the end."))
 
+    def test_the_acting_card_has_no_mark_and_says_the_pointer_once(self):
+        steps = []
+        async def main(fn, req):
+            fn()
+        f = types.SimpleNamespace(_action_main=main, _acting=lambda req, step, reason: steps.append(step),
+                                  ui=types.SimpleNamespace(app_act=lambda *a: "ok"))
+        frame = AppFrame("", (10, 10), ("app", 1, 2, (0, 0, 10, 10)), {}, "")
+        with patch.object(daemon, "log"):
+            for name, args in (("click", {"x": 1, "y": 1, "count": 1, "real_pointer": True}),
+                               ("scroll", {"x": 1, "y": 1, "direction": "down", "lines": 2}),
+                               ("drag", {"x": 1, "y": 1, "to_x": 2, "to_y": 2, "real_pointer": True})):
+                asyncio.run(daemon.Flippy._app_perform(f, name, {**args, "reason": "r"}, frame, None, "req"))
+        self.assertEqual(steps, ["click with your pointer, when you pause", "scroll down",
+                                 "drag (needs the pointer for a moment, waiting for you to pause)"])
+
     def test_steps_in_words(self):
         frame = AppFrame("", (0, 0), ("app", 1, 2, (0, 0, 10, 10)), {3: (None, None, "Search")}, "")
         self.assertEqual(frame.describe("press", {"element": 3, "reason": "find it"}).split("\n")[0], "press 'Search'")
@@ -118,6 +134,35 @@ class ThinkingSection(unittest.TestCase):
                         self.assertTrue(x <= tx and y < ty and ty + th <= y + h + 0.5)  # inside the card
                         heights.append(h)
                 self.assertGreater(heights[0], heights[1])  # folded is one line
+
+    def test_a_short_reply_leaves_room_to_read(self):
+        for key in ("midnight", "cosmic"):  # these fit the card to its text
+            settings.set("look", "theme", key)
+            with self.subTest(theme=key):
+                self.ov.show_text("Done.", thought=THOUGHT * 3, task=True)
+                (x, y, w, h), _ = self.ov.card_layout(1000, 700)
+                self.assertGreaterEqual(w, self.ov.theme._w(self.ov.card))
+
+    def test_folded_is_one_line_and_open_at_most_eight(self):
+        trail = "\n\n".join(f"Step {i}: " + "looking for the search box in the sidebar " * 3 for i in range(6))
+        line = themes._fit_line(" ".join(trail.split()), 13, 250)
+        self.assertTrue(line.endswith("…") and len(line) < themes.FOLDED_CHARS)
+        self.assertLessEqual(themes.lsize(themes.layout(themes._measure_ctx, line, themes.THOUGHT_FONT, 13,
+                                                        italic=True))[0], 250)
+        shown = themes._fit_lines(trail, 13, 300)
+        self.assertTrue(shown.startswith("…") and trail.endswith(shown[1:]))  # the latest of it
+        one = themes.lsize(themes.layout(themes._measure_ctx, "x", themes.THOUGHT_FONT, 13, width=300, italic=True))[1]
+        h = themes.lsize(themes.layout(themes._measure_ctx, shown, themes.THOUGHT_FONT, 13, width=300, italic=True))[1]
+        self.assertLessEqual(h, one * themes.THOUGHT_LINES + 1)
+        self.assertEqual(themes._fit_lines("Short.", 13, 300), "Short.")
+
+    def test_terminal_keeps_a_long_step_on_the_card(self):
+        settings.set("look", "theme", "terminal")
+        self.ov.show_text("Done.", header="Press 'Search' (needs the pointer for a moment, waiting for you to pause)",
+                          task=True)
+        (x, y, w, h), opts = self.ov.card_layout(1000, 700)
+        body, head, bar = self.ov.theme._layouts(themes._measure_ctx, self.ov.card, opts)
+        self.assertLessEqual(14 + themes.lsize(head)[0], w)
 
     def test_no_flippy_title_on_a_task(self):
         settings.set("look", "theme", "glass")

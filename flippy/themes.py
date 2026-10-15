@@ -10,6 +10,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import cairo
 
@@ -99,17 +100,50 @@ def pin_glyph(cr, cx, cy, s, rgba, pinned):
 THOUGHT_FONT = "Noto Sans"
 
 
+THOUGHT_LINES = 8   # open, the section shows at most this many lines: the latest of a long trail
+FOLDED_CHARS = 200  # folded, one line never shows more than this
+
+
+@lru_cache(maxsize=64)
+def _fit_lines(text, px, w):
+    """text in at most THOUGHT_LINES lines w wide: whole, or its end after "…". Worked out once per text and size."""
+    def height(s):
+        return lsize(layout(_measure_ctx, s, THOUGHT_FONT, px, width=w, italic=True))[1]
+    cap = height("x") * THOUGHT_LINES + 1
+    if height(text) <= cap:
+        return text
+    lo, hi = 1, len(text) - 1  # the earliest start whose end fits
+    while lo < hi:
+        mid = (lo + hi) // 2
+        lo, hi = (lo, mid) if height("…" + text[mid:].lstrip()) <= cap else (mid + 1, hi)
+    return "…" + text[lo:].lstrip()
+
+
+@lru_cache(maxsize=64)
+def _fit_line(text, px, room):
+    """The start of text that fits one line room wide, with "…" when it's cut. Worked out once per text and size
+    (macOS's own ellipsizing drops one character at a time, re-measuring the line each time)."""
+    def width(s):
+        return lsize(layout(_measure_ctx, s, THOUGHT_FONT, px, italic=True))[0]
+    if len(text) <= FOLDED_CHARS and width(text) <= room:
+        return text
+    text = text[:FOLDED_CHARS]
+    lo, hi = 0, len(text)  # the longest start that fits with its "…"
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        lo, hi = (mid, hi) if width(text[:mid].rstrip() + "…") <= room else (lo, mid - 1)
+    return text[:lo].rstrip() + "…"
+
+
 def _thought_layouts(cr, card, w, opts, open_):
-    """(the "THINKING" label, the thought: the whole of it open, one line folded), in a block w wide."""
+    """(the "THINKING" label, the thought: up to THOUGHT_LINES lines open, one line folded), in a block w wide."""
     size = opts["text_size"]
     head = layout(cr, "THINKING", THOUGHT_FONT, max(9, size - 5), bold=True)
+    px = max(10, size - 2)
     if open_:
-        return head, layout(cr, card.thought, THOUGHT_FONT, max(10, size - 2), width=w, italic=True)
-    room = w - 14 - lsize(head)[0] - 10
-    body = layout(cr, " ".join(card.thought.split()), THOUGHT_FONT, max(10, size - 2), width=max(room, 20),
-                  italic=True)
-    ellipsize_end(body)
-    return head, body
+        return head, layout(cr, _fit_lines(card.thought, px, int(w)), THOUGHT_FONT, px, width=w, italic=True)
+    room = int(max(w - 14 - lsize(head)[0] - 10, 20))
+    return head, layout(cr, _fit_line(" ".join(card.thought.split()), px, room), THOUGHT_FONT, px, italic=True)
 
 
 def _thought_rows(head, body, open_):
@@ -531,6 +565,8 @@ class Theme:
 
     def card_size(self, card, opts):
         w, h = self.size(card, opts)
+        if card.task and card.thought:  # a theme that fits its card to the text ("Done.") still leaves room to read
+            w = max(w, self._w(card))
         return w, h + self.thought_space(card, w, opts)
 
     def thought_space(self, card, w, opts):
@@ -852,7 +888,10 @@ class Terminal(Theme):
         px = opts["text_size"] - 1
         cursor = "█" if (card.typing or card.phase == "thinking") else ""
         body = layout(cr, (card.text or "") + cursor, self.font, px, width=self._w(card))
-        head = layout(cr, f"> {card.header}", self.font, px, bold=True) if card.header else None
+        head = None
+        if card.header:  # one line, at most as wide as the text can be: a long step ends in "…"
+            head = layout(cr, f"> {card.header}", self.font, px, width=self._w(card), bold=True)
+            ellipsize_end(head)
         bar = layout(cr, PROMPT, self.font, px - 3)
         return body, head, bar
 
@@ -881,8 +920,8 @@ class Terminal(Theme):
     def size(self, card, opts):
         body, head, bar = self._layouts(_measure_ctx, card, opts)
         bw, bh = lsize(body)
-        hh = lsize(head)[1] + 4 if head else 0
-        w, h = max(bw, 200) + 28, bh + hh + lsize(bar)[1] + 30
+        hw, hh = (lsize(head)[0], lsize(head)[1] + 4) if head else (0, 0)
+        w, h = max(bw, hw, 200) + 28, bh + hh + lsize(bar)[1] + 30
         if lean_controls(card, opts):
             toks = self._status_layout(_measure_ctx, card, opts, 0, 0)
             w = max(w, toks[-1][2] + toks[-1][3] + 28)
