@@ -1,4 +1,4 @@
-"""A desktop task's card (#21): no player controls, and what Claude said in a thinking section inside it."""
+"""The acting card (#21): the step, Claude's reason, what Claude last said, and how to stop."""
 import types
 import unittest
 from unittest.mock import MagicMock, patch
@@ -6,6 +6,52 @@ from unittest.mock import MagicMock, patch
 import cairo
 
 from flippy import daemon, overlay, settings, themes
+from flippy.actions import AppFrame
+
+
+def flippy():
+    return types.SimpleNamespace(act_status={"step": None, "reason": None, "thought": None},
+                                 _owns=lambda req: True,
+                                 _stop_hint=lambda: "⌘ ⌘", overlay=MagicMock())
+
+
+def card(f):
+    args, kwargs = f.overlay.show_text.call_args
+    return kwargs["header"], args[0], kwargs["thought"]
+
+
+class ActingCard(unittest.TestCase):
+    def test_before_the_first_step(self):
+        f = flippy()
+        daemon.Flippy._acting(f, "req")
+        self.assertEqual(card(f), (None, "Flippy is acting · ⌘ ⌘ to stop", None))
+
+    def test_step_reason_then_thought(self):
+        f = flippy()
+        daemon.Flippy._acting(f, "req", "press 'Search'", "to find the jazz playlist")
+        self.assertEqual(card(f), ("Press 'Search'", "to find the jazz playlist\n⌘ ⌘ to stop", None))
+        daemon.Flippy._acting(f, "req", thought="Spotify is open; looking for search first.")
+        self.assertEqual(card(f), ("Press 'Search'", "to find the jazz playlist\n⌘ ⌘ to stop",
+                                   "Spotify is open; looking for search first."))  # in the card's thinking section
+        daemon.Flippy._acting(f, "req", "switch to Music", "play it there")  # a new step keeps the last thought
+        self.assertEqual(card(f)[0], "Switch to Music")
+        self.assertIn("looking for search first", card(f)[2])
+
+    def test_a_finished_request_leaves_the_card_alone(self):
+        f = flippy()
+        f._owns = lambda req: False
+        daemon.Flippy._acting(f, "req", "press 'Save'", "save it")
+        f.overlay.show_text.assert_not_called()
+
+    def test_long_thoughts_show_their_end(self):
+        self.assertEqual(daemon._last_words("First part.\n\nThen this."), "Then this.")
+        long = daemon._last_words("x" * 500 + " the end.")
+        self.assertEqual(len(long), daemon.THOUGHT_CHARS)
+        self.assertTrue(long.startswith("…") and long.endswith("the end."))
+
+    def test_steps_in_words(self):
+        frame = AppFrame("", (0, 0), ("app", 1, 2, (0, 0, 10, 10)), {3: (None, None, "Search")}, "")
+        self.assertEqual(frame.describe("press", {"element": 3, "reason": "find it"}).split("\n")[0], "press 'Search'")
 
 
 class Overlay(overlay.OverlayBase):

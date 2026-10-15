@@ -61,6 +61,16 @@ def _rounded(rect):
     return tuple(round(v) for v in rect) if rect else None
 
 
+
+THOUGHT_CHARS = 240  # the acting card shows the end of what Claude last said, not all of it
+
+
+def _last_words(text):
+    """The last paragraph of text, cut to THOUGHT_CHARS from its end."""
+    text = text.strip().split("\n\n")[-1].strip()
+    return text if len(text) <= THOUGHT_CHARS else "…" + text[-(THOUGHT_CHARS - 1):].lstrip()
+
+
 class Flippy:
     def __init__(self, ui):
         self.instance = Instance(PROFILE).acquire()
@@ -462,9 +472,19 @@ class Flippy:
             future.cancel()
             self._unlink(path)
 
-    def _acting(self, req, operation=None):
-        if self._owns(req):
-            self.overlay.show_text(f"Flippy is acting{': ' + operation if operation else ''} · {self._stop_hint()} to stop")
+    def _acting(self, req, step=None, reason=None, thought=None):
+        """The acting card (#21): the step in words, Claude's reason for it and how to stop; under it, what Claude
+        last said between steps, in its thinking section. Each call changes what it's given and keeps the rest."""
+        if not self._owns(req):
+            return
+        status = self.act_status
+        if step:
+            status["step"], status["reason"] = step[:1].upper() + step[1:], reason
+        if thought:
+            status["thought"] = _last_words(thought)
+        hint = f"{self._stop_hint()} to stop"
+        self.overlay.show_text(f"{status['reason']}\n{hint}" if status["reason"] else f"Flippy is acting · {hint}",
+                               header=status["step"], thought=status["thought"], task=True)
 
     def _stop_hint(self):
         """How to stop a desktop task, in words: the answer card's fonts have no ⌘ ⇧ ⌥ ⌃ glyphs."""
@@ -503,7 +523,9 @@ class Flippy:
                              catalog=getattr(self.ui, "act_catalog", BACKGROUND_CATALOG),
                              prompt=getattr(self.ui, "act_prompt", BACKGROUND_PROMPT) + act_memory.brief())
         tools.max_turns = limits.max_turns
+        tools.on_thought = lambda text: loop.idle_add(lambda: self._acting(req, thought=text) and False)
         self.action_tools = tools
+        self.act_status = {"step": None, "reason": None, "thought": None}
         async def run():
             try:
                 return await self.brain.act(question, tools)
@@ -531,11 +553,12 @@ class Flippy:
         # which tool each step used (names only, never the task's text), so a task that gives up shows where
         log("act: step " + name + (f" {args.get('action')}" if name in ("app_action", "media") else "")
             + (" (real pointer)" if args.get("real_pointer") else ""))
-        what = "needs the pointer for a moment, waiting for you to pause" if args.get("real_pointer") else \
-            name.replace("_", " ")
-        if hasattr(self.ui, "act_borrow_note"):  # COSMIC: keys and clicks by position can need the window for a moment
-            what = self.ui.act_borrow_note(name, args) or what
-        await self._action_main(lambda: self._acting(req, what), req)
+        step = shot.describe(name, args).split("\n")[0] if hasattr(shot, "describe") else name.replace("_", " ")
+        if args.get("real_pointer"):
+            step += " (needs the pointer for a moment, waiting for you to pause)"
+        elif hasattr(self.ui, "act_borrow_note") and (note := self.ui.act_borrow_note(name, args)):
+            step += f" ({note})"  # COSMIC: keys and clicks by position can need the window for a moment
+        await self._action_main(lambda: self._acting(req, step, args.get("reason")), req)
         if name == "use_app":
             self.action_app = await asyncio.to_thread(self.ui.app_open, args["name"], cancel)
             return
