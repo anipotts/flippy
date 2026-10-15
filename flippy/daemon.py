@@ -63,6 +63,8 @@ def _rounded(rect):
 
 
 THOUGHT_CHARS = 240  # the acting card shows the end of what Claude last said, not all of it
+TRAIL_THOUGHTS = 6   # the result card's thinking section: this many of the latest things Claude said...
+TRAIL_CHARS = 600    # ...up to this much in all
 
 
 def _last_words(text):
@@ -482,6 +484,8 @@ class Flippy:
             status["step"], status["reason"] = step[:1].upper() + step[1:], reason
         if thought:
             status["thought"] = _last_words(thought)
+            if status["thought"] not in status["trail"][-1:]:
+                status["trail"].append(status["thought"])
         hint = f"{self._stop_hint()} to stop"
         self.overlay.show_text(f"{status['reason']}\n{hint}" if status["reason"] else f"Flippy is acting · {hint}",
                                header=status["step"], thought=status["thought"], task=True)
@@ -525,7 +529,7 @@ class Flippy:
         tools.max_turns = limits.max_turns
         tools.on_thought = lambda text: loop.idle_add(lambda: self._acting(req, thought=text) and False)
         self.action_tools = tools
-        self.act_status = {"step": None, "reason": None, "thought": None}
+        self.act_status = {"step": None, "reason": None, "thought": None, "trail": []}
         async def run():
             try:
                 return await self.brain.act(question, tools)
@@ -695,12 +699,21 @@ class Flippy:
                                      .removeprefix("Task stopped: ").replace(" Check the screen before continuing.", ""))
             else:
                 message = errors.say(code)
-            self._fail("Desktop task stopped. " + message)
+            self._fail("Desktop task stopped. " + message, thought=self._act_trail(), task=True)
             if error:
                 self._open_setup_if(setup_gate.login_error, error)
         else:
-            self.overlay.show_text(result)
+            self.overlay.show_text(result, thought=self._act_trail(result), task=True)
             self._schedule_fade(settings.get("timing", "max_show_seconds"))
+
+    def _act_trail(self, result=""):
+        """What Claude said while the task ran, for the result card's thinking section: the last TRAIL_THOUGHTS, one
+        paragraph each, without the final reply itself (Claude's last message is also the result)."""
+        trail = (getattr(self, "act_status", None) or {}).get("trail", [])
+        trail = [text for text in trail if text != _last_words(result or "")][-TRAIL_THOUGHTS:]
+        while len("\n\n".join(trail)) > TRAIL_CHARS and len(trail) > 1:  # the latest ones
+            trail.pop(0)
+        return "\n\n".join(trail) or None
 
     async def _ask(self, question, req, keep_marks=False, focus=None):
         frame = await self._capture_frame(req, keep_marks=keep_marks)
@@ -953,12 +966,12 @@ class Flippy:
             self.overlay.card.speed = settings.get("timing", "speed")
         self.overlay.queue_draw()
 
-    def _fail(self, msg):
+    def _fail(self, msg, **card_fields):
         self.busy = False
         self._stop_playback()
         log("error:", msg)
         self.overlay.clear()
-        self.overlay.show_text(msg, error=True)
+        self.overlay.show_text(msg, error=True, **card_fields)
         self._schedule_fade(settings.get("timing", "show_seconds"))
 
     def reset_session(self):

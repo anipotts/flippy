@@ -10,7 +10,7 @@ from flippy.actions import AppFrame
 
 
 def flippy():
-    return types.SimpleNamespace(act_status={"step": None, "reason": None, "thought": None},
+    return types.SimpleNamespace(act_status={"step": None, "reason": None, "thought": None, "trail": []},
                                  _owns=lambda req: True,
                                  _stop_hint=lambda: "⌘ ⌘", overlay=MagicMock())
 
@@ -36,6 +36,25 @@ class ActingCard(unittest.TestCase):
         daemon.Flippy._acting(f, "req", "switch to Music", "play it there")  # a new step keeps the last thought
         self.assertEqual(card(f)[0], "Switch to Music")
         self.assertIn("looking for search first", card(f)[2])
+
+    def test_the_trail_for_the_result_card(self):
+        f = flippy()
+        for thought in ("Opening Spotify.", "Opening Spotify.", "Searching for jazz.", "Playing Kind of Blue."):
+            daemon.Flippy._acting(f, "req", thought=thought)
+        self.assertEqual(f.act_status["trail"], ["Opening Spotify.", "Searching for jazz.", "Playing Kind of Blue."])
+        # Claude's last message is the result itself: the strip under it holds what came before
+        self.assertEqual(daemon.Flippy._act_trail(f, "Playing Kind of Blue."), "Opening Spotify.\n\nSearching for jazz.")
+        self.assertIsNone(daemon.Flippy._act_trail(types.SimpleNamespace()))  # no task ran
+        f.act_status["trail"] = [f"Thought {i}. " + "x" * 200 for i in range(6)]
+        kept = daemon.Flippy._act_trail(f)
+        self.assertLessEqual(len(kept), daemon.TRAIL_CHARS)
+        self.assertTrue(kept.endswith(f.act_status["trail"][-1]))  # the latest ones
+
+    def test_a_stopped_task_carries_it(self):
+        overlay = MagicMock()
+        daemon.Flippy._fail(types.SimpleNamespace(busy=True, _stop_playback=MagicMock(), overlay=overlay,
+                                                  _schedule_fade=MagicMock()), "Desktop task stopped.", thought="why")
+        self.assertEqual(overlay.show_text.call_args.kwargs["thought"], "why")
 
     def test_a_finished_request_leaves_the_card_alone(self):
         f = flippy()
