@@ -504,6 +504,7 @@ with real_pointer true (background clicks are ignored); verify with spotify.now_
 way below worked as written.
 Finish by checking the latest look shows the result (the song you picked is the one playing, the text is there).
 Do not claim success unless it does. Keep your final reply short and plain text.
+Before each step, say in a few plain words what you're doing and why; it shows on the user's screen as you work.
 No POINT tags or tutorial steps.
 """
 
