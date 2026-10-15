@@ -190,7 +190,16 @@ class FollowUp(unittest.TestCase):
         f.box.visible = True
         f._box_cancel()
         self.assertFalse(f.marked)
-        f.overlay.clear.assert_called()
+        self.assertEqual(f.overlay.strokes, [])
+
+    def test_its_pin_and_place_come_back_after_a_side_answer(self):
+        f = flippy()
+        f.overlay.pinned, f.overlay.avoid = True, (1, 2, 3, 4)
+        self.follow_up(f)
+        f.overlay.pinned, f.overlay.avoid = False, None  # the side answer's
+        f.control("resume")
+        self.assertTrue(f.overlay.pinned)
+        self.assertEqual(f.overlay.avoid, (1, 2, 3, 4))
 
     def test_cancelling_a_drawing_goes_back_to_the_walkthrough(self):
         f = flippy()

@@ -65,6 +65,8 @@ def _rounded(rect):
 THOUGHT_CHARS = 240  # the acting card shows the end of what Claude last said, not all of it
 TRAIL_THOUGHTS = 6   # the result card's thinking section: this many of the latest things Claude said...
 TRAIL_CHARS = 600    # ...up to this much in all
+# the overlay's placement and pin, kept for a walkthrough set aside for a follow-up
+PLACEMENT = ("pinned", "learning", "keep", "spot", "avoid", "window", "detail")
 STEP_CHARS = 100     # the acting card's title: a long label or menu path is cut, its pointer note kept
 
 
@@ -326,6 +328,8 @@ class Flippy:
             self.play_id = 0
         self.play = None
         self.parked, self.parked_tutorial = pl, self.tutorial
+        ov = self.overlay  # where its card was docked and whether it was pinned: back with it after a side answer
+        pl.placement = {key: getattr(ov, key, None) for key in PLACEMENT}
         event("follow_up", step=pl.step)
         self._cancel_fade()
         self._show_parked()
@@ -351,8 +355,10 @@ class Flippy:
         self.box.hide()
         self._stop_playback()
         self._cancel_fade()
-        self.marked = False  # a mark drawn for the follow-up, and the side answer's card, go with it
-        self.overlay.clear()
+        self.marked = False  # a mark drawn for the follow-up goes with it
+        self.overlay.strokes = []
+        for key, value in getattr(pl, "placement", {}).items():
+            setattr(self.overlay, key, value)
         self.tutorial = self.parked_tutorial
         self.play = pl
         pl.resume(time.monotonic())
