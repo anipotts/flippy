@@ -1027,8 +1027,8 @@ class Flippy:
         if not hasattr(pl, "hint"):  # (worked out once: on COSMIC it reads the shortcuts file)
             key_label = getattr(self.ui, "key_label", None)
             label = key_label and key_label("ask")
-            pl.hint = f"Follow up with {plain_keys(label)}" if label else None
-        return {"actions": ((None, pl.hint),)} if pl.hint else {}
+            pl.hint = (None, "Follow up", tuple(themes.split_keys(label))) if label else None
+        return {"actions": (pl.hint,)} if pl.hint else {}
 
     def _resume_action(self):
         """A side answer's way back to the walkthrough it's about (as show_text fields), or {}."""

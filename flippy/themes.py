@@ -49,7 +49,8 @@ class Card:
     speed: float = 1.0            # playback speed (shown on player skins)
     controls: bool = False        # a real answer: show playback controls on themes that hide them otherwise
     pinned: bool = False          # kept on screen until dismissed (the pushpin)
-    actions: tuple = ()           # ((control name or None, label), ...): links above the controls; None: a hint (#26)
+    actions: tuple = ()           # ((control name or None, label[, keys]), ...): links above the controls; None: a
+                                  # hint, its keys drawn as keycaps after it (#26)
 
 
 SPEED_MIN, SPEED_MAX = 0.5, 2.0
@@ -184,13 +185,40 @@ def thought_block(cr, card, x, y, w, opts, open_, accent, text_rgba):
 # ---- the action row: a walkthrough's "Follow up", a side answer's way back to it (#26), above the card's controls
 # in every theme (Theme.draw_actions)
 
+MODIFIERS = "⌃⌥⇧⌘"
+
+
+def split_keys(label):
+    """"⇧⌘Space" -> ["⇧", "⌘", "Space"], "Super+Shift+Space" -> ["Super", "Shift", "Space"]: one keycap each."""
+    if "+" in label.strip("+"):
+        return [k for k in label.split("+") if k]
+    mods = [ch for ch in label if ch in MODIFIERS]
+    rest = "".join(ch for ch in label if ch not in MODIFIERS).strip()
+    return mods + ([rest] if rest else [])
+
+
 def _action_layouts(cr, card, opts):
+    """[(name, label layout, [keycap layouts])]."""
     px = max(10, opts["text_size"] - 3)
-    return [(name, layout(cr, label, THOUGHT_FONT, px)) for name, label in card.actions]
+    rows = []
+    for name, label, *keys in card.actions:
+        caps = [layout(cr, k, THOUGHT_FONT, px + 2) if k in MODIFIERS else layout(cr, k, THOUGHT_FONT, px - 1, bold=True)
+                for k in (keys[0] if keys else ())]  # (the symbols run small: a size up)
+        rows.append((name, layout(cr, label, THOUGHT_FONT, px, italic=name is None), caps))
+    return rows
+
+
+def _cap_size(cap, h):
+    return max(lsize(cap)[0] + 8, h), h
+
+
+def _action_width(lay, caps, h):
+    return lsize(lay)[0] + sum(_cap_size(c, h)[0] + 3 for c in caps) + (5 if caps else 0)
 
 
 def action_row_height(card, opts):
-    return max((lsize(lay)[1] for _, lay in _action_layouts(_measure_ctx, card, opts)), default=0)
+    rows = _action_layouts(_measure_ctx, card, opts)
+    return max((lsize(lay)[1] + (4 if caps else 0) for _, lay, caps in rows), default=0)
 
 
 def glyph(cr, name, cx, cy, s, rgba):
@@ -588,8 +616,8 @@ class Theme:
         return self.ACTION_GAP + action_row_height(card, opts) if card.actions else 0
 
     def actions_width(self, card, opts):
-        lays = _action_layouts(_measure_ctx, card, opts)
-        return sum(lsize(lay)[0] for _, lay in lays) + 18 * (len(lays) - 1)
+        rows, h = _action_layouts(_measure_ctx, card, opts), action_row_height(card, opts)
+        return sum(_action_width(lay, caps, h) for _, lay, caps in rows) + 18 * (len(rows) - 1)
 
     def controls_height(self, card, opts):
         """How much of the card's bottom its controls take (the action row goes just above them)."""
@@ -599,15 +627,28 @@ class Theme:
         """The action row: quiet text links, right-aligned just above the controls, brighter while pressed (a hint,
         named None, in the text's color and not clickable). Returns {control name: rect}."""
         inset, a = self.thought_inset, opts["card_opacity"]
-        lays = _action_layouts(cr, card, opts)
+        rows = _action_layouts(cr, card, opts)
         rh = action_row_height(card, opts)
         top = y + h - self.controls_height(card, opts) - rh - 6
         hits, bx = {}, x + w - inset
-        for name, lay in reversed(lays):
+        for name, lay, caps in reversed(rows):
             lw, lh = lsize(lay)
-            bx -= lw
+            bx -= _action_width(lay, caps, rh)
             if name is None:
-                show(cr, lay, bx, top + (rh - lh) / 2, (*self.thought_text[:3], 0.5 * a))
+                ink = (*self.thought_text[:3], 0.55 * a)
+                show(cr, lay, bx, top + (rh - lh) / 2, ink)
+                kx = bx + lw + 5
+                for cap in caps:  # each key a little keycap: a faint rounded outline, the key's symbol in it
+                    cw, ch = _cap_size(cap, rh)
+                    round_rect(cr, kx + 0.5, top + 0.5, cw - 1, ch - 1, 4)
+                    cr.set_source_rgba(*self.thought_text[:3], 0.08 * a)
+                    cr.fill_preserve()
+                    cr.set_source_rgba(*self.thought_text[:3], 0.3 * a)
+                    cr.set_line_width(1)
+                    cr.stroke()
+                    kw, kh = lsize(cap)
+                    show(cr, cap, kx + (cw - kw) / 2, top + (ch - kh) / 2, (*self.thought_text[:3], 0.75 * a))
+                    kx += cw + 3
             else:
                 lit = 1.0 if opts.get("pressed") == name else 0.7
                 show(cr, lay, bx, top + (rh - lh) / 2, (*(self.thought_label or self.accent), lit * a))

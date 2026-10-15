@@ -98,6 +98,14 @@ class Queue:
                 self.calls.append(fn)
 
 
+class Keycaps(unittest.TestCase):
+    def test_a_hotkey_splits_into_keys(self):
+        from flippy.themes import split_keys
+        self.assertEqual(split_keys("⇧⌘Space"), ["⇧", "⌘", "Space"])
+        self.assertEqual(split_keys("⌃⌥A"), ["⌃", "⌥", "A"])
+        self.assertEqual(split_keys("Super+Shift+Space"), ["Super", "Shift", "Space"])
+
+
 class FollowUp(unittest.TestCase):
     def setUp(self):
         self.queue = Queue()
@@ -239,7 +247,7 @@ class FollowUp(unittest.TestCase):
         f.ui.key_label = lambda name: "⇧⌘Space"
         f.play.tick(0.1, f._play_options(), f._play_coords)
         f._render_step(f.play, 0.2)
-        self.assertEqual(f.overlay.show_text.call_args.kwargs["actions"], ((None, "Follow up with Shift Cmd Space"),))
+        self.assertEqual(f.overlay.show_text.call_args.kwargs["actions"], ((None, "Follow up", ("⇧", "⌘", "Space")),))
 
 
 if __name__ == "__main__":
