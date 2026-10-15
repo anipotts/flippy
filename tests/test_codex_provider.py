@@ -282,6 +282,19 @@ class TestCodexProvider(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(self.rpc.closed)
                 self.assertIsNone(self.provider._thread)
 
+    async def test_what_codex_says_between_steps_reaches_the_acting_card(self):
+        self.allow_fixture_turns()
+        tools = self.desktop()
+        thoughts = []
+        tools.on_thought = thoughts.append
+        self.rpc.turn_events = lambda thread, turn: [
+            {"method": "item/completed", "params": {"threadId": thread, "turnId": turn, "item": {
+                "type": "agentMessage", "id": "note", "text": "Opening the menu first.", "phase": "commentary"}}},
+            *self.rpc.reply(thread, turn),
+        ]
+        await self.provider.act("task", tools)
+        self.assertEqual(thoughts, ["Opening the menu first."])  # the final answer isn't a thought
+
     async def test_action_catalog_and_responses_use_the_shared_runtime_limits(self):
         self.allow_fixture_turns()
         tools = self.desktop()

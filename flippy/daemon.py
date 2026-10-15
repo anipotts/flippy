@@ -61,6 +61,19 @@ def _rounded(rect):
     return tuple(round(v) for v in rect) if rect else None
 
 
+
+THOUGHT_CHARS = 240  # the acting card shows the end of what Claude last said, not all of it
+TRAIL_THOUGHTS = 6   # the result card's thinking section: this many of the latest things Claude said...
+TRAIL_CHARS = 600    # ...up to this much in all
+STEP_CHARS = 100     # the acting card's title: a long label or menu path is cut, its pointer note kept
+
+
+def _last_words(text):
+    """The last paragraph of text, cut to THOUGHT_CHARS from its end."""
+    text = text.strip().split("\n\n")[-1].strip()
+    return text if len(text) <= THOUGHT_CHARS else "…" + text[-(THOUGHT_CHARS - 1):].lstrip()
+
+
 class Flippy:
     def __init__(self, ui):
         self.instance = Instance(PROFILE).acquire()
@@ -216,7 +229,7 @@ class Flippy:
         elif cmd.startswith("control "):  # same as clicking a player button: control <name> [0-1 for seek/speed]
             parts = cmd.split()
             self.control(parts[1], float(parts[2]) if len(parts) > 2 else 0.0)
-        elif cmd.startswith("set "):  # set <section.key> <value>, e.g. `flippy-ask set look.theme y2k`
+        elif cmd.startswith("set "):  # set <section.key> <value>, e.g. `flippy-ask set look.theme glass`
             return self.set_command(cmd[4:])
         elif cmd == "update":  # check for a new release now (offers it, or says you're up to date)
             self.check_for_update(force=True)
@@ -462,9 +475,21 @@ class Flippy:
             future.cancel()
             self._unlink(path)
 
-    def _acting(self, req, operation=None):
-        if self._owns(req):
-            self.overlay.show_text(f"Flippy is acting{': ' + operation if operation else ''} · {self._stop_hint()} to stop")
+    def _acting(self, req, step=None, reason=None, thought=None):
+        """The acting card (#21): the step in words, Claude's reason for it and how to stop; under it, what Claude
+        last said between steps, in its thinking section. Each call changes what it's given and keeps the rest."""
+        if not self._owns(req):
+            return
+        status = self.act_status
+        if step:
+            status["step"], status["reason"] = step[:1].upper() + step[1:], reason
+        if thought:
+            status["thought"] = _last_words(thought)
+            if status["thought"] not in status["trail"][-1:]:
+                status["trail"].append(status["thought"])
+        hint = f"{self._stop_hint()} to stop"
+        self.overlay.show_text(f"{status['reason']}\n{hint}" if status["reason"] else f"Flippy is acting · {hint}",
+                               header=status["step"], thought=status["thought"], task=True)
 
     def _stop_hint(self):
         """How to stop a desktop task, in words: the answer card's fonts have no ⌘ ⇧ ⌥ ⌃ glyphs."""
@@ -503,7 +528,9 @@ class Flippy:
                              catalog=getattr(self.ui, "act_catalog", BACKGROUND_CATALOG),
                              prompt=getattr(self.ui, "act_prompt", BACKGROUND_PROMPT) + act_memory.brief())
         tools.max_turns = limits.max_turns
+        tools.on_thought = lambda text: loop.idle_add(lambda: self._acting(req, thought=text) and False)
         self.action_tools = tools
+        self.act_status = {"step": None, "reason": None, "thought": None, "trail": []}
         async def run():
             try:
                 return await self.brain.act(question, tools)
@@ -531,11 +558,17 @@ class Flippy:
         # which tool each step used (names only, never the task's text), so a task that gives up shows where
         log("act: step " + name + (f" {args.get('action')}" if name in ("app_action", "media") else "")
             + (" (real pointer)" if args.get("real_pointer") else ""))
-        what = "needs the pointer for a moment, waiting for you to pause" if args.get("real_pointer") else \
-            name.replace("_", " ")
-        if hasattr(self.ui, "act_borrow_note"):  # COSMIC: keys and clicks by position can need the window for a moment
-            what = self.ui.act_borrow_note(name, args) or what
-        await self._action_main(lambda: self._acting(req, what), req)
+        step = shot.describe(name, args).split("\n")[0] if hasattr(shot, "describe") else name.replace("_", " ")
+        for marked in (" at the marked spot", " the marked spot", " along the marked line"):
+            step = step.replace(marked, "")  # the approval card's mark; the acting card has none
+        note = ""
+        if args.get("real_pointer") and name != "click":  # (a click already says "with your pointer, when you pause")
+            note = " (needs the pointer for a moment, waiting for you to pause)"
+        elif hasattr(self.ui, "act_borrow_note") and (borrow := self.ui.act_borrow_note(name, args)):
+            note = f" ({borrow})"  # COSMIC: keys and clicks by position can need the window for a moment
+        room = max(STEP_CHARS - len(note), 40)
+        step = (step if len(step) <= room else step[:room - 1].rstrip() + "…") + note
+        await self._action_main(lambda: self._acting(req, step, args.get("reason")), req)
         if name == "use_app":
             self.action_app = await asyncio.to_thread(self.ui.app_open, args["name"], cancel)
             return
@@ -672,12 +705,21 @@ class Flippy:
                                      .removeprefix("Task stopped: ").replace(" Check the screen before continuing.", ""))
             else:
                 message = errors.say(code)
-            self._fail("Desktop task stopped. " + message)
+            self._fail("Desktop task stopped. " + message, thought=self._act_trail(), task=True)
             if error:
                 self._open_setup_if(setup_gate.login_error, error)
         else:
-            self.overlay.show_text(result)
+            self.overlay.show_text(result, thought=self._act_trail(result), task=True)
             self._schedule_fade(settings.get("timing", "max_show_seconds"))
+
+    def _act_trail(self, result=""):
+        """What Claude said while the task ran, for the result card's thinking section: the last TRAIL_THOUGHTS, one
+        paragraph each, without the final reply itself (Claude's last message is also the result)."""
+        trail = (getattr(self, "act_status", None) or {}).get("trail", [])
+        trail = [text for text in trail if text != _last_words(result or "")][-TRAIL_THOUGHTS:]
+        while len("\n\n".join(trail)) > TRAIL_CHARS and len(trail) > 1:  # the latest ones
+            trail.pop(0)
+        return "\n\n".join(trail) or None
 
     async def _ask(self, question, req, keep_marks=False, focus=None):
         frame = await self._capture_frame(req, keep_marks=keep_marks)
@@ -878,6 +920,13 @@ class Flippy:
         if name == "pin":
             self.toggle_pin()
             return
+        if name == "thought":  # the thinking section opens and folds
+            ov = self.overlay
+            ov.thought_open = not ov.thought_open
+            if not self.busy and ov.card and not ov.pinned:  # a finished task's card: time to read it
+                self._schedule_fade(settings.get("timing", "max_show_seconds"))
+            ov.queue_draw()
+            return
         if name == "speed":
             settings.set("timing", "speed", themes.frac_to_speed(frac))
             return
@@ -923,12 +972,12 @@ class Flippy:
             self.overlay.card.speed = settings.get("timing", "speed")
         self.overlay.queue_draw()
 
-    def _fail(self, msg):
+    def _fail(self, msg, **card_fields):
         self.busy = False
         self._stop_playback()
         log("error:", msg)
         self.overlay.clear()
-        self.overlay.show_text(msg, error=True)
+        self.overlay.show_text(msg, error=True, **card_fields)
         self._schedule_fade(settings.get("timing", "show_seconds"))
 
     def reset_session(self):
@@ -1440,7 +1489,6 @@ def wants_tutorial(question):
 
 def main():
     diagnostics.record_content = "--demo-record-content" in sys.argv
-    themes.load_fonts()  # bundled pixel font for the Y2K theme, process-local
     if sys.platform == "darwin":
         from .mac import ui
     else:

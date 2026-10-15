@@ -348,7 +348,7 @@ class SettingsWindow:
               self._setting_slider(f, "timing", "max_show_seconds"))
         f.group("Walkthroughs")
         f.row("Step pace", "How long each pointed step stays", self._setting_popup(f, "timing", "step_pace", PACES))
-        f.row("Playback speed", "Also on the Media Player/Y2K players' slider",
+        f.row("Playback speed", "Also on the Media Player's slider",
               self._setting_slider(f, "timing", "speed"))
         f.row("Glide time", "Seconds for the pointer to travel between steps",
               self._setting_slider(f, "timing", "glide_seconds"))

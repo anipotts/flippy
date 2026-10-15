@@ -12,7 +12,7 @@ from mcp.shared.memory import create_client_server_memory_streams
 from flippy.actions import DesktopTools, MAX_ACTIONS, TOOL_CATALOG, approval_text
 from flippy.frames import ScreenFrame as Screenshot
 from flippy.brain import Brain, BrainError
-from claude_agent_sdk import ResultMessage
+from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 
 class FakeDesktop:
@@ -219,7 +219,7 @@ class TestApproval(unittest.TestCase):
 
 
 class TestActionSession(unittest.IsolatedAsyncioTestCase):
-    async def run_session(self, tools, *, error=False):
+    async def run_session(self, tools, *, error=False, said=()):
         options = []
 
         class Client:
@@ -237,6 +237,8 @@ class TestActionSession(unittest.IsolatedAsyncioTestCase):
                 self.question = question
 
             async def receive_response(self):
+                for text in said:
+                    yield AssistantMessage(content=[TextBlock(text)], model="fixture")
                 yield ResultMessage(subtype="error_max_turns" if error else "success",
                                     duration_ms=1, duration_api_ms=1, is_error=error,
                                     num_turns=1, session_id="fixture", result="done")
@@ -246,6 +248,13 @@ class TestActionSession(unittest.IsolatedAsyncioTestCase):
         with patch("flippy.brain.ClaudeSDKClient", Client):
             result = await brain.act("do the task", tools)
         return brain, options[0], result
+
+    async def test_what_claude_says_between_steps_reaches_the_acting_card(self):
+        tools = FakeDesktop().tools()
+        thoughts = []
+        tools.on_thought = thoughts.append
+        await self.run_session(tools, said=("Spotify is open; looking for search.", "  "))
+        self.assertEqual(thoughts, ["Spotify is open; looking for search."])  # blank text isn't a thought
 
     async def test_action_options_preserve_model_and_keep_tutor_tool_free(self):
         brain, options, result = await self.run_session(FakeDesktop().tools())

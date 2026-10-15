@@ -192,6 +192,7 @@ class DesktopTools:
         self.journal = []    # (app, step, done) per acting step, for act_memory: tool names only
         self.notes = {}      # app -> how-to the task left with remember
         self.app_names = {}  # app -> its name, filled in by whoever looks
+        self.on_thought = None  # (text): what Claude says between steps, for the acting card (#21)
 
     def stop(self):
         self.cancel.set()  # also checked by the native typing worker between characters
@@ -503,6 +504,7 @@ with real_pointer true (background clicks are ignored); verify with spotify.now_
 way below worked as written.
 Finish by checking the latest look shows the result (the song you picked is the one playing, the text is there).
 Do not claim success unless it does. Keep your final reply short and plain text.
+Before each step, say in a few plain words what you're doing and why; it shows on the user's screen as you work.
 No POINT tags or tutorial steps.
 """
 

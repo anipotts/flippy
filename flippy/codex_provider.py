@@ -574,6 +574,8 @@ class CodexProvider:
                         messages[item["id"]] = item["text"]
                         if item.get("phase") == "final_answer":
                             final_items.append(item["id"])
+                        elif desktop is not None and getattr(desktop, "on_thought", None) and item.get("text"):
+                            desktop.on_thought(item["text"])  # what Codex says between steps of a task
                     elif method == "turn/completed" and params.get("turn", {}).get("id") == turn_id:
                         if params["turn"].get("status") != "completed":
                             raise CodexError("Codex did not finish this request. Try starting a new chat.", "CODEX-INCOMPLETE")

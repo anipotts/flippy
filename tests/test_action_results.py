@@ -30,7 +30,7 @@ def controller(tools):
     f.action_future=object()
     f.ui=SimpleNamespace(action_card=SimpleNamespace(hide=Mock()))
     f.overlay=SimpleNamespace(show_text=Mock())
-    f._fail=Mock(); f._schedule_fade=Mock(); f._open_setup_if=Mock()
+    f._fail=Mock(); f._schedule_fade=Mock(); f._open_setup_if=Mock(); f._act_trail=Mock(return_value=None)
     f.busy=False; f.input_disabled=False
     return f,event
 
@@ -95,7 +95,7 @@ class TestActionResults(unittest.TestCase):
         f._action_done(tools,SimpleNamespace(identity=18),'private answer',None)
         receipt=json.loads(f.command('doctor'))['last_action']
         self.assertEqual(receipt,{'request_id':18,'completed_inputs':2,'stopped':False,'cleanup_failed':False,'reason_code':'none'})
-        f.overlay.show_text.assert_called_once_with('private answer')
+        f.overlay.show_text.assert_called_once_with('private answer', thought=None, task=True)
         self.assertNotIn('private answer',json.dumps(receipt))
         self.assertNotIn('private answer',str(event.call_args))
 

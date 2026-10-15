@@ -364,10 +364,6 @@ def box_style(theme):
         st.update(bg=_hex("030805"), border=_rgba(*green, 0.6), radius=0, fg=_rgba(*green), font=("Menlo", 16),
                   field_bg=_hex("000000"), field_border=_rgba(*green, 0.35), hint=_rgba(*green, 0.55),
                   hint_font=("Menlo", 12))
-    elif theme.key == "y2k":
-        st.update(bg=_hex("33363f"), border=_hex("9ca1b3"), border_w=2, radius=2, fg=_hex("00ff6a"),
-                  font=(themes.PIXEL_FONT, 24), field_bg=_hex("000000"), field_border=_hex("0c0d12"),
-                  hint=_hex("7dffa9"), hint_font=(themes.PIXEL_FONT, 16))
     elif theme.key == "mediaplayer" and GLASS:  # Liquid Glass box; the field is a frostier, smokier pane
         st.update(glass=True, bg=None, border=_rgba(1, 1, 1, 0.35), radius=theme.LIQUID_R, fg=_hex("ffffff"),
                   field_bg=glass_tint("field"), field_border=_rgba(1, 1, 1, 0.3),

@@ -1,16 +1,16 @@
 """Themes: how the answer card, pointer, drawing pen and question box look.
 
-A theme paints the card itself with cairo/Pango (so skins like the Y2K player can
-do bevels, LCDs and visualizers), picks a default pointer and pen color, and
+A theme paints the card itself with cairo/Pango (so skins like the media player can
+do gloss, orbs and seek lines), picks a default pointer and pen color, and
 supplies CSS for the question box. Add a theme by subclassing Theme and adding
 it to THEMES.
 """
-import ctypes
 import math
 import os
 import re
 import sys
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import cairo
 
@@ -25,23 +25,7 @@ else:
 
 from . import pointers  # noqa: E402
 
-FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
-PIXEL_FONT = "VT323"
 PROMPT = "flippy@mac:~" if sys.platform == "darwin" else "flippy@cosmic:~"  # Terminal theme title bar
-
-
-def load_fonts():
-    """Register bundled fonts for this process only (nothing installed system-wide)."""
-    if sys.platform == "darwin":
-        mactext.load_fonts(FONT_DIR)
-        return
-    try:
-        fc = ctypes.CDLL("libfontconfig.so.1")
-        for f in os.listdir(FONT_DIR):
-            if f.endswith((".ttf", ".otf")):
-                fc.FcConfigAppFontAddFile(None, os.path.join(FONT_DIR, f).encode())
-    except OSError:
-        pass
 
 
 # ---------------------------------------------------------------- card state
@@ -50,6 +34,8 @@ def load_fonts():
 class Card:
     text: str = ""
     header: str | None = None     # label of the thing being pointed at
+    thought: str | None = None    # what Claude said during a desktop task: its thinking section (draw_thought)
+    task: bool = False            # a desktop task's card (acting, its result): not a walkthrough, so no player controls
     error: bool = False
     phase: str = "playing"        # thinking | playing | done | info
     steps: list = field(default_factory=list)  # walkthrough labels so far
@@ -108,6 +94,94 @@ def pin_glyph(cr, cx, cy, s, rgba, pinned):
     cr.restore()
 
 
+# ---- the thinking section: what Claude said during a desktop task, open or folded (#21), at the bottom of the
+# task's card in every theme (Theme.draw_thought)
+
+THOUGHT_FONT = "Noto Sans"
+
+
+THOUGHT_LINES = 8   # open, the section shows at most this many lines: the latest of a long trail
+FOLDED_CHARS = 200  # folded, one line never shows more than this
+
+
+@lru_cache(maxsize=64)
+def _fit_lines(text, px, w):
+    """text in at most THOUGHT_LINES lines w wide: whole, or its end after "…". Worked out once per text and size."""
+    def height(s):
+        return lsize(layout(_measure_ctx, s, THOUGHT_FONT, px, width=w, italic=True))[1]
+    cap = height("x") * THOUGHT_LINES + 1
+    if height(text) <= cap:
+        return text
+    lo, hi = 1, len(text) - 1  # the earliest start whose end fits
+    while lo < hi:
+        mid = (lo + hi) // 2
+        lo, hi = (lo, mid) if height("…" + text[mid:].lstrip()) <= cap else (mid + 1, hi)
+    return "…" + text[lo:].lstrip()
+
+
+@lru_cache(maxsize=64)
+def _fit_line(text, px, room):
+    """The start of text that fits one line room wide, with "…" when it's cut. Worked out once per text and size
+    (macOS's own ellipsizing drops one character at a time, re-measuring the line each time)."""
+    def width(s):
+        return lsize(layout(_measure_ctx, s, THOUGHT_FONT, px, italic=True))[0]
+    if len(text) <= FOLDED_CHARS and width(text) <= room:
+        return text
+    text = text[:FOLDED_CHARS]
+    lo, hi = 0, len(text)  # the longest start that fits with its "…"
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        lo, hi = (mid, hi) if width(text[:mid].rstrip() + "…") <= room else (lo, mid - 1)
+    return text[:lo].rstrip() + "…"
+
+
+def _thought_layouts(cr, card, w, opts, open_):
+    """(the "THINKING" label, the thought: up to THOUGHT_LINES lines open, one line folded), in a block w wide."""
+    size = opts["text_size"]
+    head = layout(cr, "THINKING", THOUGHT_FONT, max(9, size - 5), bold=True)
+    px = max(10, size - 2)
+    if open_:
+        return head, layout(cr, _fit_lines(card.thought, px, int(w)), THOUGHT_FONT, px, width=w, italic=True)
+    room = int(max(w - 14 - lsize(head)[0] - 10, 20))
+    return head, layout(cr, _fit_line(" ".join(card.thought.split()), px, room), THOUGHT_FONT, px, italic=True)
+
+
+def _thought_rows(head, body, open_):
+    """(the label row's height, the whole block's)."""
+    row = max(lsize(head)[1], 12 if open_ else lsize(body)[1])
+    return row, row + (4 + lsize(body)[1] if open_ else 0)
+
+
+def thought_block_height(card, w, opts, open_):
+    """How tall thought_block is, w wide (0 without a thought)."""
+    if not card.thought:
+        return 0
+    return _thought_rows(*_thought_layouts(_measure_ctx, card, w, opts, open_), open_)[1]
+
+
+def thought_block(cr, card, x, y, w, opts, open_, accent, text_rgba):
+    """At (x, y), w wide: a fold arrow and a small "THINKING" label in accent, then the thought in italics (folded:
+    one line beside the label). Returns the label row's height: the part that opens and folds it."""
+    head, body = _thought_layouts(cr, card, w, opts, open_)
+    hw, hh = lsize(head)
+    row, _ = _thought_rows(head, body, open_)
+    ax, ay = x + 4, y + row / 2  # the fold arrow: down when open, right when folded
+    cr.move_to(*((ax - 4, ay - 2) if open_ else (ax - 2, ay - 4)))
+    cr.line_to(*((ax + 4, ay - 2) if open_ else (ax + 4, ay)))
+    cr.line_to(*((ax, ay + 3) if open_ else (ax - 2, ay + 4)))
+    cr.close_path()
+    cr.set_source_rgba(*accent)
+    cr.fill()
+    show(cr, head, x + 14, y + (row - hh) / 2, accent)
+    if open_:
+        show(cr, body, x, y + row + 4, text_rgba)
+    else:
+        show(cr, body, x + 14 + hw + 10, y + (row - lsize(body)[1]) / 2, (*text_rgba[:3], text_rgba[3] * 0.75))
+    return row
+
+
+
+
 def glyph(cr, name, cx, cy, s, rgba):
     """Media glyphs centered at (cx, cy), size s (~half-height)."""
     cr.set_source_rgba(*rgba)
@@ -148,14 +222,16 @@ def playing(card):
 _measure_ctx = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1))
 
 
-def layout(cr, text, family, px, width=None, bold=False):
+def layout(cr, text, family, px, width=None, bold=False, italic=False):
     if sys.platform == "darwin":
-        return mactext.Layout(cr, text, family, px, width, bold)
+        return mactext.Layout(cr, text, family, px, width, bold, italic)
     lay = PangoCairo.create_layout(cr)
     fd = Pango.FontDescription.from_string(family)
     fd.set_absolute_size(px * Pango.SCALE)
     if bold:
         fd.set_weight(Pango.Weight.BOLD)
+    if italic:
+        fd.set_style(Pango.Style.ITALIC)
     lay.set_font_description(fd)
     if width:
         lay.set_width(int(width * Pango.SCALE))
@@ -480,6 +556,38 @@ class Theme:
     def _w(self, card):
         return self.widths[0] if card.follow else self.widths[1]
 
+    # A desktop task's card (Card.task) has no player controls, and its thinking section sits at the bottom of the
+    # card: the theme's own size plus thought_space, thought_inset in from the card's sides and bottom.
+    thought_inset = 16
+    thought_label = None             # rgb of the section's label and fold arrow; None: the accent
+    thought_text = (1, 1, 1, 0.78)
+    THOUGHT_SEP = 19                 # between the card's text and the section, a hairline in the middle
+
+    def card_size(self, card, opts):
+        w, h = self.size(card, opts)
+        if card.task and card.thought:  # a theme that fits its card to the text ("Done.") still leaves room to read
+            w = max(w, self._w(card))
+        return w, h + self.thought_space(card, w, opts)
+
+    def thought_space(self, card, w, opts):
+        if not (card.task and card.thought):
+            return 0
+        open_ = opts.get("thought_open", True)
+        return self.THOUGHT_SEP + thought_block_height(card, w - 2 * self.thought_inset, opts, open_)
+
+    def draw_thought(self, cr, card, x, y, w, h, opts):
+        """The thinking section at the bottom of a task card, under a hairline. Returns its label row with the
+        hairline's space around it: the part that opens and folds it."""
+        open_, inset, a = opts.get("thought_open", True), self.thought_inset, opts["card_opacity"]
+        bw = w - 2 * inset
+        top = y + h - inset - thought_block_height(card, bw, opts, open_)
+        cr.rectangle(x + inset, top - self.THOUGHT_SEP / 2, bw, 1)
+        cr.set_source_rgba(*self.thought_text[:3], 0.18 * a)
+        cr.fill()
+        row = thought_block(cr, card, x + inset, top, bw, opts, open_, (*(self.thought_label or self.accent), 0.8 * a),
+                            (*self.thought_text[:3], self.thought_text[3] * a))
+        return x, top - self.THOUGHT_SEP / 2, w, row + self.THOUGHT_SEP
+
     def box_css(self):
         return ""
 
@@ -519,13 +627,17 @@ class Midnight(Theme):
     border = (0.35, 0.63, 1.0)
     fg = (0.95, 0.95, 0.95)
     head = (0.54, 0.72, 1.0)
+    thought_label = head
     err = (1.0, 0.54, 0.5)
     font = "Noto Sans"
     radius = 14
 
     def _layouts(self, cr, card, opts):
         body = layout(cr, card.text or " ", self.font, opts["text_size"], width=self._w(card))
-        head = layout(cr, card.header, self.font, opts["text_size"] - 2, bold=True) if card.header else None
+        head = None
+        if card.header:  # one line, at most as wide as the text can be: a long step ends in "…"
+            head = layout(cr, card.header, self.font, opts["text_size"] - 2, width=self._w(card), bold=True)
+            ellipsize_end(head)
         return body, head
 
     CTRL_H = 34
@@ -762,6 +874,7 @@ window.flippy-box .flippy-hint {{ color: {css(self.fg, 0.5)}; font-size: 12px; }
 
 class Terminal(Theme):
     key, name = "terminal", "Terminal"
+    thought_inset, thought_label, thought_text = 14, (0.25, 1.0, 0.45), (0.25, 1.0, 0.45, 0.7)
     pointer = "arrow"
     hand_fill = (0.0, 0.0, 0.0)
     hand_outline = (0.2, 1.0, 0.4)
@@ -778,7 +891,10 @@ class Terminal(Theme):
         px = opts["text_size"] - 1
         cursor = "█" if (card.typing or card.phase == "thinking") else ""
         body = layout(cr, (card.text or "") + cursor, self.font, px, width=self._w(card))
-        head = layout(cr, f"> {card.header}", self.font, px, bold=True) if card.header else None
+        head = None
+        if card.header:  # one line, at most as wide as the text can be: a long step ends in "…"
+            head = layout(cr, f"> {card.header}", self.font, px, width=self._w(card), bold=True)
+            ellipsize_end(head)
         bar = layout(cr, PROMPT, self.font, px - 3)
         return body, head, bar
 
@@ -807,8 +923,8 @@ class Terminal(Theme):
     def size(self, card, opts):
         body, head, bar = self._layouts(_measure_ctx, card, opts)
         bw, bh = lsize(body)
-        hh = lsize(head)[1] + 4 if head else 0
-        w, h = max(bw, 200) + 28, bh + hh + lsize(bar)[1] + 30
+        hw, hh = (lsize(head)[0], lsize(head)[1] + 4) if head else (0, 0)
+        w, h = max(bw, hw, 200) + 28, bh + hh + lsize(bar)[1] + 30
         if lean_controls(card, opts):
             toks = self._status_layout(_measure_ctx, card, opts, 0, 0)
             w = max(w, toks[-1][2] + toks[-1][3] + 28)
@@ -885,330 +1001,6 @@ window.flippy-box entry { background: #000; color: #40ff73; caret-color: #40ff73
 window.flippy-box .flippy-hint { color: rgba(64,255,115,0.55); font-size: 12px; font-family: "Fira Mono", monospace; }"""
 
 
-# ---- Y2K media player ------------------------------------------------------
-
-_SEG = {  # 7-segment: a b c d e f g
-    "0": "abcdef", "1": "bc", "2": "abged", "3": "abgcd", "4": "fgbc", "5": "afgcd",
-    "6": "afgedc", "7": "abc", "8": "abcdefg", "9": "abcfgd", "-": "g", " ": "",
-}
-
-
-def seven_seg(cr, text, x, y, dw, dh, rgb):
-    """Draw text as LCD 7-segment digits; returns width used."""
-    t = max(2.0, dw * 0.18)
-    segs = {
-        "a": (x + t, y, dw - 2 * t, t), "d": (x + t, y + dh - t, dw - 2 * t, t),
-        "g": (x + t, y + dh / 2 - t / 2, dw - 2 * t, t),
-        "f": (x, y + t, t, dh / 2 - t * 1.5), "b": (x + dw - t, y + t, t, dh / 2 - t * 1.5),
-        "e": (x, y + dh / 2 + t / 2, t, dh / 2 - t * 1.5), "c": (x + dw - t, y + dh / 2 + t / 2, t, dh / 2 - t * 1.5),
-    }
-    cx = 0
-    for ch in text:
-        if ch in ":/":
-            cr.set_source_rgba(*rgb, 1)
-            if ch == ":":
-                for yy in (y + dh * 0.3, y + dh * 0.65):
-                    cr.rectangle(x + cx + 1, yy, t, t)
-            else:
-                cr.move_to(x + cx + dw * 0.55, y)
-                cr.line_to(x + cx + t, y + dh)
-                cr.set_line_width(t * 0.8)
-                cr.stroke()
-            cr.fill()
-            cx += dw * 0.6
-            continue
-        for s in "abcdefg":  # unlit segments, faintly
-            sx, sy, sw, sh = segs[s]
-            cr.rectangle(sx + cx, sy, sw, sh)
-        cr.set_source_rgba(*rgb, 0.08)
-        cr.fill()
-        on = _SEG.get(ch, "")
-        for s in on:  # glow
-            sx, sy, sw, sh = segs[s]
-            cr.rectangle(sx + cx - 1.5, sy - 1.5, sw + 3, sh + 3)
-        cr.set_source_rgba(*rgb, 0.25)
-        cr.fill()
-        for s in on:
-            sx, sy, sw, sh = segs[s]
-            cr.rectangle(sx + cx, sy, sw, sh)
-        cr.set_source_rgba(*rgb, 1)
-        cr.fill()
-        cx += dw + 3
-    return cx
-
-
-def bevel(cr, x, y, w, h, light, dark, width=1):
-    cr.set_line_width(width)
-    cr.set_source_rgb(*light)
-    cr.move_to(x + 0.5, y + h - 0.5)
-    cr.line_to(x + 0.5, y + 0.5)
-    cr.line_to(x + w - 0.5, y + 0.5)
-    cr.stroke()
-    cr.set_source_rgb(*dark)
-    cr.move_to(x + w - 0.5, y + 0.5)
-    cr.line_to(x + w - 0.5, y + h - 0.5)
-    cr.line_to(x + 0.5, y + h - 0.5)
-    cr.stroke()
-
-
-class Y2K(Theme):
-    key, name = "y2k", "Y2K Player"
-    hand_fill = (0.72, 1.0, 0.69)
-    hand_outline = (0.02, 0.08, 0.02)
-    accent = (0.0, 1.0, 0.42)
-    tap = (0.0, 1.0, 0.42)
-    pen = (0.22, 1.0, 0.08)
-    placeholder = "ENTER QUERY..."
-    LCD = (0.0, 1.0, 0.42)
-    LIST = (0.0, 0.88, 0.44)
-    BODY = (0.66, 1.0, 0.75)
-    HL = (0.04, 0.23, 0.61)
-    METAL_HI = (0.61, 0.63, 0.70)
-    METAL_LO = (0.05, 0.05, 0.07)
-    TITLE_H, LCD_H, BTN_H, PAD = 20, 54, 30, 6
-    widths = (400, 460)
-    THINK_H = 34      # the LCD while thinking: a line of text and the visualizer
-    pin_rgba = (0.85, 0.87, 0.93, 1)
-
-    def pin_spot(self, card, x, y, w, h, opts):
-        return x + w - 40, y + 3 + self.TITLE_H / 2
-
-    def pin_rect(self, card, x, y, w, h, opts):
-        cx, cy = self.pin_spot(card, x, y, w, h, opts)
-        return cx - 8, cy - 8, 16, 16  # clear of the "_" button
-
-    def draw_pin(self, cr, card, x, y, w, h, opts):
-        cx, cy = self.pin_spot(card, x, y, w, h, opts)
-        rgba = self.LCD + (1,) if card.pinned or opts.get("pressed") == "pin" else self.pin_rgba
-        pin_glyph(cr, cx, cy, 6, rgba, card.pinned)
-
-    def hit_regions(self, card, x, y, w, h, opts=None):
-        P = self.PAD
-        window = {"close": (x + w - 17, y + 8, 10, 10), "min": (x + w - 29, y + 8, 10, 10)}
-        if card.phase == "thinking":  # only the window buttons: there's nothing to play yet
-            return window
-        by = y + h - self.BTN_H - P + 4
-        hits = {name: (x + P + i * 26, by, 23, 18) for i, name in enumerate(("prev", "play", "pause", "stop", "next"))}
-        sx = x + P + 5 * 26 + 8
-        hits["seek"] = (sx, by, x + w - P - sx, 18)
-        hits.update(window)
-        ly = y + 3 + self.TITLE_H + P
-        hits["speed_cycle"] = (x + w - P - 60, ly + 14, 56, 16)
-        return hits
-
-    def _playlist(self, cr, card, opts):
-        """Rows: (text, kind) where kind is past|current|body|future."""
-        px = opts["text_size"] + 4
-        w = self._w(card) - 2 * self.PAD - 16
-        rows = []
-        labels = card.steps or [card.header or ("ERROR" if card.error else "ANSWER")]
-        cur = min(card.step, len(labels) - 1)
-        first = max(0, cur - 3)
-        if first > 0:
-            rows.append((layout(cr, "  ...", PIXEL_FONT, px), "past"))
-        for i in range(first, cur + 1):
-            rows.append((layout(cr, f"{i + 1}. {labels[i].upper()}", PIXEL_FONT, px, width=w), "past" if i < cur else "current"))
-        rows.append((layout(cr, card.text or " ", PIXEL_FONT, px - 1, width=w - 10), "body"))
-        return rows
-
-    def size(self, card, opts):
-        if card.phase == "thinking":
-            return self._w(card), 3 + self.TITLE_H + self.PAD + self.THINK_H + self.PAD + 3
-        rows = self._playlist(_measure_ctx, card, opts)
-        list_h = sum(lsize(r)[1] + (6 if k == "body" else 1) for r, k in rows) + 12
-        return self._w(card), self.TITLE_H + self.LCD_H + list_h + self.BTN_H + self.PAD * 4
-
-    def draw(self, cr, x, y, w, h, card, t, opts):
-        P = self.PAD
-        a = opts["card_opacity"]
-        # body: brushed dark metal
-        g = cairo.LinearGradient(0, y, 0, y + h)
-        g.add_color_stop_rgba(0, 0.20, 0.21, 0.27, a)
-        g.add_color_stop_rgba(1, 0.11, 0.12, 0.16, a)
-        cr.rectangle(x, y, w, h)
-        cr.set_source(g)
-        cr.fill()
-        bevel(cr, x, y, w, h, self.METAL_HI, self.METAL_LO, 2)
-        # title bar with grip lines
-        tx, ty, tw = x + 3, y + 3, w - 6
-        g = cairo.LinearGradient(0, ty, 0, ty + self.TITLE_H)
-        g.add_color_stop_rgb(0, 0.27, 0.29, 0.36)
-        g.add_color_stop_rgb(1, 0.13, 0.14, 0.19)
-        cr.rectangle(tx, ty, tw, self.TITLE_H)
-        cr.set_source(g)
-        cr.fill()
-        title = layout(cr, "FLIPPY", PIXEL_FONT, 17)
-        tl_w, tl_h = lsize(title)
-        mid = tx + tw / 2
-        for gx0, gx1 in ((tx + 22, mid - tl_w / 2 - 8), (mid + tl_w / 2 + 8, tx + tw - (50 if pin_shown(card) else 34))):
-            for k in range(4):
-                yy = ty + 5 + k * 3
-                cr.set_source_rgb(0.42, 0.44, 0.52)
-                cr.rectangle(gx0, yy, max(gx1 - gx0, 0), 1)
-                cr.fill()
-        show(cr, title, mid - tl_w / 2, ty + (self.TITLE_H - tl_h) / 2, (0.85, 0.87, 0.93, 1))
-        menu = layout(cr, "≡", PIXEL_FONT, 16)
-        show(cr, menu, tx + 6, ty + 1, (0.75, 0.78, 0.86, 1))
-        for i, glyph in enumerate(("_", "x")):  # fake window buttons
-            bx = tx + tw - 26 + i * 12
-            cr.rectangle(bx, ty + 5, 10, 10)
-            cr.set_source_rgb(0.55, 0.57, 0.64)
-            cr.fill()
-            bevel(cr, bx, ty + 5, 10, 10, (0.85, 0.86, 0.9), (0.15, 0.15, 0.2))
-            gl = layout(cr, glyph, PIXEL_FONT, 12)
-            show(cr, gl, bx + 2, ty + 3, (0.05, 0.05, 0.08, 1))
-        # LCD
-        lx, ly, lw = x + P, ty + self.TITLE_H + P, w - 2 * P
-        if card.phase == "thinking":
-            self._thinking_lcd(cr, lx, ly, lw, card, t)
-            return
-        cr.rectangle(lx, ly, lw, self.LCD_H)
-        cr.set_source_rgb(0, 0, 0)
-        cr.fill()
-        bevel(cr, lx, ly, lw, self.LCD_H, self.METAL_LO, self.METAL_HI)
-        n = max(len(card.steps), 1)
-        digits = f"{min(card.step + 1, 99):02d}/{min(n, 99):02d}"
-        play = self.LCD if not card.error else (1, 0.3, 0.25)
-        cr.move_to(lx + 8, ly + 9)
-        cr.line_to(lx + 8, ly + 21)
-        cr.line_to(lx + 16, ly + 15)
-        cr.close_path()
-        cr.set_source_rgb(*play)
-        cr.fill()
-        dw = seven_seg(cr, digits, lx + 22, ly + 6, 10, 20, play)
-        self._visualizer(cr, lx + 30 + dw, ly + 6, 22, card.typing, t)
-        meta = layout(cr, card.meta or "CLAUDE", PIXEL_FONT, 15)
-        mw = lsize(meta)[0]
-        show(cr, meta, lx + lw - mw - 8, ly + 4, (*self.LCD, 0.9))
-        stereo = layout(cr, f"SPEED {card.speed:g}X", PIXEL_FONT, 13)
-        show(cr, stereo, lx + lw - lsize(stereo)[0] - 8, ly + 18, (*self.LCD, 0.45))
-        # marquee
-        label = card.header or "FLIPPY - ANSWER"
-        mq = layout(cr, f"♪ {card.step + 1}. {label.upper()}   ***   ", PIXEL_FONT, 17)
-        mqw, mqh = lsize(mq)
-        cr.save()
-        cr.rectangle(lx + 6, ly + 31, lw - 12, mqh)
-        cr.clip()
-        off = (t * 40) % mqw if mqw > lw - 12 else 0
-        for k in (0, 1) if mqw > lw - 12 else (0,):
-            show(cr, mq, lx + 8 - off + k * mqw, ly + 31, (*self.LCD, 1))
-        cr.restore()
-        # playlist
-        rows = self._playlist(cr, card, opts)
-        px_, py_ = x + P, ly + self.LCD_H + P
-        list_h = h - (py_ - y) - self.BTN_H - P * 2
-        cr.rectangle(px_, py_, lw, list_h)
-        cr.set_source_rgb(0, 0, 0)
-        cr.fill()
-        bevel(cr, px_, py_, lw, list_h, self.METAL_LO, self.METAL_HI)
-        ry = py_ + 6
-        for lay, kind in rows:
-            rw, rh = lsize(lay)
-            if kind == "current":
-                cr.rectangle(px_ + 3, ry - 1, lw - 6, rh + 2)
-                cr.set_source_rgb(*((0.45, 0.06, 0.05) if card.error else self.HL))
-                cr.fill()
-                show(cr, lay, px_ + 8, ry, (1, 1, 1, 1))
-            elif kind == "past":
-                show(cr, lay, px_ + 8, ry, (*self.LIST, 0.55))
-            else:
-                show(cr, lay, px_ + 18, ry + 2, (1.0, 0.55, 0.5, 1) if card.error else (*self.BODY, 1))
-                ry += 5
-            ry += rh + 1
-        # transport buttons + seek bar
-        by = y + h - self.BTN_H - P + 4
-        glyphs = ["prev", "play", "pause", "stop", "next"]
-        pressed = opts.get("pressed")
-        for i, gname in enumerate(glyphs):
-            bx = x + P + i * 26
-            g = cairo.LinearGradient(0, by, 0, by + 18)
-            down = pressed == gname or (gname == "pause" and card.paused) or (gname == "play" and playing(card))
-            g.add_color_stop_rgb(0, *((0.52, 0.54, 0.62) if down else (0.80, 0.82, 0.88)))
-            g.add_color_stop_rgb(1, *((0.74, 0.76, 0.82) if down else (0.52, 0.54, 0.62)))
-            cr.rectangle(bx, by, 23, 18)
-            cr.set_source(g)
-            cr.fill()
-            bevel(cr, bx, by, 23, 18, (0.95, 0.96, 1.0), (0.12, 0.12, 0.16))
-            cr.set_source_rgb(0.06, 0.06, 0.09)
-            cx_, cy_ = bx + 11.5, by + 9
-            if gname == "play":
-                cr.move_to(cx_ - 3, cy_ - 4)
-                cr.line_to(cx_ - 3, cy_ + 4)
-                cr.line_to(cx_ + 4, cy_)
-                cr.close_path()
-            elif gname == "pause":
-                cr.rectangle(cx_ - 4, cy_ - 4, 3, 8)
-                cr.rectangle(cx_ + 1, cy_ - 4, 3, 8)
-            elif gname == "stop":
-                cr.rectangle(cx_ - 4, cy_ - 4, 8, 8)
-            else:
-                d = -1 if gname == "prev" else 1
-                cr.rectangle(cx_ + d * 4 - (2 if d > 0 else 0), cy_ - 4, 2, 8)
-                cr.move_to(cx_ - d * 3, cy_ - 4)
-                cr.line_to(cx_ - d * 3, cy_ + 4)
-                cr.line_to(cx_ + d * 2, cy_)
-                cr.close_path()
-            cr.fill()
-        sx = x + P + len(glyphs) * 26 + 8
-        sw = x + w - P - sx
-        cr.rectangle(sx, by + 6, sw, 6)
-        cr.set_source_rgb(0.03, 0.03, 0.05)
-        cr.fill()
-        bevel(cr, sx, by + 6, sw, 6, self.METAL_LO, self.METAL_HI)
-        prog = max(0.0, min(card.progress, 1.0))
-        cr.rectangle(sx + 1, by + 7, (sw - 2) * prog, 4)
-        cr.set_source_rgb(*self.LCD)
-        cr.fill()
-        thx = sx + (sw - 14) * prog
-        g = cairo.LinearGradient(0, by + 2, 0, by + 16)
-        g.add_color_stop_rgb(0, 0.85, 0.87, 0.92)
-        g.add_color_stop_rgb(1, 0.5, 0.52, 0.6)
-        cr.rectangle(thx, by + 2, 14, 14)
-        cr.set_source(g)
-        cr.fill()
-        bevel(cr, thx, by + 2, 14, 14, (0.97, 0.97, 1.0), (0.1, 0.1, 0.14))
-
-    @staticmethod
-    def _visualizer(cr, vx, vy, vh, active, t):
-        """The spectrum bars: busy while text comes in (or Flippy thinks), idling otherwise."""
-        for i in range(14):
-            amp = 0.85 if active else 0.25
-            v = 0.5 + 0.5 * math.sin(t * (5.0 + i * 0.7) + i * 1.3) * math.sin(t * 2.3 + i)
-            hgt = max(1, int(amp * v * (vh / 2)))
-            for b in range(hgt):
-                k = b / (vh / 2)
-                col = (0.0, 1.0, 0.3) if k < 0.5 else ((0.9, 1.0, 0.0) if k < 0.8 else (1.0, 0.25, 0.1))
-                cr.set_source_rgb(*col)
-                cr.rectangle(vx + i * 6, vy + vh - b * 2 - 2, 4, 1.5)
-                cr.fill()
-
-    def _thinking_lcd(self, cr, lx, ly, lw, card, t):
-        """While Flippy thinks: a short LCD with the card's text (thinking…) and the visualizer going."""
-        h = self.THINK_H
-        cr.rectangle(lx, ly, lw, h)
-        cr.set_source_rgb(0, 0, 0)
-        cr.fill()
-        bevel(cr, lx, ly, lw, h, self.METAL_LO, self.METAL_HI)
-        text = layout(cr, (card.text or "thinking…").upper(), PIXEL_FONT, 20)
-        tw_, th_ = lsize(text)
-        show(cr, text, lx + 10, ly + (h - th_) / 2, (*self.LCD, 1))
-        if int(t * 2.5) % 2:  # a blinking block cursor after it
-            cr.rectangle(lx + 12 + tw_, ly + h / 2 - 7, 8, 14)
-            cr.set_source_rgb(*self.LCD)
-            cr.fill()
-        self._visualizer(cr, lx + lw - 14 * 6 - 8, ly + 6, h - 12, True, t)
-
-    def box_css(self):
-        return f"""
-window.flippy-box .flippy-card {{ background: linear-gradient(#454959, #22252f); border-radius: 2px;
-  border: 2px solid; border-color: #9ca1b3 #0c0d12 #0c0d12 #9ca1b3; padding: 10px 12px; color: #c8ccd8; }}
-window.flippy-box entry {{ background: #000; color: #00ff6a; caret-color: #00ff6a; border-radius: 0;
-  font-family: "{PIXEL_FONT}"; font-size: 24px; border: 2px solid; border-color: #0c0d12 #9ca1b3 #9ca1b3 #0c0d12;
-  box-shadow: none; text-shadow: 0 0 6px rgba(0,255,106,0.5); }}
-window.flippy-box .flippy-hint {{ color: #7dffa9; font-family: "{PIXEL_FONT}"; font-size: 16px; }}"""
-
-
-
 # ---- Media Player (2000s media player mini mode: dark teal glass, glossy orb) -----
 
 class MediaPlayer(Theme):
@@ -1225,6 +1017,7 @@ class MediaPlayer(Theme):
     widths = (380, 470)
 
     pin_rgba = (1, 1, 1, 1)  # on the light title bar
+    thought_inset = 22  # in line with the text on its panel
 
     def pin_spot(self, card, x, y, w, h, opts):
         if opts.get("backdrop"):  # same inset as _chrome
@@ -1250,7 +1043,7 @@ class MediaPlayer(Theme):
         G = self._geom(x, y, w, h)
         cy, ox, bx = G["cy"], G["ox"], G["bx"]
         window = {"min": (bx, y + 5, 21, 15), "max": (bx + 22, y + 5, 21, 15), "close": (bx + 44, y + 5, 24, 15)}
-        if card.phase == "thinking":  # only the window buttons: there's nothing to play yet
+        if card.phase == "thinking" or card.task:  # only the window buttons: nothing to play
             return window
         hits = {
             **window,
@@ -1265,7 +1058,7 @@ class MediaPlayer(Theme):
 
     def size(self, card, opts):
         _, bh = lsize(self._body(_measure_ctx, card, opts))
-        if card.phase == "thinking":  # the title bar and the text: no controls yet
+        if card.phase == "thinking" or card.task:  # the title bar and the text: no controls
             return self._w(card), self.TITLE_H + bh + 30
         return self._w(card), self.TITLE_H + bh + 26 + self.CTRL_H + 8
 
@@ -1337,7 +1130,7 @@ class MediaPlayer(Theme):
         liquid = opts.get("backdrop")
         if liquid:
             self._liquid(cr, x, y, w, h, a, gloss=opts.get("player_shine", "wmp") == "wmp",
-                         controls=card.phase != "thinking")
+                         controls=card.phase != "thinking" and not card.task)
         else:
             self._classic(cr, x, y, w, h, a)
         self._chrome(cr, x, y, w, h, card, t, opts, opts.get("pressed"), liquid)
@@ -1404,7 +1197,7 @@ class MediaPlayer(Theme):
         cr.close_path()
         cr.set_source_rgb(1, 1, 1)
         cr.fill()
-        title = card.header or ("Error" if card.error else "Flippy")
+        title = card.header or ("Error" if card.error else "" if card.task else "Flippy")  # a task: the step, if any
         tl = layout(cr, title, self.font, 13, width=w - (140 if pin_shown(card) else 120))
         ellipsize_end(tl)
         halo = ((0, 1, 0.7), (1, 0, 0.45), (-1, 0, 0.45), (0, -1, 0.3)) if liquid else ((0, 1, 0.55), (1, 0, 0.25), (-1, 0, 0.25))
@@ -1458,7 +1251,7 @@ class MediaPlayer(Theme):
         for dx, dy in ((1, 1), (0, 1), (1, 0), (-1, 0), (0, -1)):
             show(cr, body, px + 12 + dx, py + 8 + dy, (0, 0, 0, 0.55))
         show(cr, body, px + 12, py + 8, (1.0, 0.62, 0.58, 1) if card.error else (0.97, 0.99, 1.0, 1))
-        if card.phase == "thinking":  # no seek line or controls until there's an answer
+        if card.phase == "thinking" or card.task:  # no seek line or controls: nothing to play
             return
 
         # seek line with a tick per walkthrough step and a glowing nub
@@ -1589,14 +1382,20 @@ class Glass(Theme):
     backdrop = {"radius": R, "frost": 0.06, "smoke": 0.32}
     widths = (360, 440)
 
+    thought_inset = PAD
+
     def _title(self, card):
+        if card.task:  # a desktop task: the step it's on, else no title ("Flippy" says nothing)
+            return card.header or ("Something went wrong" if card.error else None)
         return card.header or ("Something went wrong" if card.error else "Flippy")
 
     def _layouts(self, cr, card, opts):
         w = self._w(card) - 2 * self.PAD
-        head = layout(cr, self._title(card), self.font, opts["text_size"], width=w - (PIN_ROOM if pin_shown(card) else 0),
-                      bold=True)
-        ellipsize_end(head)
+        title = self._title(card)
+        head = layout(cr, title, self.font, opts["text_size"], width=w - (PIN_ROOM if pin_shown(card) else 0),
+                      bold=True) if title else None
+        if head:
+            ellipsize_end(head)
         body = layout(cr, card.text or " ", self.font, opts["text_size"] - 1, width=w)
         return head, body
 
@@ -1604,6 +1403,8 @@ class Glass(Theme):
         head, body = self._layouts(_measure_ctx, card, opts)
         if card.phase == "thinking":  # just the glass and the text: no title or controls yet
             return self._w(card), self.PAD + lsize(body)[1] + self.PAD
+        if card.task:  # the step or nothing, and the text: no player controls
+            return self._w(card), self.PAD + (lsize(head)[1] + 3 if head else 0) + lsize(body)[1] + self.PAD
         h = self.PAD + lsize(head)[1] + 3 + lsize(body)[1] + 14 + self.BAR_H + 8 + self.CTRL_H + 12
         return self._w(card), h
 
@@ -1617,7 +1418,7 @@ class Glass(Theme):
                 "speed": (x + self.PAD + self.BTN / 2, cy), "close": (x + w - self.PAD - self.BTN / 2, cy)}
 
     def hit_regions(self, card, x, y, w, h, opts=None):
-        if card.phase == "thinking":
+        if card.phase == "thinking" or card.task:
             return {}
         G = self._geom(x, y, w, h)
         cy, ox, b = G["cy"], G["ox"], self.BTN
@@ -1674,9 +1475,12 @@ class Glass(Theme):
             show(cr, body, x + P, y + P, (1, 1, 1, 0.9))
             return
         ty = y + P
-        show(cr, head, x + P, ty, (1.0, 0.6, 0.56, 1) if card.error else (1, 1, 1, 0.96))
-        ty += lsize(head)[1] + 3
-        show(cr, body, x + P, ty, (1, 1, 1, 0.72))
+        if head:
+            show(cr, head, x + P, ty, (1.0, 0.6, 0.56, 1) if card.error else (1, 1, 1, 0.96))
+            ty += lsize(head)[1] + 3
+        show(cr, body, x + P, ty, (1, 1, 1, 0.9 if card.task else 0.72))
+        if card.task:  # no player controls
+            return
 
         G = self._geom(x, y, w, h)
         n = max(len(card.steps), 1)
@@ -1725,6 +1529,7 @@ class Mono(Theme):
     """Black with gray outlines and sharp corners, like the setup and settings windows; grayscale pointers.
     Playback is a seek slider and a speed slider (white fill, dark track, light pill knob) plus square buttons."""
     key, name = "mono", "Mono"
+    thought_text = (0.62, 0.64, 0.68, 1)
     hand_fill = (0.94, 0.945, 0.95)
     hand_outline = (0.36, 0.36, 0.38)
     accent = (0.94, 0.945, 0.95)
@@ -1862,7 +1667,7 @@ window.flippy-box entry { font-size: 16px; border-radius: 0; background: #000; c
 window.flippy-box .flippy-hint { color: rgba(240,241,242,0.55); font-size: 12px; }"""
 
 
-THEMES = {th.key: th for th in (Mono(), Midnight(), Y2K(), MediaPlayer(), Glass(), Terminal(), Cosmic())}
+THEMES = {th.key: th for th in (Mono(), Midnight(), MediaPlayer(), Glass(), Terminal(), Cosmic())}
 
 
 def get(key):

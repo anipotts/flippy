@@ -36,7 +36,7 @@ DEFAULTS = {
         "card_opacity": 0.94,
         "glass_tint": 0.5,      # 0-1: how strongly Liquid Glass (Glass and Media Player themes, the ask box) is tinted
         "glass_color": "smoke", # smoke | blue | purple | pink | red | orange | green | teal: the tint's color
-        "controls": "all",      # all | players (playback controls on every theme, or only Media Player/Y2K)
+        "controls": "all",      # all | players (playback controls on every theme, or only the Media Player)
         "card_place": "auto",   # auto | pointer | corner: auto docks answers out of the way when you're learning
                                 # something on screen; corner always does; pointer never (flippy/placement.py)
         "player_shine": "wmp",  # wmp | none: gloss bars on the Media Player theme's Liquid Glass (macOS), or plain
@@ -98,13 +98,13 @@ _OPTIONS = {
     ('claude', 'image'): [(1366, '1366 px (lightest on usage)'), (1920, '1920 px (balanced)'), (0, 'Full resolution (sharpest)')],
     ('look', 'pointer'): [('theme', 'Theme default'), ('hand', 'Pixel hand'), ('arrow', 'Pixel arrow'), ('ring', 'Ring'), ('dot', 'Dot'), ('glass', 'Liquid glass lens'), ('glasshand', 'Liquid glass hand')],
     ('timing', 'step_pace'): [('slow', 'Slow'), ('normal', 'Normal'), ('fast', 'Fast')],
-    ('look', 'controls'): [('all', 'On every theme'), ('players', 'Only Media Player and Y2K')],
+    ('look', 'controls'): [('all', 'On every theme'), ('players', 'Only the Media Player')],
     ('look', 'card_place'): [('auto', 'Automatic'), ('pointer', 'Next to the pointer'), ('corner', 'Always out of the way')],
     ('look', 'player_shine'): [('wmp', 'WMP gloss'), ('none', 'Plain glass')],
     ('look', 'glass_color'): [('smoke', 'Smoke'), ('blue', 'Blue'), ('purple', 'Purple'), ('pink', 'Pink'), ('red', 'Red'), ('orange', 'Orange'), ('green', 'Green'), ('teal', 'Teal')],
     ('keys', 'pause'): [('double-cmd', '⌘ ⌘  (double-tap)'), ('double-option', '⌥ ⌥  (double-tap)'), ('double-ctrl', '⌃ ⌃  (double-tap)'), ('double-shift', '⇧ ⇧  (double-tap)'), ('off', 'Off')],
     ('help', 'mode'): [('off', 'Off'), ('quiet', "Offer a hand when I'm stuck"), ('tips', 'That, plus tips while I work')],
-    ('look', 'theme'): [('mono', 'Mono'), ('midnight', 'Midnight'), ('y2k', 'Y2K'), ('mediaplayer', 'Mediaplayer'), ('glass', 'Glass'), ('terminal', 'Terminal'), ('cosmic', 'Cosmic')],
+    ('look', 'theme'): [('mono', 'Mono'), ('midnight', 'Midnight'), ('mediaplayer', 'Mediaplayer'), ('glass', 'Glass'), ('terminal', 'Terminal'), ('cosmic', 'Cosmic')],
 }
 _BOUNDS = {
     ('look', 'pointer_size'): (0.5, 2.0, 0.1, 1),

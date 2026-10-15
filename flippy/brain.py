@@ -159,6 +159,8 @@ class Brain:
                         raise BrainError(str(msg.error), kind=str(msg.error))
                     # Only the last assistant message is the task's final answer.
                     text = "".join(b.text for b in msg.content if isinstance(b, TextBlock))
+                    if text.strip() and getattr(desktop, "on_thought", None):
+                        desktop.on_thought(text)
                 elif isinstance(msg, ResultMessage):
                     if msg.is_error or msg.subtype != "success":
                         raise BrainError(msg.result or "Desktop task did not finish.", kind="incomplete")
