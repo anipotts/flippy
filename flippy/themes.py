@@ -49,7 +49,7 @@ class Card:
     speed: float = 1.0            # playback speed (shown on player skins)
     controls: bool = False        # a real answer: show playback controls on themes that hide them otherwise
     pinned: bool = False          # kept on screen until dismissed (the pushpin)
-    actions: tuple = ()           # ((control name, label), ...): buttons in a row above the controls (#26)
+    actions: tuple = ()           # ((control name or None, label), ...): links above the controls; None: a hint (#26)
 
 
 SPEED_MIN, SPEED_MAX = 0.5, 2.0
@@ -596,8 +596,8 @@ class Theme:
         return self.size(card, opts)[1] - self.size(replace(card, controls=False), opts)[1]
 
     def draw_actions(self, cr, card, x, y, w, h, opts):
-        """The action row: quiet text links, right-aligned just above the controls, brighter while pressed.
-        Returns {control name: rect}."""
+        """The action row: quiet text links, right-aligned just above the controls, brighter while pressed (a hint,
+        named None, in the text's color and not clickable). Returns {control name: rect}."""
         inset, a = self.thought_inset, opts["card_opacity"]
         lays = _action_layouts(cr, card, opts)
         rh = action_row_height(card, opts)
@@ -606,9 +606,12 @@ class Theme:
         for name, lay in reversed(lays):
             lw, lh = lsize(lay)
             bx -= lw
-            lit = 1.0 if opts.get("pressed") == name else 0.7
-            show(cr, lay, bx, top + (rh - lh) / 2, (*(self.thought_label or self.accent), lit * a))
-            hits[name] = (bx - 6, top - 4, lw + 12, rh + 8)  # a little more than the words, to hit
+            if name is None:
+                show(cr, lay, bx, top + (rh - lh) / 2, (*self.thought_text[:3], 0.5 * a))
+            else:
+                lit = 1.0 if opts.get("pressed") == name else 0.7
+                show(cr, lay, bx, top + (rh - lh) / 2, (*(self.thought_label or self.accent), lit * a))
+                hits[name] = (bx - 6, top - 4, lw + 12, rh + 8)  # a little more than the words, to hit
             bx -= 18
         return hits
 

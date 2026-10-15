@@ -230,11 +230,16 @@ class FollowUp(unittest.TestCase):
         f.play.asked = False  # a video review's or a demo's
         self.assertFalse(f._walkthrough_up())
 
-    def test_a_walkthrough_card_offers_a_follow_up(self):
+    def test_a_walkthrough_card_says_how_to_follow_up(self):
         f = flippy()
         f.play.tick(0.1, f._play_options(), f._play_coords)
         f._render_step(f.play, 0.2)
-        self.assertEqual(f.overlay.show_text.call_args.kwargs["actions"], (("followup", "Ask about this step"),))
+        self.assertNotIn("actions", f.overlay.show_text.call_args.kwargs)  # no ask hotkey: nothing to say
+        f = flippy()
+        f.ui.key_label = lambda name: "⇧⌘Space"
+        f.play.tick(0.1, f._play_options(), f._play_coords)
+        f._render_step(f.play, 0.2)
+        self.assertEqual(f.overlay.show_text.call_args.kwargs["actions"], ((None, "Follow up with Shift Cmd Space"),))
 
 
 if __name__ == "__main__":

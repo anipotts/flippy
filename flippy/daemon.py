@@ -1017,9 +1017,18 @@ class Flippy:
         card = pl.card(now, self._play_options())
         if card:
             card["at_bottom"] = self._card_at_bottom(pl.known())
-            card.update(self._resume_action() or ({"actions": (("followup", "Ask about this step"),)} if self._walkthrough_up()
-                                                   else {}))
+            card.update(self._resume_action() or self._follow_up_hint(pl))
             self.overlay.show_text(**card)
+
+    def _follow_up_hint(self, pl):
+        """A walkthrough's card says how to ask about its step (as show_text fields): {} if it can't."""
+        if not self._walkthrough_up():
+            return {}
+        if not hasattr(pl, "hint"):  # (worked out once: on COSMIC it reads the shortcuts file)
+            key_label = getattr(self.ui, "key_label", None)
+            label = key_label and key_label("ask")
+            pl.hint = f"Follow up with {plain_keys(label)}" if label else None
+        return {"actions": ((None, pl.hint),)} if pl.hint else {}
 
     def _resume_action(self):
         """A side answer's way back to the walkthrough it's about (as show_text fields), or {}."""
@@ -1053,9 +1062,6 @@ class Flippy:
             return
         if name == "pin":
             self.toggle_pin()
-            return
-        if name == "followup" and self._walkthrough_up() and not self.parked:
-            self._follow_up()
             return
         if name == "resume":
             self._resume_walkthrough()
