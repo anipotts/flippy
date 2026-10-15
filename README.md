@@ -93,7 +93,7 @@ The installer puts the code in `~/flippy`, builds gtk4-layer-shell into `~/.loca
 
 - **Ask about your screen.** A hotkey opens a box; Flippy screenshots the screen, sends it to Claude with your question, and shows the answer next to a pointer on the thing it means.
 - **Walkthroughs.** Multi-step answers play step by step: the pointer glides from point to point and the card follows. Pause, step back/forward, seek and change speed from the card.
-- **Questions mid-walkthrough.** **Follow up** on the card, or the ask hotkey, pauses the walkthrough and asks about the step you're on. The answer shows on its own with **Back to step N**; Esc in the question box goes straight back.
+- **Questions mid-walkthrough.** **Ask about this step** on the card, or the ask hotkey, pauses the walkthrough and asks about the step you're on. The answer shows on its own with **← Back to step N**; Esc in the question box goes straight back.
 - **Circle and ask.** A second hotkey lets you draw on the screen to mark something, then ask about it ("what does this say?").
 - **Tutorials that wait for you.** When Claude walks you through doing something, the steps you have to do yourself wait until you click the thing (on COSMIC, Flippy infers the click from the mouse and the screen reacting; see [docs/linux-port.md](docs/linux-port.md#tutorials-that-wait-for-clicks)). If that click opens a menu or dialog Claude couldn't see yet, Flippy takes a fresh screenshot and Claude carries on from there. Next on the card skips a step. Turn it off with `timing.wait_for_clicks`.
 - **Follow-ups.** Questions share one session, so "and where's bluetooth?" works. `/new` starts fresh; sessions also reset after 15 idle minutes.

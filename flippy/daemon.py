@@ -1017,13 +1017,13 @@ class Flippy:
         card = pl.card(now, self._play_options())
         if card:
             card["at_bottom"] = self._card_at_bottom(pl.known())
-            card.update(self._resume_action() or ({"actions": (("followup", "Follow up"),)} if self._walkthrough_up()
+            card.update(self._resume_action() or ({"actions": (("followup", "Ask about this step"),)} if self._walkthrough_up()
                                                    else {}))
             self.overlay.show_text(**card)
 
     def _resume_action(self):
         """A side answer's way back to the walkthrough it's about (as show_text fields), or {}."""
-        return {"actions": (("resume", f"Back to step {self.parked.step + 1}"),)} if self.parked else {}
+        return {"actions": (("resume", f"← Back to step {self.parked.step + 1}"),)} if self.parked else {}
 
     def _listen_for_click(self, on):
         if hasattr(self.ui, "watch_clicks"):
