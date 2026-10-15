@@ -131,14 +131,16 @@ def playing(card):
 _measure_ctx = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1))
 
 
-def layout(cr, text, family, px, width=None, bold=False):
+def layout(cr, text, family, px, width=None, bold=False, italic=False):
     if sys.platform == "darwin":
-        return mactext.Layout(cr, text, family, px, width, bold)
+        return mactext.Layout(cr, text, family, px, width, bold, italic)
     lay = PangoCairo.create_layout(cr)
     fd = Pango.FontDescription.from_string(family)
     fd.set_absolute_size(px * Pango.SCALE)
     if bold:
         fd.set_weight(Pango.Weight.BOLD)
+    if italic:
+        fd.set_style(Pango.Style.ITALIC)
     lay.set_font_description(fd)
     if width:
         lay.set_width(int(width * Pango.SCALE))

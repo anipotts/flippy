@@ -15,9 +15,10 @@ ELLIPSIS = "…"
 
 
 class Layout:
-    def __init__(self, cr, text, family, px, width=None, bold=False):
+    def __init__(self, cr, text, family, px, width=None, bold=False, italic=False):
         weight = cairo.FONT_WEIGHT_BOLD if bold else cairo.FONT_WEIGHT_NORMAL
-        self.face = cairo.ToyFontFace(FONTS.get(family, family), cairo.FONT_SLANT_NORMAL, weight)
+        slant = cairo.FONT_SLANT_ITALIC if italic else cairo.FONT_SLANT_NORMAL
+        self.face = cairo.ToyFontFace(FONTS.get(family, family), slant, weight)
         self.faces = [self.face] + [_face(name, weight) for name in FALLBACKS]
         self.px = px
         self.text = text
