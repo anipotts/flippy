@@ -192,6 +192,7 @@ class DesktopTools:
         self.journal = []    # (app, step, done) per acting step, for act_memory: tool names only
         self.notes = {}      # app -> how-to the task left with remember
         self.app_names = {}  # app -> its name, filled in by whoever looks
+        self.on_thought = None  # (text): what Claude says between steps, for the acting card (#21)
 
     def stop(self):
         self.cancel.set()  # also checked by the native typing worker between characters
