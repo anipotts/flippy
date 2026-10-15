@@ -22,7 +22,7 @@ from .usage_guard import PlanLimitReached
 from .profile import current, Instance
 from .actions import (BACKGROUND_CATALOG, BACKGROUND_PROMPT, ActionError, AppFrame, ApprovalPolicy, DesktopTools,
                       app_id, approval_text)
-from .point import Point, image_to_logical
+from .point import Point, image_to_logical, segments
 from .playback import Playback, Options
 from .diagnostics import Diagnostics
 from . import demos
@@ -65,9 +65,15 @@ def _rounded(rect):
 THOUGHT_CHARS = 240  # the acting card shows the end of what Claude last said, not all of it
 TRAIL_THOUGHTS = 6   # the result card's thinking section: this many of the latest things Claude said...
 TRAIL_CHARS = 600    # ...up to this much in all
+CONTEXT_CHARS = 1200  # of the last question's answer, or the last task, that goes along with what's asked next
 # the overlay's placement and pin, kept for a walkthrough set aside for a follow-up
 PLACEMENT = ("pinned", "learning", "keep", "spot", "avoid", "window", "detail")
 STEP_CHARS = 100     # the acting card's title: a long label or menu path is cut, its pointer note kept
+
+
+def _cut(text, n=CONTEXT_CHARS):
+    text = " ".join(text.split())
+    return text if len(text) <= n else text[:n - 1].rstrip() + "…"
 
 
 def _last_words(text):
@@ -79,6 +85,7 @@ def _last_words(text):
 class Flippy:
     parked = None  # (see __init__)
     parked_tutorial = False
+    last_exchange = None  # the last question and its answer, or the last task and how it ended: context for the next
 
     def __init__(self, ui):
         self.instance = Instance(PROFILE).acquire()
@@ -394,6 +401,7 @@ class Flippy:
         """tutorial: steps they have to do wait for their click (":click"). None = decide from the question."""
         if not question:
             return
+        step = self._step_note() if self.parked and question.startswith("/act") else None
         if self.parked and question.startswith("/"):  # a command, not a follow-up: the walkthrough is dropped
             self.parked = None
         if self.parked and self.busy and self.request and self.request.identity == self.parked.gen:
@@ -431,7 +439,7 @@ class Flippy:
             return
         focus, self.focus_at_open = getattr(self, "focus_at_open", None), None  # set if this came from the box
         if question == "/act" or question.startswith("/act "):
-            status = self.act(question[4:].strip())
+            status = self.act(question[4:].strip(), step=step)
             if self.action_tools is None:
                 self.box.hide()
                 self._fail(status)
@@ -447,11 +455,14 @@ class Flippy:
         side = self.parked is not None  # a follow-up about a walkthrough's step: answered on the side
         self.tutorial = False if side else wants_tutorial(question) if tutorial is None else tutorial
         event("ask", question=question, tutorial=self.tutorial)
-        offer_act = self._can_infer_act() and not side
+        offer_act = self._can_infer_act()  # (a follow-up too: "just do it for me" on a step)
         self.act_hold, self.act_question = ("", question) if offer_act else (None, None)
+        self.act_step = self._step_note() if side else None
+        self.asked = question
         req = self._begin_request("tutor")
         self.box.hide()
         keep_marks = self.marked
+        question = self._ask_context() + question  # right after a desktop task: what it did
         if side:
             question = self._side_context() + question
         if keep_marks:
@@ -615,7 +626,8 @@ class Flippy:
 
 
     # --- explicit desktop tasks; ordinary asks never receive tools ---
-    def act(self, question):
+    def act(self, question, step=None):
+        """step: the walkthrough step they were on (_step_note), when the task came from a follow-up."""
         if not question:
             return "usage: act <task>"
         if self.busy or self.video.recording:
@@ -647,9 +659,11 @@ class Flippy:
         tools.on_thought = lambda text: loop.idle_add(lambda: self._acting(req, thought=text) and False)
         self.action_tools = tools
         self.act_status = {"step": None, "reason": None, "thought": None, "trail": []}
+        self.act_task = question
+        task = self._task_context(step) + question
         async def run():
             try:
-                return await self.brain.act(question, tools)
+                return await self.brain.act(task, tools)
             finally:
                 if tools.cleanup_failed:
                     self.input_disabled = True
@@ -808,6 +822,8 @@ class Flippy:
         except Exception as err:
             log(f"act: couldn't save what worked ({type(err).__name__})")
         self.ui.action_card.hide()
+        ended = result if not stopped else "it stopped before it finished"
+        self._remember("task", getattr(self, "act_task", ""), ended)  # for what's asked next
         if stopped:
             code = errors.ACT_REASONS.get(reason, "ACT-STOPPED")
             if error is not None and not tools.failure:  # the provider ended it: its own code
@@ -827,6 +843,51 @@ class Flippy:
         else:
             self.overlay.show_text(result, thought=self._act_trail(result), task=True)
             self._schedule_fade(settings.get("timing", "max_show_seconds"))
+
+    # --- what was just asked or done goes along with what's next: a question after a task, a task after an answer ---
+    def _remember(self, kind, question, answer):
+        self.last_exchange = {"kind": kind, "question": _cut(question or ""), "answer": _cut(answer or ""),
+                              "at": time.monotonic()}
+
+    def _recent(self):
+        last = self.last_exchange
+        return last if last and time.monotonic() - last["at"] < IDLE_RESET_S else None
+
+    def _task_context(self, step=None):
+        """For a desktop task (its own session): the question just answered or the task just done, and the
+        walkthrough step they were on."""
+        notes = []
+        last = self._recent()
+        if last and last["kind"] == "ask":
+            notes.append(f'Just before this I asked Flippy: "{last["question"]}", and it answered: "{last["answer"]}"')
+        elif last:
+            notes.append(f'Just before this you did a task for me: "{last["question"]}". It ended: "{last["answer"]}"')
+        if step:
+            notes.append(step)
+        if not notes:
+            return ""
+        return "[For context, it may or may not matter. " + " ".join(notes) + "]\n\nThe task: "
+
+    def _ask_context(self):
+        """For a question right after a desktop task: what the task was and how it ended (once; after that the
+        conversation has it)."""
+        last = self._recent()
+        if not last or last["kind"] != "task":
+            return ""
+        self.last_exchange = None
+        return (f'[Just before this you did a desktop task for me: "{last["question"]}". It ended: "{last["answer"]}". '
+                "I may be asking about it.]\n")
+
+    def _step_note(self):
+        """The walkthrough step a follow-up is about, in words for a task."""
+        pl = self.parked
+        known = pl.known() if pl else []
+        if not known:
+            return None
+        step = min(pl.step, len(known) - 1)
+        seg = known[step]
+        where = f" (pointing at {seg.point.label})" if seg.point and seg.point.label else ""
+        return f'I was on step {step + 1} of {len(known)} of your walkthrough: "{_cut(seg.text, 400)}"{where}.'
 
     def _act_trail(self, result=""):
         """What Claude said while the task ran, for the result card's thinking section: the last TRAIL_THOUGHTS, one
@@ -871,11 +932,12 @@ class Flippy:
             # They asked Flippy to do it, not how: the same words become a desktop task, with its approvals.
             event("answer", outcome="act")
             self._stop_playback()
-            status = self.act(self.act_question)
+            status = self.act(self.act_question, step=getattr(self, "act_step", None))
             if self.action_tools is None:
                 self._fail(status)
             return
         event("answer", outcome="completed")
+        self._remember("ask", getattr(self, "asked", ""), " ".join(seg.text for seg in segments(raw, True)))
         pl = self._playback_of(gen)
         if pl:
             if held:

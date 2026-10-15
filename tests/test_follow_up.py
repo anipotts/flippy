@@ -252,3 +252,65 @@ class FollowUp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AskThenActAndBack(unittest.TestCase):
+    """What was just asked or done goes along with what's next (#26)."""
+    def setUp(self):
+        self.queue = Queue()
+        for p in (patch.object(daemon, "loop", self.queue), patch.object(daemon, "event"),
+                  patch.object(settings, "_save")):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_a_task_after_an_answer_knows_the_question_and_answer(self):
+        f = flippy()
+        f._remember("ask", "how do I export a PDF?", "Click File [POINT:1,2:File] then Export.")
+        context = f._task_context()
+        self.assertIn('I asked Flippy: "how do I export a PDF?"', context)
+        self.assertTrue(context.endswith("The task: "))
+
+    def test_a_task_after_a_task_knows_how_it_ended(self):
+        f = flippy()
+        f._remember("task", "play some jazz", "Playing Kind of Blue.")
+        self.assertIn('you did a task for me: "play some jazz". It ended: "Playing Kind of Blue."', f._task_context())
+
+    def test_a_question_after_a_task_knows_it_once(self):
+        f = flippy()
+        f._remember("task", "play some jazz", "Playing Kind of Blue.")
+        self.assertIn('desktop task for me: "play some jazz"', f._ask_context())
+        self.assertEqual(f._ask_context(), "")  # the conversation has it from here
+
+    def test_nothing_after_a_long_break(self):
+        f = flippy()
+        f._remember("task", "play some jazz", "Playing Kind of Blue.")
+        f.last_exchange["at"] -= daemon.IDLE_RESET_S + 1
+        self.assertEqual(f._ask_context(), "")
+        self.assertEqual(f._task_context(), "")
+
+    def test_act_in_a_follow_up_carries_the_step(self):
+        f = flippy()
+        f.play.tick(0.1, f._play_options(), f._play_coords)
+        f.play.shown = 99
+        daemon.Flippy.open_box(f)
+        f.act = MagicMock(return_value="started")
+        f.action_tools = object()
+        f.submit("/act do it for me")
+        f.act.assert_called_once()
+        self.assertEqual(f.act.call_args.args[0], "do it for me")
+        self.assertIn('step 1 of 2 of your walkthrough: "Open File" (pointing at File)', f.act.call_args.kwargs["step"])
+        self.assertIsNone(f.parked)
+
+    def test_a_follow_up_can_become_a_task(self):
+        f = flippy()
+        f.play.tick(0.1, f._play_options(), f._play_coords)
+        f.play.shown = 99
+        daemon.Flippy.open_box(f)
+        f._run_request, f._ask = MagicMock(), MagicMock()
+        f._begin_request = lambda mode: Request(6, mode)
+        f.ui.app_look = MagicMock()
+        get = settings.get
+        with patch.object(settings, "get", lambda section, key: True if key == "infer" else get(section, key)):
+            f.submit("just do this step for me")
+        self.assertEqual(f.act_hold, "")  # an [ACT] reply would start the task...
+        self.assertIn("step 1 of 2", f.act_step)  # ...with the step it's about
