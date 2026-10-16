@@ -280,6 +280,18 @@ class FollowUp(unittest.TestCase):
         self.assertIsNone(f.followup_pending)
         self.assertFalse(f.may_replan)
 
+    def test_esc_on_a_second_follow_up_keeps_the_side_answer_showing(self):
+        f = flippy()
+        pl = self.follow_up(f)
+        f.gen = 6
+        f._start_playback(6, (1000, 800), (1000, 800), asked=True)  # the answer to "why?", on the side
+        side = f.play
+        daemon.Flippy.open_box(f)
+        f.box.visible = True
+        f._box_cancel()
+        self.assertIs(f.play, side)
+        self.assertIs(f.parked, pl)  # "← Back to step N" still goes back
+
     def test_a_queued_follow_up_lost_with_its_walkthrough_says_so(self):
         f = flippy()
         req = f.request = Request(5, "tutor")

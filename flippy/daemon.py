@@ -398,10 +398,11 @@ class Flippy:
 
     def _box_cancel(self):
         """Esc in the question box: back to a walkthrough set aside for a follow-up, or else dismiss."""
-        if self.parked and self.followup_pending:  # never mind this one: the follow-up already waiting stays
-            self.focus_at_open = None
+        if self.parked and (self.followup_pending or self.play):  # never mind this one: the follow-up already
+            self.focus_at_open = None                             # waiting, or the side answer showing, stays
             self.box.hide()
-            self._show_parked()
+            if not self.play:
+                self._show_parked()
         elif self.parked:
             self._resume_walkthrough()
         else:
