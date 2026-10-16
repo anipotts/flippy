@@ -403,7 +403,7 @@ class Flippy:
             self.box.hide()
             if not self.play:
                 self._show_parked()
-            elif self.play.finished:  # (the hotkey stopped its fade: a side answer's, again)
+            elif self.play.finished and not self.play.paused:  # (the hotkey stopped its fade: a side answer's, again)
                 self._schedule_fade(settings.get("timing", "max_show_seconds"))
         elif self.parked:
             self._resume_walkthrough()

@@ -293,7 +293,10 @@ class FollowUp(unittest.TestCase):
         self.assertIs(f.parked, pl)  # "← Previous" still goes back
         self.assertEqual(f.box.show.call_args.kwargs, {"hint": daemon.SECOND_FOLLOW_UP_HINT})  # Esc closes
         f._schedule_fade = MagicMock()
-        side.finished = True  # a side answer done, its fade stopped by the hotkey
+        side.finished = side.paused = True  # done, and paused to read it: it stays
+        f._box_cancel()
+        f._schedule_fade.assert_not_called()
+        side.paused = False  # a side answer done, its fade stopped by the hotkey
         f._box_cancel()
         f._schedule_fade.assert_called_once_with(settings.get("timing", "max_show_seconds"))
 
