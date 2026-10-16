@@ -29,7 +29,7 @@ def controller(infer=True, platform_acts=True):
     f._owns = lambda req: True
     f._stop_playback = Mock()
     f._fail = Mock()
-    f._remember = Mock()
+    f._remember, f.last_exchange = Mock(), None
     f.action_tools = None
     def act(question, step=None):
         f.action_tools = object()

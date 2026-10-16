@@ -71,9 +71,12 @@ PLACEMENT = ("pinned", "learning", "keep", "spot", "avoid", "window", "detail")
 STEP_CHARS = 100     # the acting card's title: a long label or menu path is cut, its pointer note kept
 
 
-def _cut(text, n=CONTEXT_CHARS):
+def _cut(text, n=CONTEXT_CHARS, tail=False):
+    """text on one line, at most n chars: its start, or (tail) its end."""
     text = " ".join(text.split())
-    return text if len(text) <= n else text[:n - 1].rstrip() + "…"
+    if len(text) <= n:
+        return text
+    return "…" + text[1 - n:].lstrip() if tail else text[:n - 1].rstrip() + "…"
 
 
 def _last_words(text):
@@ -367,6 +370,8 @@ class Flippy:
         for key, value in getattr(pl, "placement", {}).items():
             setattr(self.overlay, key, value)
         self.tutorial = self.parked_tutorial
+        if getattr(pl, "exchange", None):  # what's asked or done next is about the walkthrough again, not the side
+            self.last_exchange, self.asked = pl.exchange, pl.exchange["question"]
         self.play = pl
         pl.resume(time.monotonic())
         self._resume_ticking()
@@ -943,10 +948,11 @@ class Flippy:
         answer = " ".join(seg.text for seg in segments(raw, True))
         last = getattr(self, "continued", False) and self._recent()
         if last and last["kind"] == "ask":  # a walkthrough going on after your click: the steps before it too
-            answer = last["answer"] + " " + answer
+            answer = _cut(last["answer"] + " " + answer, tail=True)  # (the latest steps, if it's long)
         self._remember("ask", getattr(self, "asked", ""), answer)
         pl = self._playback_of(gen)
         if pl:
+            pl.exchange = self.last_exchange  # back as the latest after a follow-up's side answer
             if held:
                 pl.append(held)
             pl.finish(raw)
@@ -1093,8 +1099,8 @@ class Flippy:
         """A walkthrough's card says how to ask about its step (as show_text fields): {} if it can't."""
         if not self._walkthrough_up():
             return {}
-        combo = settings.get("keys", "ask")
-        if getattr(pl, "hint", (None,))[0] != combo:  # (worked out once per hotkey: on COSMIC it reads a file)
+        combo = (settings.get("keys", "ask"), int(time.monotonic() // 5))  # (COSMIC's are set outside Flippy)
+        if getattr(pl, "hint", (None,))[0] != combo:  # (worked out again now and then: on COSMIC it reads a file)
             key_label = getattr(self.ui, "key_label", None)
             label = key_label and key_label("ask")
             pl.hint = (combo, (None, "Follow up", tuple(themes.split_keys(label))) if label else None)

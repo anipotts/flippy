@@ -295,6 +295,24 @@ class AskThenActAndBack(unittest.TestCase):
         f._on_answer(("Now click Export [POINT:3,4:Export].", 7), None, Request(7, "tutor"))
         self.assertEqual(f.last_exchange["question"], "how do I export a PDF?")
         self.assertEqual(f.last_exchange["answer"], "Open File. Now click Export.")
+        self.assertEqual(daemon._cut("one two three", 9, tail=True), "…wo three")  # a long one keeps its latest steps
+
+    def test_back_from_a_side_answer_the_walkthrough_is_the_latest_again(self):
+        f = flippy()
+        f._run_request, f._ask = MagicMock(), MagicMock()
+        f._owns = lambda req: True
+        f.asked = "how do I export a PDF?"
+        f._on_answer((WALKTHROUGH, 5), None, Request(5, "tutor"))
+        f.play.tick(0.1, f._play_options(), f._play_coords)
+        f.play.shown = 99
+        daemon.Flippy.open_box(f)
+        f._begin_request = lambda mode: Request(6, mode)
+        f.submit("what's PDF/A?")
+        f._on_answer(("PDF/A is for archives.", 6), None, Request(6, "tutor"))
+        self.assertEqual(f.last_exchange["question"], "what's PDF/A?")  # "do it for me" now: the side question
+        f.control("resume")
+        self.assertEqual(f.last_exchange["question"], "how do I export a PDF?")
+        self.assertEqual(f.asked, "how do I export a PDF?")
 
     def test_nothing_after_a_long_break(self):
         f = flippy()
