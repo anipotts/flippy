@@ -291,6 +291,7 @@ class FollowUp(unittest.TestCase):
         f._box_cancel()
         self.assertIs(f.play, side)
         self.assertIs(f.parked, pl)  # "← Previous" still goes back
+        self.assertEqual(f.box.show.call_args.kwargs, {"hint": daemon.SECOND_FOLLOW_UP_HINT})  # Esc closes
 
     def test_a_queued_follow_up_lost_with_its_walkthrough_says_so(self):
         f = flippy()

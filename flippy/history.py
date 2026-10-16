@@ -7,7 +7,8 @@ only what's submitted from the box is kept (not approval cards, setup fields or 
 SIZE = 50
 # the line under the box's field, both boxes: as usual, and for a follow-up in the middle of a walkthrough (#26)
 BOX_HINT = "Enter to ask or get it done · ↑ earlier · Esc to close · /new · /settings"
-FOLLOW_UP_HINT = "Enter to ask about this step · ↑ earlier · Esc back to the walkthrough · /act to have it done"
+FOLLOW_UP_HINT = "Enter to ask about this step · Esc back to the walkthrough"
+SECOND_FOLLOW_UP_HINT = "Enter to ask about this step · Esc to close"  # (a side answer or a follow-up stays up)
 
 
 class PromptHistory:

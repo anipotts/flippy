@@ -26,7 +26,7 @@ from .point import Point, image_to_logical, segments
 from .playback import Playback, Options
 from .diagnostics import Diagnostics
 from . import demos
-from .history import FOLLOW_UP_HINT
+from .history import FOLLOW_UP_HINT, SECOND_FOLLOW_UP_HINT
 
 PROFILE = current()
 SOCK_PATH = PROFILE.socket
@@ -425,7 +425,10 @@ class Flippy:
         event("box")
         # Before the box takes the keyboard: Electron apps (VS Code) stop reporting their focus once it does.
         self.focus_at_open = self.ui.focused() if hasattr(self.ui, "focused") else None
-        self.box.show(**({"hint": FOLLOW_UP_HINT} if self.parked else {}))
+        hint = None
+        if self.parked:  # what Esc does (_box_cancel): back to the walkthrough, or close, keeping what's up
+            hint = SECOND_FOLLOW_UP_HINT if self.followup_pending or self.play else FOLLOW_UP_HINT
+        self.box.show(**({"hint": hint} if hint else {}))
 
     def submit(self, question, tutorial=None):
         """tutorial: steps they have to do wait for their click (":click"). None = decide from the question."""
