@@ -458,7 +458,9 @@ class Flippy:
         offer_act = self._can_infer_act()  # (a follow-up too: "just do it for me" on a step)
         self.act_hold, self.act_question = ("", question) if offer_act else (None, None)
         self.act_step = self._step_note() if side else None
-        self.asked = question
+        self.continued = question == CONTINUE
+        if not self.continued:  # a walkthrough going on after your click is still about what you asked
+            self.asked = question
         req = self._begin_request("tutor")
         self.box.hide()
         keep_marks = self.marked
@@ -872,9 +874,9 @@ class Flippy:
         """For a question right after a desktop task: what the task was and how it ended (once; after that the
         conversation has it)."""
         last = self._recent()
-        if not last or last["kind"] != "task":
+        if not last or last["kind"] != "task" or last.get("told"):
             return ""
-        self.last_exchange = None
+        last["told"] = True  # (kept for a task: this question can still become one)
         return (f'[Just before this you did a desktop task for me: "{last["question"]}". It ended: "{last["answer"]}". '
                 "I may be asking about it.]\n")
 
@@ -887,7 +889,8 @@ class Flippy:
         step = min(pl.step, len(known) - 1)
         seg = known[step]
         where = f" (pointing at {seg.point.label})" if seg.point and seg.point.label else ""
-        return f'I was on step {step + 1} of {len(known)} of your walkthrough: "{_cut(seg.text, 400)}"{where}.'
+        total = f"{len(known)}" if pl.done else f"{len(known)} so far"
+        return f'I was on step {step + 1} of {total} of your walkthrough: "{_cut(seg.text, 400)}"{where}.'
 
     def _act_trail(self, result=""):
         """What Claude said while the task ran, for the result card's thinking section: the last TRAIL_THOUGHTS, one
@@ -918,7 +921,7 @@ class Flippy:
             return
         if err:
             self.act_hold = None
-            if self.parked and self.parked.gen == owner.identity:  # the walkthrough itself failed: nothing to go back to
+            if self.parked and self.parked.gen == owner.identity:  # the walkthrough failed: nothing to go back to
                 self.parked = None
             self._stop_playback()
             shown, logged = errors.describe(err)
@@ -937,7 +940,11 @@ class Flippy:
                 self._fail(status)
             return
         event("answer", outcome="completed")
-        self._remember("ask", getattr(self, "asked", ""), " ".join(seg.text for seg in segments(raw, True)))
+        answer = " ".join(seg.text for seg in segments(raw, True))
+        last = getattr(self, "continued", False) and self._recent()
+        if last and last["kind"] == "ask":  # a walkthrough going on after your click: the steps before it too
+            answer = last["answer"] + " " + answer
+        self._remember("ask", getattr(self, "asked", ""), answer)
         pl = self._playback_of(gen)
         if pl:
             if held:
@@ -1086,11 +1093,12 @@ class Flippy:
         """A walkthrough's card says how to ask about its step (as show_text fields): {} if it can't."""
         if not self._walkthrough_up():
             return {}
-        if not hasattr(pl, "hint"):  # (worked out once: on COSMIC it reads the shortcuts file)
+        combo = settings.get("keys", "ask")
+        if getattr(pl, "hint", (None,))[0] != combo:  # (worked out once per hotkey: on COSMIC it reads a file)
             key_label = getattr(self.ui, "key_label", None)
             label = key_label and key_label("ask")
-            pl.hint = (None, "Follow up", tuple(themes.split_keys(label))) if label else None
-        return {"actions": (pl.hint,)} if pl.hint else {}
+            pl.hint = (combo, (None, "Follow up", tuple(themes.split_keys(label))) if label else None)
+        return {"actions": (pl.hint[1],)} if pl.hint[1] else {}
 
     def _resume_action(self):
         """A side answer's way back to the walkthrough it's about (as show_text fields), or {}."""
@@ -1107,7 +1115,7 @@ class Flippy:
     def _continue_tutorial(self):
         event("tutorial_continue")
         self._stop_playback()
-        self.submit("Done, I did that. Continue the walkthrough from here.", tutorial=True)
+        self.submit(CONTINUE, tutorial=True)
 
     def _card_at_bottom(self, segs, pl=None):
         for seg in segs:
@@ -1682,6 +1690,7 @@ DO_RE = re.compile(r"^(?:(?:ok|okay|now|then|next|and|also|cool|nice)[,!]?\s+)*(
                    r"start|bring in|layer)\b")
 
 
+CONTINUE = "Done, I did that. Continue the walkthrough from here."  # asked for you after a walkthrough's last click
 ACT_TAG = "[ACT]"  # the tutor's whole reply when a question asks Flippy to do something (brain.SYSTEM_PROMPT)
 
 

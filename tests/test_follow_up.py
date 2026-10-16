@@ -247,11 +247,13 @@ class FollowUp(unittest.TestCase):
         f.ui.key_label = lambda name: "⇧⌘Space"
         f.play.tick(0.1, f._play_options(), f._play_coords)
         f._render_step(f.play, 0.2)
-        self.assertEqual(f.overlay.show_text.call_args.kwargs["actions"], ((None, "Follow up", ("⇧", "⌘", "Space")),))
-
-
-if __name__ == "__main__":
-    unittest.main()
+        hint = (None, "Follow up", ("⇧", "⌘", "Space"))
+        self.assertEqual(f.overlay.show_text.call_args.kwargs["actions"], (hint,))
+        f.ui.key_label = lambda name: "⌃⌥A"  # the hotkey changed in Settings
+        get = settings.get
+        with patch.object(settings, "get", lambda section, key: "ctrl+alt+a" if key == "ask" else get(section, key)):
+            f._render_step(f.play, 0.3)
+        self.assertEqual(f.overlay.show_text.call_args.kwargs["actions"], ((None, "Follow up", ("⌃", "⌥", "A")),))
 
 
 class AskThenActAndBack(unittest.TestCase):
@@ -280,6 +282,19 @@ class AskThenActAndBack(unittest.TestCase):
         f._remember("task", "play some jazz", "Playing Kind of Blue.")
         self.assertIn('desktop task for me: "play some jazz"', f._ask_context())
         self.assertEqual(f._ask_context(), "")  # the conversation has it from here
+        self.assertIn('"play some jazz"', f._task_context())  # ...but "now turn it up" can still become a task
+
+    def test_a_walkthrough_continued_after_your_click_is_still_your_question(self):
+        f = flippy()
+        f._run_request, f._ask = MagicMock(), MagicMock()
+        f._begin_request = lambda mode: Request(7, mode)
+        f._owns = lambda req: True
+        f.submit("how do I export a PDF?")
+        f._on_answer(("Open File [POINT:1,2:File].", 7), None, Request(7, "tutor"))
+        f.submit(daemon.CONTINUE, tutorial=True)
+        f._on_answer(("Now click Export [POINT:3,4:Export].", 7), None, Request(7, "tutor"))
+        self.assertEqual(f.last_exchange["question"], "how do I export a PDF?")
+        self.assertEqual(f.last_exchange["answer"], "Open File. Now click Export.")
 
     def test_nothing_after_a_long_break(self):
         f = flippy()
@@ -298,7 +313,8 @@ class AskThenActAndBack(unittest.TestCase):
         f.submit("/act do it for me")
         f.act.assert_called_once()
         self.assertEqual(f.act.call_args.args[0], "do it for me")
-        self.assertIn('step 1 of 2 of your walkthrough: "Open File" (pointing at File)', f.act.call_args.kwargs["step"])
+        self.assertIn('step 1 of 2 so far of your walkthrough: "Open File" (pointing at File)',
+                      f.act.call_args.kwargs["step"])
         self.assertIsNone(f.parked)
 
     def test_a_follow_up_can_become_a_task(self):
@@ -314,3 +330,7 @@ class AskThenActAndBack(unittest.TestCase):
             f.submit("just do this step for me")
         self.assertEqual(f.act_hold, "")  # an [ACT] reply would start the task...
         self.assertIn("step 1 of 2", f.act_step)  # ...with the step it's about
+
+
+if __name__ == "__main__":
+    unittest.main()

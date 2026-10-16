@@ -202,8 +202,8 @@ def _action_layouts(cr, card, opts):
     px = max(10, opts["text_size"] - 3)
     rows = []
     for name, label, *keys in card.actions:
-        caps = [layout(cr, k, THOUGHT_FONT, px + 2) if k in MODIFIERS else layout(cr, k, THOUGHT_FONT, px - 1, bold=True)
-                for k in (keys[0] if keys else ())]  # (the symbols run small: a size up)
+        caps = [layout(cr, k, THOUGHT_FONT, px + 2) if k in MODIFIERS  # (the symbols run small: a size up)
+                else layout(cr, k, THOUGHT_FONT, px - 1, bold=True) for k in (keys[0] if keys else ())]
         rows.append((name, layout(cr, label, THOUGHT_FONT, px, italic=name is None), caps))
     return rows
 
