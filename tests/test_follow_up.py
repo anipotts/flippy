@@ -292,6 +292,10 @@ class FollowUp(unittest.TestCase):
         self.assertIs(f.play, side)
         self.assertIs(f.parked, pl)  # "← Previous" still goes back
         self.assertEqual(f.box.show.call_args.kwargs, {"hint": daemon.SECOND_FOLLOW_UP_HINT})  # Esc closes
+        f._schedule_fade = MagicMock()
+        side.finished = True  # a side answer done, its fade stopped by the hotkey
+        f._box_cancel()
+        f._schedule_fade.assert_called_once_with(settings.get("timing", "max_show_seconds"))
 
     def test_a_queued_follow_up_lost_with_its_walkthrough_says_so(self):
         f = flippy()
