@@ -36,7 +36,7 @@ from PyObjCTools import AppHelper
 from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 
 from .. import loop, settings, themes
-from ..history import PROMPTS
+from ..history import BOX_HINT, PROMPTS
 from ..overlay import OverlayBase
 from . import hotkeys, sensors, statusicon
 from .nudge import Nudge
@@ -440,8 +440,10 @@ class InputBox:
         if editor is not None:
             editor.setSelectedRange_((len(text), 0))  # cursor at the end, like a shell
 
-    def show(self):
+    def show(self, hint=BOX_HINT):
+        """hint: the line under the field (a follow-up's says Esc goes back to the walkthrough)."""
         if self.panel:
+            self.hint.setStringValue_(hint)
             self.panel.makeKeyAndOrderFront_(None)
             return
         PROMPTS.reset()
@@ -495,7 +497,7 @@ class InputBox:
         entry.cell().setScrollable_(True)
         entry.setDelegate_(self.delegate)
         field_box.addSubview_(entry)
-        hint = NSTextField.labelWithString_("Enter to ask or get it done · ↑ earlier · Esc to close · /new · /settings")
+        hint = NSTextField.labelWithString_(hint)
         hint.setFont_(hint_font)
         hint.setTextColor_(st["hint"])
         if st.get("hint_shadow"):  # white hint on light frost: a soft shadow keeps it readable
@@ -509,7 +511,7 @@ class InputBox:
         card.addSubview_(hint)
         panel.setContentView_(root)
 
-        self.panel, self.entry = panel, entry
+        self.panel, self.entry, self.hint = panel, entry, hint
         panel.makeKeyAndOrderFront_(None)
         panel.makeFirstResponder_(entry)
         editor = entry.currentEditor()
