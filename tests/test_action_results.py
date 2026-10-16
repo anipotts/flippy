@@ -31,6 +31,7 @@ def controller(tools):
     f.ui=SimpleNamespace(action_card=SimpleNamespace(hide=Mock()))
     f.overlay=SimpleNamespace(show_text=Mock())
     f._fail=Mock(); f._schedule_fade=Mock(); f._open_setup_if=Mock(); f._act_trail=Mock(return_value=None)
+    f._remember=Mock()
     f.busy=False; f.input_disabled=False
     return f,event
 

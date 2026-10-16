@@ -61,6 +61,26 @@ class Playback:
         self.waiting = False
         return events
 
+    def park(self):
+        """Set aside for a follow-up question (#26): held at this step, no longer waiting for its click. The rest of
+        the reply can still stream in."""
+        events = [('watch_clicks', False)] if self.waiting else []
+        self.waiting = False; self.clicked_at = None
+        self.paused = True; self.pointed_step = -1
+        known = self.known()
+        if known and self.step >= len(known):  # past the last step in so far, waiting for the next: the one showing
+            self.step = len(known)-1; self.shown = float(len(known[-1].text)); self.typed_at = None
+        return events
+
+    def resume(self, now):
+        """Back from a follow-up: this step again, all its text showing, pointed at anew (and, if it waits for your
+        click, waiting again)."""
+        known = self.known()
+        self.paused = self.finished = False; self.last = now
+        if known:
+            self.step = min(self.step, len(known)-1)
+            self.shown = float(len(known[self.step].text)); self.typed_at = now
+
     def click(self, x, y, now, opts):
         if self.waiting and self.target and self.clicked_at is None:
             if math.hypot(x-self.target[0], y-self.target[1]) <= 55 * opts.pointer_size ** .5:

@@ -22,7 +22,7 @@ from .usage_guard import PlanLimitReached
 from .profile import current, Instance
 from .actions import (BACKGROUND_CATALOG, BACKGROUND_PROMPT, ActionError, AppFrame, ApprovalPolicy, DesktopTools,
                       app_id, approval_text)
-from .point import Point, image_to_logical
+from .point import Point, image_to_logical, segments
 from .playback import Playback, Options
 from .diagnostics import Diagnostics
 from . import demos
@@ -65,7 +65,18 @@ def _rounded(rect):
 THOUGHT_CHARS = 240  # the acting card shows the end of what Claude last said, not all of it
 TRAIL_THOUGHTS = 6   # the result card's thinking section: this many of the latest things Claude said...
 TRAIL_CHARS = 600    # ...up to this much in all
+CONTEXT_CHARS = 1200  # of the last question's answer, or the last task, that goes along with what's asked next
+# the overlay's placement and pin, kept for a walkthrough set aside for a follow-up
+PLACEMENT = ("pinned", "learning", "keep", "spot", "avoid", "window", "detail")
 STEP_CHARS = 100     # the acting card's title: a long label or menu path is cut, its pointer note kept
+
+
+def _cut(text, n=CONTEXT_CHARS, tail=False):
+    """text on one line, at most n chars: its start, or (tail) its end."""
+    text = " ".join(text.split())
+    if len(text) <= n:
+        return text
+    return "…" + text[1 - n:].lstrip() if tail else text[:n - 1].rstrip() + "…"
 
 
 def _last_words(text):
@@ -75,6 +86,10 @@ def _last_words(text):
 
 
 class Flippy:
+    parked = None  # (see __init__)
+    parked_tutorial = False
+    last_exchange = None  # the last question and its answer, or the last task and how it ended: context for the next
+
     def __init__(self, ui):
         self.instance = Instance(PROFILE).acquire()
         self.ui = ui
@@ -82,7 +97,7 @@ class Flippy:
         self.overlay.on_draw_done = self._draw_done
         self.overlay.on_draw_cancel = self.cancel_draw
         self.overlay.on_control = self.control
-        self.box = ui.input_box(self.submit, self.dismiss)
+        self.box = ui.input_box(self.submit, self._box_cancel)
         self.marked = False      # next question is about what the user drew
         self.gen = 0
         self.request = None
@@ -94,6 +109,8 @@ class Flippy:
         self.background_futures = set()
         self.fade_animation_id = 0
         self.play = None         # playback state of the reply being shown (see _play_tick)
+        self.parked = None       # a walkthrough set aside for a follow-up question (#26): its Playback, held at a step
+        self.parked_tutorial = False
         self.play_id = 0
         self.draw_timeout_id = 0
         self.shooter = ui.screenshotter
@@ -268,6 +285,23 @@ class Flippy:
 
     # --- flow ---
     def open_box(self):
+        if self.overlay.drawing:
+            self.cancel_draw()
+        if self.parked and self.box.visible:  # hotkey again: never mind, back to the walkthrough
+            self._resume_walkthrough()
+            return
+        if self.parked:  # another follow-up about the same step: a side answer still coming is dropped
+            req = self.request
+            if self.busy and req and req.identity != self.parked.gen:
+                req.cancel(loop.source_remove)
+                self._stop_playback()
+                self._show_parked()
+            self._cancel_fade()
+            self._show_box()
+            return
+        if self._walkthrough_up() and not self.action_tools:
+            self._follow_up()  # a walkthrough on screen: paused at its step, the rest still streaming in
+            return
         if self.busy:
             if self.action_tools:
                 self.dismiss()  # the ask hotkey also stops an action task
@@ -279,8 +313,6 @@ class Flippy:
                 self.overlay.clear()
                 self._show_box()
             return
-        if self.overlay.drawing:
-            self.cancel_draw()
         if self.box.visible:  # hotkey again toggles the box closed
             self.box.hide()
             self.focus_at_open = None
@@ -288,6 +320,81 @@ class Flippy:
         self._cancel_fade()  # keep the last answer up while typing a follow-up
         self._stop_playback()
         self._show_box()
+
+    def _walkthrough_up(self):
+        """A walkthrough you asked for is playing: more than one step, or more still coming."""
+        pl = self.play
+        if not (pl and getattr(pl, "asked", False)) or pl.finished:
+            return False
+        return len(pl.known()) > 1 or (bool(pl.known()) and not pl.done)
+
+    def _follow_up(self):
+        """Ask about the step a walkthrough is on (#26): it's set aside at that step while the question box is up,
+        and the answer shows on the side, with a way back."""
+        pl = self.play
+        self._play_events(pl.park())
+        if self.play_id:
+            loop.source_remove(self.play_id)
+            self.play_id = 0
+        self.play = None
+        self.parked, self.parked_tutorial = pl, self.tutorial
+        ov = self.overlay  # where its card was docked and whether it was pinned: back with it after a side answer
+        pl.placement = {key: getattr(ov, key, None) for key in PLACEMENT}
+        event("follow_up", step=pl.step)
+        self._cancel_fade()
+        self._show_parked()
+        self._show_box()
+
+    def _show_parked(self):
+        pl = self.parked
+        card = pl.card(time.monotonic(), self._play_options())
+        if card:
+            card["at_bottom"] = self._card_at_bottom(pl.known(), pl)
+            self.overlay.show_text(**card, **self._resume_action())  # a way back besides Esc
+
+    def _resume_walkthrough(self):
+        """Back to the walkthrough at the step it was on; a side answer still coming is dropped."""
+        pl, self.parked = self.parked, None
+        if pl is None:
+            return
+        req = self.request
+        if self.busy and req and req.identity != pl.gen:
+            req.cancel(loop.source_remove)
+        event("resume", step=pl.step)
+        self.followup_token = self.focus_at_open = None
+        self.box.hide()
+        self._stop_playback()
+        self._cancel_fade()
+        self.marked = False  # a mark drawn for the follow-up goes with it
+        self.overlay.strokes = []
+        for key, value in getattr(pl, "placement", {}).items():
+            setattr(self.overlay, key, value)
+        self.tutorial = self.parked_tutorial
+        if getattr(pl, "exchange", None):  # what's asked or done next is about the walkthrough again, not the side
+            self.last_exchange, self.asked = pl.exchange, pl.exchange["question"]
+        self.play = pl
+        pl.resume(time.monotonic())
+        self._resume_ticking()
+        self._refresh_card()
+
+    def _box_cancel(self):
+        """Esc in the question box: back to a walkthrough set aside for a follow-up, or else dismiss."""
+        if self.parked:
+            self._resume_walkthrough()
+        else:
+            self.dismiss()
+
+    def _side_context(self):
+        """What a follow-up question is about: the walkthrough's step (its text and what it points at)."""
+        pl = self.parked
+        known = pl.known()
+        step = min(pl.step, len(known) - 1)
+        seg = known[step]
+        where = f" (you're pointing at {seg.point.label})" if seg.point and seg.point.label else ""
+        total = f"{len(known)}" if pl.done else f"{len(known)} so far"
+        return (f"[A follow-up in the middle of your walkthrough, at step {step + 1} of {total}: "
+                f"\"{seg.text.strip()}\"{where}. Answer just this, briefly: I'll go back to the walkthrough after, "
+                f"so don't repeat its steps.]\n")
 
     def _show_box(self):
         event("box")
@@ -298,6 +405,23 @@ class Flippy:
     def submit(self, question, tutorial=None):
         """tutorial: steps they have to do wait for their click (":click"). None = decide from the question."""
         if not question:
+            return
+        step = self._step_note() if self.parked and question.startswith("/act") else None
+        if self.parked and question.startswith("/"):  # a command, not a follow-up: the walkthrough is dropped
+            self.parked = None
+        if self.parked and self.busy and self.request and self.request.identity == self.parked.gen:
+            # the walkthrough is still coming in: the follow-up waits for the rest (one conversation)
+            owner, token = self.request, object()
+            self.box.hide()
+            self.followup_token = token
+            def finished():
+                if self.quitting or self.followup_token is not token or not self.parked:
+                    return False
+                if not owner.drained.is_set() or self.busy:
+                    return True
+                self.submit(question, tutorial)
+                return False
+            loop.timeout_add(25, finished)
             return
         if self.busy:
             owner = self.request
@@ -320,7 +444,7 @@ class Flippy:
             return
         focus, self.focus_at_open = getattr(self, "focus_at_open", None), None  # set if this came from the box
         if question == "/act" or question.startswith("/act "):
-            status = self.act(question[4:].strip())
+            status = self.act(question[4:].strip(), step=step)
             if self.action_tools is None:
                 self.box.hide()
                 self._fail(status)
@@ -333,13 +457,21 @@ class Flippy:
             self.box.hide()
             self.open_settings()
             return
-        self.tutorial = wants_tutorial(question) if tutorial is None else tutorial
+        side = self.parked is not None  # a follow-up about a walkthrough's step: answered on the side
+        self.tutorial = False if side else wants_tutorial(question) if tutorial is None else tutorial
         event("ask", question=question, tutorial=self.tutorial)
-        offer_act = self._can_infer_act()
+        offer_act = self._can_infer_act()  # (a follow-up too: "just do it for me" on a step)
         self.act_hold, self.act_question = ("", question) if offer_act else (None, None)
+        self.act_step = self._step_note() if side else None
+        self.continued = question == CONTINUE
+        if not self.continued:  # a walkthrough going on after your click is still about what you asked
+            self.asked = question
         req = self._begin_request("tutor")
         self.box.hide()
         keep_marks = self.marked
+        question = self._ask_context() + question  # right after a desktop task: what it did
+        if side:
+            question = self._side_context() + question
         if keep_marks:
             question = ("[I drew a red mark on the screen around what I'm asking about. It's my "
                         "annotation, not part of the app.]\n" + question)
@@ -360,6 +492,8 @@ class Flippy:
         review = getattr(self, "video", None)
         if review and review.recording and mode != "video-record":
             review.cancel()
+        if mode != "tutor":
+            self.parked = None
         previous = getattr(self, "request", None)
         if previous:
             previous.cancel(loop.source_remove)
@@ -499,7 +633,8 @@ class Flippy:
 
 
     # --- explicit desktop tasks; ordinary asks never receive tools ---
-    def act(self, question):
+    def act(self, question, step=None):
+        """step: the walkthrough step they were on (_step_note), when the task came from a follow-up."""
         if not question:
             return "usage: act <task>"
         if self.busy or self.video.recording:
@@ -531,9 +666,11 @@ class Flippy:
         tools.on_thought = lambda text: loop.idle_add(lambda: self._acting(req, thought=text) and False)
         self.action_tools = tools
         self.act_status = {"step": None, "reason": None, "thought": None, "trail": []}
+        self.act_task = question
+        task = self._task_context(step) + question
         async def run():
             try:
-                return await self.brain.act(question, tools)
+                return await self.brain.act(task, tools)
             finally:
                 if tools.cleanup_failed:
                     self.input_disabled = True
@@ -692,6 +829,8 @@ class Flippy:
         except Exception as err:
             log(f"act: couldn't save what worked ({type(err).__name__})")
         self.ui.action_card.hide()
+        ended = result if not stopped else "it stopped before it finished"
+        self._remember("task", getattr(self, "act_task", ""), ended)  # for what's asked next
         if stopped:
             code = errors.ACT_REASONS.get(reason, "ACT-STOPPED")
             if error is not None and not tools.failure:  # the provider ended it: its own code
@@ -712,6 +851,52 @@ class Flippy:
             self.overlay.show_text(result, thought=self._act_trail(result), task=True)
             self._schedule_fade(settings.get("timing", "max_show_seconds"))
 
+    # --- what was just asked or done goes along with what's next: a question after a task, a task after an answer ---
+    def _remember(self, kind, question, answer):
+        self.last_exchange = {"kind": kind, "question": _cut(question or ""), "answer": _cut(answer or ""),
+                              "at": time.monotonic()}
+
+    def _recent(self):
+        last = self.last_exchange
+        return last if last and time.monotonic() - last["at"] < IDLE_RESET_S else None
+
+    def _task_context(self, step=None):
+        """For a desktop task (its own session): the question just answered or the task just done, and the
+        walkthrough step they were on."""
+        notes = []
+        last = self._recent()
+        if last and last["kind"] == "ask":
+            notes.append(f'Just before this I asked Flippy: "{last["question"]}", and it answered: "{last["answer"]}"')
+        elif last:
+            notes.append(f'Just before this you did a task for me: "{last["question"]}". It ended: "{last["answer"]}"')
+        if step:
+            notes.append(step)
+        if not notes:
+            return ""
+        return "[For context, it may or may not matter. " + " ".join(notes) + "]\n\nThe task: "
+
+    def _ask_context(self):
+        """For a question right after a desktop task: what the task was and how it ended (once; after that the
+        conversation has it)."""
+        last = self._recent()
+        if not last or last["kind"] != "task" or last.get("told"):
+            return ""
+        last["told"] = True  # (kept for a task: this question can still become one)
+        return (f'[Just before this you did a desktop task for me: "{last["question"]}". It ended: "{last["answer"]}". '
+                "I may be asking about it.]\n")
+
+    def _step_note(self):
+        """The walkthrough step a follow-up is about, in words for a task."""
+        pl = self.parked
+        known = pl.known() if pl else []
+        if not known:
+            return None
+        step = min(pl.step, len(known) - 1)
+        seg = known[step]
+        where = f" (pointing at {seg.point.label})" if seg.point and seg.point.label else ""
+        total = f"{len(known)}" if pl.done else f"{len(known)} so far"
+        return f'I was on step {step + 1} of {total} of your walkthrough: "{_cut(seg.text, 400)}"{where}.'
+
     def _act_trail(self, result=""):
         """What Claude said while the task ran, for the result card's thinking section: the last TRAIL_THOUGHTS, one
         paragraph each, without the final reply itself (Claude's last message is also the result)."""
@@ -730,7 +915,8 @@ class Flippy:
         if self.brain.dirty or (self.last_ask and time.monotonic() - self.last_ask > IDLE_RESET_S):
             await self.brain.reset()
         self.last_ask = time.monotonic()
-        await self._action_main(lambda: self._start_playback(req.identity, frame.size, frame.original_size, frame=frame), req)
+        await self._action_main(lambda: self._start_playback(req.identity, frame.size, frame.original_size, frame=frame,
+                                                                asked=True), req)
         raw = await self.brain.ask(question, frame.jpeg, frame.size,
             on_text=lambda delta: loop.idle_add(lambda: self._owns(req) and self._stream_text(req.identity, delta) and False))
         return raw, req.identity
@@ -740,10 +926,12 @@ class Flippy:
             return
         if err:
             self.act_hold = None
+            if self.parked and self.parked.gen == owner.identity:  # the walkthrough failed: nothing to go back to
+                self.parked = None
             self._stop_playback()
             shown, logged = errors.describe(err)
             log("error", logged)  # the code and the error's first line, never the question
-            self._fail(shown)
+            self._fail(shown, **self._resume_action())  # (a side answer that failed: the way back stays)
             self._open_setup_if(setup_gate.login_error, err)
             return
         raw, gen = result
@@ -752,15 +940,22 @@ class Flippy:
             # They asked Flippy to do it, not how: the same words become a desktop task, with its approvals.
             event("answer", outcome="act")
             self._stop_playback()
-            status = self.act(self.act_question)
+            status = self.act(self.act_question, step=getattr(self, "act_step", None))
             if self.action_tools is None:
                 self._fail(status)
             return
         event("answer", outcome="completed")
-        if self.play and self.play.gen == gen:
+        answer = " ".join(seg.text for seg in segments(raw, True))
+        last = getattr(self, "continued", False) and self._recent()
+        if last and last["kind"] == "ask":  # a walkthrough going on after your click: the steps before it too
+            answer = _cut(last["answer"] + " " + answer, tail=True)  # (the latest steps, if it's long)
+        self._remember("ask", getattr(self, "asked", ""), answer)
+        pl = self._playback_of(gen)
+        if pl:
+            pl.exchange = self.last_exchange  # back as the latest after a follow-up's side answer
             if held:
-                self.play.append(held)
-            self.play.finish(raw)
+                pl.append(held)
+            pl.finish(raw)
 
     # --- playback: show the reply step by step, moving the hand to each point ---
     # The player skins' controls (control()) can pause, step back/forward, seek and replay.
@@ -803,16 +998,23 @@ class Flippy:
             ov.keep = (min(ax, bx), min(ay, by), abs(bx - ax), abs(by - ay))
         log(f"placement: learning, keep {_rounded(ov.keep)}")
 
-    def _start_playback(self, gen, img_size, shot_size, frame=None):
+    def _start_playback(self, gen, img_size, shot_size, frame=None, asked=False):
+        """asked: the answer to a question (not a video review or a demo): a walkthrough can take a follow-up."""
         if gen != self.gen:
             return
         self._stop_playback()
         self.play = Playback(time.monotonic())
         self.play.gen, self.play.img, self.play.shot, self.play.frame = gen, img_size, shot_size, frame
+        self.play.asked = asked
         self._resume_ticking()
 
+    def _playback_of(self, gen):
+        """The reply that request gen is streaming into: on screen, or set aside for a follow-up."""
+        return next((pl for pl in (self.play, self.parked) if pl and pl.gen == gen), None)
+
     def _stream_text(self, gen, delta):
-        if not (self.play and self.play.gen == gen):
+        pl = self._playback_of(gen)
+        if not pl:
             return
         if self.act_hold is not None:
             self.act_hold += delta
@@ -820,7 +1022,7 @@ class Flippy:
             if ACT_TAG.startswith(start) or start.startswith(ACT_TAG):
                 return  # could still be [ACT]: show nothing yet
             delta, self.act_hold = self.act_hold, None
-        self.play.append(delta)
+        pl.append(delta)
 
     def _stop_playback(self):
         if self.play:
@@ -835,8 +1037,8 @@ class Flippy:
             self.play.last = time.monotonic()
             self.play_id = loop.timeout_add(33, self._play_tick)
 
-    def _play_coords(self, point):
-        pl = self.play
+    def _play_coords(self, point, pl=None):
+        pl = pl or self.play
         if pl.frame:
             return pl.frame.to_logical(point.x, point.y, clamp=True)
         return image_to_logical(point, pl.img, pl.shot, self._scale())
@@ -860,12 +1062,13 @@ class Flippy:
                     ov = self.overlay
                     log(f"placement: answer shown {ov.card_mode}" + (f" at {tuple(round(v) for v in ov.spot if v is not None)}"
                                                                       if ov.card_mode == "dock" and ov.spot else ""))
-                if self.play and not self.play.paused:
-                    self._schedule_fade(payload)
+                if self.play and not self.play.paused:  # a side answer stays longer: time to go back to the walkthrough
+                    longest = settings.get("timing", "max_show_seconds")
+                    self._schedule_fade(max(payload, longest) if self.parked else payload)
             elif kind == "cancel_fade":
                 self._cancel_fade()
             elif kind == "empty":
-                self.overlay.show_text(payload, progress=1.0, finished=True, controls=True)
+                self.overlay.show_text(payload, progress=1.0, finished=True, controls=True, **self._resume_action())
 
     def _play_tick(self):
         pl = self.play
@@ -889,7 +1092,23 @@ class Flippy:
         card = pl.card(now, self._play_options())
         if card:
             card["at_bottom"] = self._card_at_bottom(pl.known())
+            card.update(self._resume_action() or self._follow_up_hint(pl))
             self.overlay.show_text(**card)
+
+    def _follow_up_hint(self, pl):
+        """A walkthrough's card says how to ask about its step (as show_text fields): {} if it can't."""
+        if not self._walkthrough_up():
+            return {}
+        combo = (settings.get("keys", "ask"), int(time.monotonic() // 5))  # (COSMIC's are set outside Flippy)
+        if getattr(pl, "hint", (None,))[0] != combo:  # (worked out again now and then: on COSMIC it reads a file)
+            key_label = getattr(self.ui, "key_label", None)
+            label = key_label and key_label("ask")
+            pl.hint = (combo, (None, "Follow up", tuple(themes.split_keys(label))) if label else None)
+        return {"actions": (pl.hint[1],)} if pl.hint[1] else {}
+
+    def _resume_action(self):
+        """A side answer's way back to the walkthrough it's about (as show_text fields), or {}."""
+        return {"actions": (("resume", f"← Back to step {self.parked.step + 1}"),)} if self.parked else {}
 
     def _listen_for_click(self, on):
         if hasattr(self.ui, "watch_clicks"):
@@ -902,12 +1121,12 @@ class Flippy:
     def _continue_tutorial(self):
         event("tutorial_continue")
         self._stop_playback()
-        self.submit("Done, I did that. Continue the walkthrough from here.", tutorial=True)
+        self.submit(CONTINUE, tutorial=True)
 
-    def _card_at_bottom(self, segs):
+    def _card_at_bottom(self, segs, pl=None):
         for seg in segs:
             if seg.point:
-                _, y = self._play_coords(seg.point)
+                _, y = self._play_coords(seg.point, pl)
                 return y < self.ui.screen_size()[1] / 2
         return False
 
@@ -919,6 +1138,9 @@ class Flippy:
             return
         if name == "pin":
             self.toggle_pin()
+            return
+        if name == "resume":
+            self._resume_walkthrough()
             return
         if name == "thought":  # the thinking section opens and folds
             ov = self.overlay
@@ -935,6 +1157,8 @@ class Flippy:
             cur = settings.get("timing", "speed")
             settings.set("timing", "speed", next((o for o in options if o > cur + 0.01), options[0]))
             return
+        if self.parked and not self.play:  # the walkthrough's own controls while it's set aside: back to it first
+            self._resume_walkthrough()
         if self.play:
             self._play_events(self.play.control(name, frac, time.monotonic(), self._play_options()))
             if self.play and not self.play.stopped:
@@ -1012,6 +1236,7 @@ class Flippy:
 
     def dismiss(self):
         self.followup_token = None
+        self.parked = None
         self.focus_at_open = None  # the box closed without a question
         req = getattr(self, "request", None)
         if self.action_tools:
@@ -1402,6 +1627,8 @@ class Flippy:
         self.marked = False
         self.focus_at_open = None
         self.overlay.clear()
+        if self.parked:  # drawing for a follow-up, then not: back to the walkthrough
+            self._resume_walkthrough()
 
     # --- fading ---
     def _schedule_fade(self, seconds):
@@ -1444,6 +1671,7 @@ class Flippy:
             if opacity <= 0:
                 self.fade_animation_id = 0
                 self._stop_playback()
+                self.parked = None
                 self.overlay.clear()
                 event("cleared")
                 return False
@@ -1468,6 +1696,7 @@ DO_RE = re.compile(r"^(?:(?:ok|okay|now|then|next|and|also|cool|nice)[,!]?\s+)*(
                    r"start|bring in|layer)\b")
 
 
+CONTINUE = "Done, I did that. Continue the walkthrough from here."  # asked for you after a walkthrough's last click
 ACT_TAG = "[ACT]"  # the tutor's whole reply when a question asks Flippy to do something (brain.SYSTEM_PROMPT)
 
 

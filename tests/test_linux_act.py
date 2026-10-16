@@ -371,7 +371,7 @@ class LinuxTools(unittest.IsolatedAsyncioTestCase):
         f = SimpleNamespace(busy=False, video=SimpleNamespace(recording=False), input_disabled=False, ui=ui,
                             box=Mock(), _begin_request=Mock(return_value=Mock()),
                             _run_request=Mock(side_effect=lambda req, coro, *a: coro.close()),
-                            _acting=Mock(), brain=Mock())
+                            _acting=Mock(), brain=Mock(), _task_context=Mock(return_value=""))
         with patch.object(daemon, "DesktopTools", Tools), patch.object(daemon.settings, "get", return_value="per_app"):
             daemon.Flippy.act(f, "write a haiku")
         self.assertIs(seen["catalog"], self.act.CATALOG)

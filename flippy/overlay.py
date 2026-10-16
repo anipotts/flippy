@@ -258,6 +258,8 @@ class OverlayBase:
                 hits["pin"] = theme.pin_rect(self.card, x, y, cw, ch, opts)
             if self.card.task and self.card.thought:  # a desktop task's thinking section, inside its card
                 hits["thought"] = theme.draw_thought(cr, self.card, x, y, cw, ch, opts)
+            if self.card.actions:  # a walkthrough's "Follow up", a side answer's way back to it
+                hits.update(theme.draw_actions(cr, self.card, x, y, cw, ch, opts))
         if self.target and self.pos:  # over the card: a docked card never hides what it's pointing at
             themes.draw_pointer(cr, theme, self.pointer_style(), *self.pos, now - self.t0,
                                 settings.get("look", "pointer_size"), h, backdrop=self.has_backdrop)
