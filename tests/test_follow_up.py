@@ -149,7 +149,7 @@ class FollowUp(unittest.TestCase):
         self.assertIn("not a tutorial", question)
         self.assertFalse(f.tutorial)
         self.assertIsNotNone(f.parked)  # kept until they go back or drop it
-        self.assertEqual(f._resume_action(), {"actions": (("resume", "← Back to step 1"),)})
+        self.assertEqual(f._resume_action(), {"actions": (("resume", "← Previous"),)})
 
     def test_a_walkthrough_still_streaming_finishes_before_the_follow_up_is_asked(self):
         f = flippy()
@@ -290,7 +290,7 @@ class FollowUp(unittest.TestCase):
         f.box.visible = True
         f._box_cancel()
         self.assertIs(f.play, side)
-        self.assertIs(f.parked, pl)  # "← Back to step N" still goes back
+        self.assertIs(f.parked, pl)  # "← Previous" still goes back
 
     def test_a_queued_follow_up_lost_with_its_walkthrough_says_so(self):
         f = flippy()

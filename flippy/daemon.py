@@ -1153,7 +1153,7 @@ class Flippy:
         """A side answer's way back to the walkthrough it's about (as show_text fields), or {}."""
         if not self.parked:
             return {}
-        back = ("resume", f"← Back to step {self.parked.step + 1}")
+        back = ("resume", "← Previous")  # (back to the walkthrough, at its step)
         return {"actions": ((None, "Asking when the rest is in…"), back) if self.followup_pending else (back,)}
 
     def _listen_for_click(self, on):
