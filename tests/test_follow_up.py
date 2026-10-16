@@ -170,6 +170,114 @@ class FollowUp(unittest.TestCase):
         self.queue.run()
         self.assertIn("why?", f._ask.call_args.args[0])
 
+    def test_a_follow_up_that_changes_the_plan_replaces_the_rest(self):
+        f = flippy()
+        self.follow_up(f)
+        f._run_request, f._ask = MagicMock(), MagicMock()
+        f._begin_request = lambda mode: Request(6, mode)
+        f.submit("actually I want to print it")
+        self.assertIn(daemon.PLAN_TAG, f._ask.call_args.args[0])  # Claude is told how
+        self.assertFalse(f.tutorial)
+        f.gen = 6
+        f._start_playback(6, (1000, 800), (1000, 800), asked=True)
+        for delta in ("[NEW", " PLAN] Open ", "Print [POINT:5,6:Print]."):
+            f._stream_text(6, delta)
+        self.assertIsNone(f.parked)  # the walkthrough set aside is gone...
+        self.assertTrue(f.tutorial)  # ...and the new steps wait for clicks like it did
+        self.assertEqual(f.play.raw, "Open Print [POINT:5,6:Print].")
+        self.assertEqual(f._resume_action(), {})
+
+    def test_a_new_plan_held_to_the_end_still_replaces_the_rest(self):
+        f = flippy()
+        self.follow_up(f)
+        f._run_request, f._ask = MagicMock(), MagicMock()
+        f._begin_request = lambda mode: Request(6, mode)
+        f._owns = lambda req: True
+        f.submit("print instead")
+        f.gen = 6
+        f._start_playback(6, (1000, 800), (1000, 800), asked=True)
+        f._stream_text(6, "[NEW PLAN]")
+        f._on_answer(("[NEW PLAN]Print [POINT:5,6:Print].", 6), None, Request(6, "tutor"))
+        self.assertIsNone(f.parked)
+        self.assertEqual(f.play.raw, "Print [POINT:5,6:Print].")
+
+    def test_a_plain_side_answer_keeps_the_walkthrough(self):
+        f = flippy()
+        self.follow_up(f)
+        f._run_request, f._ask = MagicMock(), MagicMock()
+        f._begin_request = lambda mode: Request(6, mode)
+        f.submit("what's that?")
+        f.gen = 6
+        f._start_playback(6, (1000, 800), (1000, 800), asked=True)
+        f._stream_text(6, "[")
+        self.assertEqual(f.play.raw, "")  # could still be the tag
+        f._stream_text(6, "File] is the menu.")
+        self.assertEqual(f.play.raw, "[File] is the menu.")
+        self.assertIsNotNone(f.parked)
+
+    def test_the_box_says_esc_goes_back(self):
+        f = flippy()
+        self.follow_up(f)
+        self.assertEqual(f.box.show.call_args.kwargs, {"hint": daemon.FOLLOW_UP_HINT})
+
+    def test_a_side_answer_ticks_no_tour_step(self):
+        f = flippy()
+        self.follow_up(f)
+        f._play_events([("finish", 5)])
+        names = [c.args[0] for c in daemon.event.call_args_list]
+        self.assertIn("side_answer_done", names)
+        self.assertNotIn("answer_done", names)
+
+    def test_the_hotkey_while_drawing_a_mark_for_a_follow_up_keeps_the_walkthrough(self):
+        f = flippy()
+        pl = self.follow_up(f)
+        f.overlay.drawing = True
+        def cancel_draw():  # (the real one goes back to a walkthrough set aside)
+            f.overlay.drawing = False
+            if f.parked:
+                f._resume_walkthrough()
+        f.cancel_draw = cancel_draw
+        f.box.show.reset_mock()
+        daemon.Flippy.open_box(f)
+        self.assertIs(f.parked, pl)
+        f.box.show.assert_called_once()
+
+    def test_a_queued_follow_up_says_so_and_waits_for_a_second_one(self):
+        f = flippy()
+        req = f.request = Request(5, "tutor")
+        f.busy = True
+        self.follow_up(f)
+        f.submit("why?")
+        self.assertEqual(f.overlay.show_text.call_args.kwargs["actions"][0], (None, "Asking when the rest is in…"))
+        f.box.visible = True  # typing another
+        f._ask, f._run_request = MagicMock(), MagicMock()
+        f._begin_request = lambda mode: Request(6, mode)
+        req.drained.set()
+        f.busy = False
+        self.queue.run()
+        f._ask.assert_not_called()
+        f.busy = True
+        f.submit("and where?")
+        f.box.visible = f.busy = False
+        self.queue.run()
+        f._ask.assert_called_once()
+        self.assertIn("why?\nand where?", f._ask.call_args.args[0])
+
+    def test_a_queued_follow_up_lost_with_its_walkthrough_says_so(self):
+        f = flippy()
+        req = f.request = Request(5, "tutor")
+        f.busy = True
+        self.follow_up(f)
+        f.submit("why?")
+        f._owns = lambda r: True
+        f._fail = MagicMock()
+        with patch.object(daemon.errors, "describe", return_value=("It failed.", "X")), \
+                patch.object(daemon, "log"), patch.object(daemon.Flippy, "_open_setup_if"):
+            f._on_answer(None, RuntimeError("x"), req)
+        self.assertIsNone(f.parked)
+        self.assertEqual(f._fail.call_args.kwargs, {"actions": ((None, daemon.LOST_FOLLOW_UP),)})
+        self.assertIsNone(f.followup_pending)
+
     def test_back_to_the_step_drops_a_side_answer_still_coming(self):
         f = flippy()
         pl = self.follow_up(f)
@@ -184,6 +292,9 @@ class FollowUp(unittest.TestCase):
         self.follow_up(f)
         with patch.object(daemon.Flippy, "open_settings"):
             f.submit("/settings")
+        self.assertIsNotNone(f.parked)  # (settings: the walkthrough's still there after)
+        with patch.object(daemon.Flippy, "reset_session"):
+            f.submit("/new")
         self.assertIsNone(f.parked)
         f = flippy()
         self.follow_up(f)

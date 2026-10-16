@@ -26,6 +26,7 @@ from .point import Point, image_to_logical, segments
 from .playback import Playback, Options
 from .diagnostics import Diagnostics
 from . import demos
+from .history import FOLLOW_UP_HINT
 
 PROFILE = current()
 SOCK_PATH = PROFILE.socket
@@ -88,6 +89,8 @@ def _last_words(text):
 class Flippy:
     parked = None  # (see __init__)
     parked_tutorial = False
+    followup_pending = None  # a follow-up waiting for its walkthrough to finish coming in (see submit)
+    may_replan = False  # the reply streaming in is a follow-up's: it can start with PLAN_TAG
     last_exchange = None  # the last question and its answer, or the last task and how it ended: context for the next
 
     def __init__(self, ui):
@@ -286,7 +289,9 @@ class Flippy:
     # --- flow ---
     def open_box(self):
         if self.overlay.drawing:
-            self.cancel_draw()
+            parked, self.parked = self.parked, None
+            self.cancel_draw()  # (without going back to a walkthrough set aside: it's another follow-up)
+            self.parked = parked
         if self.parked and self.box.visible:  # hotkey again: never mind, back to the walkthrough
             self._resume_walkthrough()
             return
@@ -295,6 +300,7 @@ class Flippy:
             if self.busy and req and req.identity != self.parked.gen:
                 req.cancel(loop.source_remove)
                 self._stop_playback()
+            if not self.play:
                 self._show_parked()
             self._cancel_fade()
             self._show_box()
@@ -361,7 +367,7 @@ class Flippy:
         if self.busy and req and req.identity != pl.gen:
             req.cancel(loop.source_remove)
         event("resume", step=pl.step)
-        self.followup_token = self.focus_at_open = None
+        self.followup_token = self.focus_at_open = self.followup_pending = None
         self.box.hide()
         self._stop_playback()
         self._cancel_fade()
@@ -376,6 +382,18 @@ class Flippy:
         pl.resume(time.monotonic())
         self._resume_ticking()
         self._refresh_card()
+
+    def _new_plan(self):
+        """The follow-up changed what to do: its answer is the walkthrough from here, and the one set aside is
+        dropped (its pin and place carry over)."""
+        pl, self.parked = self.parked, None
+        self.may_replan = False
+        if pl is None:
+            return
+        event("new_plan", step=pl.step)
+        for key, value in getattr(pl, "placement", {}).items():
+            setattr(self.overlay, key, value)
+        self.tutorial = self.parked_tutorial
 
     def _box_cancel(self):
         """Esc in the question box: back to a walkthrough set aside for a follow-up, or else dismiss."""
@@ -394,31 +412,36 @@ class Flippy:
         total = f"{len(known)}" if pl.done else f"{len(known)} so far"
         return (f"[A follow-up in the middle of your walkthrough, at step {step + 1} of {total}: "
                 f"\"{seg.text.strip()}\"{where}. Answer just this, briefly: I'll go back to the walkthrough after, "
-                f"so don't repeat its steps.]\n")
+                f"so don't repeat its steps. But if what I ask changes what to do from here (another way, or something "
+                f"else to do), start your reply with {PLAN_TAG} and give the new steps from here instead.]\n")
 
     def _show_box(self):
         event("box")
         # Before the box takes the keyboard: Electron apps (VS Code) stop reporting their focus once it does.
         self.focus_at_open = self.ui.focused() if hasattr(self.ui, "focused") else None
-        self.box.show()
+        self.box.show(**({"hint": FOLLOW_UP_HINT} if self.parked else {}))
 
     def submit(self, question, tutorial=None):
         """tutorial: steps they have to do wait for their click (":click"). None = decide from the question."""
         if not question:
             return
         step = self._step_note() if self.parked and question.startswith("/act") else None
-        if self.parked and question.startswith("/"):  # a command, not a follow-up: the walkthrough is dropped
+        if self.parked and question.split(" ")[0] in ("/act", "/new", "/reset"):  # not a follow-up: it's dropped
             self.parked = None
         if self.parked and self.busy and self.request and self.request.identity == self.parked.gen:
             # the walkthrough is still coming in: the follow-up waits for the rest (one conversation)
             owner, token = self.request, object()
             self.box.hide()
-            self.followup_token = token
+            if self.followup_pending and self.followup_token:  # a second one before the first was asked: both
+                question = self.followup_pending + "\n" + question
+            self.followup_token, self.followup_pending = token, question
+            self._show_parked()  # (it says the follow-up is waiting)
             def finished():
                 if self.quitting or self.followup_token is not token or not self.parked:
                     return False
-                if not owner.drained.is_set() or self.busy:
+                if not owner.drained.is_set() or self.busy or self.box.visible:  # (or typing another: that too)
                     return True
+                self.followup_pending = None
                 self.submit(question, tutorial)
                 return False
             loop.timeout_add(25, finished)
@@ -462,6 +485,9 @@ class Flippy:
         event("ask", question=question, tutorial=self.tutorial)
         offer_act = self._can_infer_act()  # (a follow-up too: "just do it for me" on a step)
         self.act_hold, self.act_question = ("", question) if offer_act else (None, None)
+        self.may_replan = side
+        if side:
+            self.act_hold = ""  # (held while it could still start with PLAN_TAG)
         self.act_step = self._step_note() if side else None
         self.continued = question == CONTINUE
         if not self.continued:  # a walkthrough going on after your click is still about what you asked
@@ -926,17 +952,25 @@ class Flippy:
             return
         if err:
             self.act_hold = None
+            fields = self._resume_action()  # (a side answer that failed: the way back stays)
             if self.parked and self.parked.gen == owner.identity:  # the walkthrough failed: nothing to go back to
                 self.parked = None
+                fields = {"actions": ((None, LOST_FOLLOW_UP),)} if self.followup_pending else {}
+                self.followup_token = self.followup_pending = None
             self._stop_playback()
             shown, logged = errors.describe(err)
             log("error", logged)  # the code and the error's first line, never the question
-            self._fail(shown, **self._resume_action())  # (a side answer that failed: the way back stays)
+            self._fail(shown, **fields)
             self._open_setup_if(setup_gate.login_error, err)
             return
         raw, gen = result
         held, self.act_hold = self.act_hold, None
-        if held is not None and raw.lstrip().startswith(ACT_TAG):
+        if raw.lstrip().startswith(PLAN_TAG):  # (a follow-up's new plan, if it never got past the hold)
+            raw = raw.lstrip()[len(PLAN_TAG):].lstrip()
+            if self.may_replan and self._playback_of(gen) is self.play:
+                self._new_plan()
+        self.may_replan = False
+        if held is not None and self.act_question and raw.lstrip().startswith(ACT_TAG):
             # They asked Flippy to do it, not how: the same words become a desktop task, with its approvals.
             event("answer", outcome="act")
             self._stop_playback()
@@ -1019,9 +1053,12 @@ class Flippy:
         if self.act_hold is not None:
             self.act_hold += delta
             start = self.act_hold.lstrip()
-            if ACT_TAG.startswith(start) or start.startswith(ACT_TAG):
-                return  # could still be [ACT]: show nothing yet
+            if ACT_TAG.startswith(start) or start.startswith(ACT_TAG) or self.may_replan and PLAN_TAG.startswith(start):
+                return  # could still be [ACT] (or a follow-up's new plan): show nothing yet
             delta, self.act_hold = self.act_hold, None
+            if self.may_replan and start.startswith(PLAN_TAG):
+                delta = start[len(PLAN_TAG):].lstrip()
+                self._new_plan()
         pl.append(delta)
 
     def _stop_playback(self):
@@ -1058,7 +1095,7 @@ class Flippy:
                 self._continue_tutorial()
             elif kind in ("finish", "fade"):
                 if kind == "finish":
-                    event("answer_done")
+                    event("side_answer_done" if self.parked else "answer_done")  # (a side answer ticks no tour step)
                     ov = self.overlay
                     log(f"placement: answer shown {ov.card_mode}" + (f" at {tuple(round(v) for v in ov.spot if v is not None)}"
                                                                       if ov.card_mode == "dock" and ov.spot else ""))
@@ -1108,7 +1145,10 @@ class Flippy:
 
     def _resume_action(self):
         """A side answer's way back to the walkthrough it's about (as show_text fields), or {}."""
-        return {"actions": (("resume", f"← Back to step {self.parked.step + 1}"),)} if self.parked else {}
+        if not self.parked:
+            return {}
+        back = ("resume", f"← Back to step {self.parked.step + 1}")
+        return {"actions": ((None, "Asking when the rest is in…"), back) if self.followup_pending else (back,)}
 
     def _listen_for_click(self, on):
         if hasattr(self.ui, "watch_clicks"):
@@ -1235,7 +1275,7 @@ class Flippy:
             begin()
 
     def dismiss(self):
-        self.followup_token = None
+        self.followup_token = self.followup_pending = None
         self.parked = None
         self.focus_at_open = None  # the box closed without a question
         req = getattr(self, "request", None)
@@ -1697,6 +1737,8 @@ DO_RE = re.compile(r"^(?:(?:ok|okay|now|then|next|and|also|cool|nice)[,!]?\s+)*(
 
 
 CONTINUE = "Done, I did that. Continue the walkthrough from here."  # asked for you after a walkthrough's last click
+PLAN_TAG = "[NEW PLAN]"  # a follow-up's reply that replaces the rest of the walkthrough (_side_context)
+LOST_FOLLOW_UP = "Your follow-up wasn't asked: ↑ in the box brings it back"
 ACT_TAG = "[ACT]"  # the tutor's whole reply when a question asks Flippy to do something (brain.SYSTEM_PROMPT)
 
 

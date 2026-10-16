@@ -30,7 +30,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
 
 from .. import loop, pointers, settings, themes  # noqa: E402
-from ..history import PROMPTS  # noqa: E402
+from ..history import BOX_HINT, PROMPTS  # noqa: E402
 from ..overlay import OverlayBase  # noqa: E402
 from . import act, keyboard, pointer_editor, preload, sensors, wl  # noqa: E402
 from .notice import Notice, NoticeLayer  # noqa: E402
@@ -278,8 +278,10 @@ class InputBox:
     def visible(self):
         return self.win is not None
 
-    def show(self):
+    def show(self, hint=BOX_HINT):
+        """hint: the line under the field (a follow-up's says Esc goes back to the walkthrough)."""
         if self.win:
+            self.hint.set_label(hint)
             self.win.present()
             return
         PROMPTS.reset()
@@ -291,7 +293,7 @@ class InputBox:
         card.add_css_class("flippy-card")
         card.set_size_request(560, -1)
         entry = Gtk.Entry(placeholder_text=theme.placeholder)
-        hint = Gtk.Label(label="Enter to ask or get it done · ↑ earlier · Esc to close · /new · /settings", xalign=0)
+        hint = Gtk.Label(label=hint, xalign=0)
         hint.add_css_class("flippy-hint")
         card.append(entry)
         card.append(hint)
@@ -306,7 +308,7 @@ class InputBox:
         win.add_controller(keys)
         win.connect("close-request", lambda w: (self.on_cancel(), True)[1])
         self.win = win
-        self.entry = entry
+        self.entry, self.hint = entry, hint
         win.present()
         entry.grab_focus()
 

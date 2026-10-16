@@ -12,17 +12,18 @@ from flippy.point import segments as point_segments
 def controller(infer=True, platform_acts=True):
     tree = ast.parse((Path(__file__).parents[1] / "flippy/daemon.py").read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Flippy")
-    tag = next(n for n in tree.body if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "ACT_TAG")
+    tags = {n.targets[0].id: ast.literal_eval(n.value) for n in tree.body
+            if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in ("ACT_TAG", "PLAN_TAG")}
     names = ("_on_answer", "_stream_text", "_can_infer_act", "_playback_of", "_resume_action")
     ns = {"event": Mock(), "settings": SimpleNamespace(get=lambda section, key: infer),
-          "ACT_TAG": ast.literal_eval(tag.value), "segments": point_segments}
+          **tags, "segments": point_segments}
     for n in cls.body:
         if isinstance(n, ast.FunctionDef) and n.name in names:
             exec(compile(ast.Module(body=[n], type_ignores=[]), "<controller>", "exec"), ns)
     f = type("Controller", (), {name: ns[name] for name in names})()
     f.ui = SimpleNamespace(app_look=Mock()) if platform_acts else SimpleNamespace()
     f.marked = f.input_disabled = False
-    f.parked = None
+    f.parked, f.may_replan = None, False
     f.video = SimpleNamespace(recording=False)
     f.play = SimpleNamespace(gen=1, text="", append=lambda d: setattr(f.play, "text", f.play.text + d),
                              finish=Mock())
