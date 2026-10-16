@@ -293,7 +293,7 @@ class Flippy:
             self.cancel_draw()  # (without going back to a walkthrough set aside: it's another follow-up)
             self.parked = parked
         if self.parked and self.box.visible:  # hotkey again: never mind, back to the walkthrough
-            self._resume_walkthrough()
+            self._box_cancel()
             return
         if self.parked:  # another follow-up about the same step: a side answer still coming is dropped
             req = self.request
@@ -368,6 +368,7 @@ class Flippy:
             req.cancel(loop.source_remove)
         event("resume", step=pl.step)
         self.followup_token = self.focus_at_open = self.followup_pending = None
+        self.act_hold, self.may_replan = None, False  # (a side answer dropped: nothing's held for it)
         self.box.hide()
         self._stop_playback()
         self._cancel_fade()
@@ -397,7 +398,11 @@ class Flippy:
 
     def _box_cancel(self):
         """Esc in the question box: back to a walkthrough set aside for a follow-up, or else dismiss."""
-        if self.parked:
+        if self.parked and self.followup_pending:  # never mind this one: the follow-up already waiting stays
+            self.focus_at_open = None
+            self.box.hide()
+            self._show_parked()
+        elif self.parked:
             self._resume_walkthrough()
         else:
             self.dismiss()
@@ -1276,7 +1281,7 @@ class Flippy:
 
     def dismiss(self):
         self.followup_token = self.followup_pending = None
-        self.parked = None
+        self.parked, self.may_replan = None, False
         self.focus_at_open = None  # the box closed without a question
         req = getattr(self, "request", None)
         if self.action_tools:

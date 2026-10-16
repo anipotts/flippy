@@ -263,6 +263,23 @@ class FollowUp(unittest.TestCase):
         f._ask.assert_called_once()
         self.assertIn("why?\nand where?", f._ask.call_args.args[0])
 
+    def test_esc_on_a_second_follow_up_keeps_the_first_waiting(self):
+        f = flippy()
+        f.request = Request(5, "tutor")
+        f.busy = True
+        pl = self.follow_up(f)
+        f.submit("why?")
+        f.box.visible = True
+        f._box_cancel()  # Esc: never mind the second one
+        self.assertIs(f.parked, pl)
+        self.assertEqual(f.followup_pending, "why?")
+        f.box.hide.assert_called()
+        daemon.Flippy.open_box(f)  # the hotkey again does the same
+        self.assertIs(f.parked, pl)
+        f.control("resume")  # the way back drops it
+        self.assertIsNone(f.followup_pending)
+        self.assertFalse(f.may_replan)
+
     def test_a_queued_follow_up_lost_with_its_walkthrough_says_so(self):
         f = flippy()
         req = f.request = Request(5, "tutor")
