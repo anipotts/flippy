@@ -67,7 +67,7 @@ if __name__ == "__main__":
 
 
 class DaemonRemembers(unittest.TestCase):
-    """flippy/daemon.py _remember: what a finished question or task saves."""
+    """flippy/daemon.py _save_history: what a finished question or task saves."""
     def remember(self):
         import ast
         from pathlib import Path
@@ -75,12 +75,12 @@ class DaemonRemembers(unittest.TestCase):
         from flippy.point import segments
         tree = ast.parse((Path(__file__).parents[1] / "flippy/daemon.py").read_text())
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Flippy")
-        node = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_remember")
+        node = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_save_history")
         self.store = mock.Mock()
         ns = {"segments": segments, "history_store": self.store, "log": mock.Mock(),
               "settings": SimpleNamespace(get=lambda s, k: "claude")}
         exec(compile(ast.Module(body=[node], type_ignores=[]), "<remember>", "exec"), ns)
-        return ns["_remember"], SimpleNamespace
+        return ns["_save_history"], SimpleNamespace
 
     def test_answer_steps_without_tags(self):
         remember, NS = self.remember()

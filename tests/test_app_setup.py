@@ -70,6 +70,42 @@ class MacSetup(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.mac.act("rm -rf")
 
+    def test_claude_action_uses_browser_login_and_reports_start_failure(self):
+        with mock.patch.object(self.mac, "logged_in", return_value=False), \
+                mock.patch.object(self.mac, "claude_cli", return_value="fixture-claude"), \
+                mock.patch.object(self.mac.claude_login, "start") as start, \
+                mock.patch.object(self.mac.claude_login, "waiting", return_value=True), \
+                mock.patch.object(self.mac, "_claude_failed", False), \
+                mock.patch.object(self.mac.subprocess, "Popen") as popen:
+            start.return_value = True
+            self.mac.act("claude")
+            start.assert_called_once_with("fixture-claude")
+            self.assertTrue(self.mac.state()["claude_waiting"])
+            self.assertFalse(self.mac.state()["claude_failed"])
+            start.return_value = False
+            self.mac.act("claude")
+            self.assertTrue(self.mac.state()["claude_failed"])
+            popen.assert_not_called()
+
+    def test_connected_claude_requires_reconnect_confirmation_unless_waiting(self):
+        with mock.patch.object(self.mac, "logged_in", return_value=True), \
+                mock.patch.object(self.mac, "claude_cli", return_value="fixture-claude"), \
+                mock.patch.object(self.mac.claude_login, "start") as start, \
+                mock.patch.object(self.mac.claude_login, "waiting", return_value=False) as waiting, \
+                mock.patch.object(self.mac, "confirm_claude_reconnect", return_value=False) as confirm, \
+                mock.patch.object(self.mac, "_claude_failed", False):
+            self.mac.act("claude")
+            confirm.assert_called_once()
+            start.assert_not_called()
+            confirm.return_value = True
+            self.mac.act("claude")
+            start.assert_called_once_with("fixture-claude")
+            waiting.return_value = True
+            confirm.reset_mock()
+            self.mac.act("claude")
+            confirm.assert_not_called()
+            self.assertEqual(start.call_count, 2)
+
     def test_permission_actions_open_only_their_panes(self):
         with mock.patch.object(self.mac.subprocess, "Popen") as popen, \
                 mock.patch.object(self.mac, "CGRequestScreenCaptureAccess") as ask:

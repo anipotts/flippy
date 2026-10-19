@@ -241,8 +241,7 @@ class Tray:
         return self.platform.command(cmd)
 
     def shortcuts(self):
-        from .. import shortcuts
-        from .setup import SHORTCUTS, flippy_shortcuts, pretty_accel
+        from .setup import flippy_shortcuts, pretty_accel
         out = {}
         for accel, args in flippy_shortcuts():
             out.setdefault({"": "ask"}.get(args, args), pretty_accel(accel))

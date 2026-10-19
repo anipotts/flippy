@@ -11,10 +11,12 @@ const status = (ok, yes, no) => el("span", { class: "status" + (ok ? " ok" : "")
 
 function providerRow(key, title, connected) {
   const logo = last.logos && last.logos[key];
+  const message = key === "claude" && last.claude_waiting ? "Finish in your browser" :
+    key === "claude" && last.claude_failed ? "Couldn't open sign-in" : null;
   return el("div", { class: "row" },
     el("div", { class: "text with-icon" },
       logo ? el("img", { class: "logo " + key, src: logo, alt: "" }) : null,
-      el("div", {}, el("span", { class: "label" }, title), status(connected, "Connected", "Not connected"))),
+      el("div", {}, el("span", { class: "label" }, title), status(!message && connected, "Connected", message || "Not connected"))),
     el("div", { class: "control" }, el("button", { class: "btn", onclick: () => act(key) },
       connected ? "Reconnect…" : key === "claude" ? "Log in…" : "Sign in…")));
 }

@@ -113,7 +113,6 @@ _OPTIONS = {
     ('help', 'mode'): [('off', 'Off'), ('quiet', "Offer a hand when I'm stuck"), ('tips', 'That, plus tips while I work')],
     ('window', 'mode'): [('system', 'System'), ('light', 'Light'), ('dark', 'Dark')],
     ('look', 'theme'): [('mono', 'Mono'), ('midnight', 'Midnight'), ('mediaplayer', 'Mediaplayer'), ('glass', 'Glass'), ('terminal', 'Terminal'), ('cosmic', 'Cosmic')],
-
 }
 _BOUNDS = {
     ('look', 'pointer_size'): (0.5, 2.0, 0.1, 1),

@@ -244,8 +244,6 @@ class Flippy:
             if not hasattr(self.ui, "video_window"):
                 return NOT_HERE
             return self.video.command(cmd)
-        elif cmd == "settings":
-            self.open_settings()
         elif cmd == "setup" and hasattr(self.ui, "open_setup"):  # first-run setup
             self.ui.open_setup()
         elif cmd == "history" and hasattr(self.ui, "open_app"):  # the app window's History

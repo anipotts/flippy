@@ -10,8 +10,10 @@ import os
 import plistlib
 import subprocess
 
+from AppKit import NSAlert, NSAlertFirstButtonReturn
 from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 
+from .. import claude_login
 from ..profile import current
 from ..shell.setup import claude_cli, logged_in, login_items, run, terminal_env
 from . import hotkeys
@@ -21,6 +23,7 @@ AGENT_LABEL = current().bundle_id
 AGENT = os.path.expanduser(f"~/Library/LaunchAgents/{AGENT_LABEL}.plist")
 SCREEN_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
 ACCESSIBILITY_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+_claude_failed = False
 
 
 # ---- checks
@@ -55,6 +58,7 @@ def state():
     home = os.path.expanduser("~")
     return {
         "claude": logged_in("claude"), "codex": logged_in("codex"),
+        "claude_waiting": claude_login.waiting(), "claude_failed": _claude_failed,
         "screen": screen_ok(), "accessibility": hotkeys.accessibility_trusted(),
         "login_item": login_item_on(), "login_item_allowed": installed() and not current().demo,
         "app": app and ("~" + app[len(home):] if app.startswith(home + os.sep) else app),
@@ -63,11 +67,21 @@ def state():
 
 
 # ---- actions
-def open_login_terminal():
-    """Run `claude` in Terminal so the user can /login with their Pro/Max account."""
-    cmd = f"unset ANTHROPIC_API_KEY; '{claude_cli()}'"
-    script = f'tell application "Terminal" to do script "{cmd}"\ntell application "Terminal" to activate'
-    subprocess.Popen(["osascript", "-e", script], env=terminal_env())
+def confirm_claude_reconnect():
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_("Claude is already connected")
+    alert.setInformativeText_("Sign in again, for example with a different account? Claude's sign-in page opens in your browser.")
+    alert.addButtonWithTitle_("Sign In Again")
+    alert.addButtonWithTitle_("Cancel")
+    return alert.runModal() == NSAlertFirstButtonReturn
+
+
+def open_claude_login():
+    """Use main's browser sign-in (#20), with the same reconnect confirmation and status."""
+    global _claude_failed
+    if logged_in("claude") and not claude_login.waiting() and not confirm_claude_reconnect():
+        return
+    _claude_failed = not claude_login.start(claude_cli())
 
 
 def open_codex_login():
@@ -121,7 +135,7 @@ def set_login_item(on):
 
 
 ACTIONS = {
-    "claude": open_login_terminal, "codex": open_codex_login, "screen": ask_screen,
+    "claude": open_claude_login, "codex": open_codex_login, "screen": ask_screen,
     "accessibility": ask_accessibility, "restart": restart, "reveal": reveal, **login_items(set_login_item),
 }
 
