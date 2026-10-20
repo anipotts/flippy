@@ -11,11 +11,11 @@ import os
 
 import objc
 from AppKit import (NSApp, NSAppearance, NSApplicationActivationPolicyAccessory, NSApplicationActivationPolicyRegular,
-                    NSBackingStoreBuffered, NSColor, NSColorSpace, NSMenu, NSMenuItem, NSModalResponseOK, NSOpenPanel,
-                    NSPasteboard, NSPasteboardTypeString, NSSavePanel, NSWindow, NSWindowStyleMaskClosable,
+                    NSBackingStoreBuffered, NSColor, NSColorSpace, NSImage, NSMenu, NSMenuItem, NSModalResponseOK,
+                    NSOpenPanel, NSPasteboard, NSPasteboardTypeString, NSSavePanel, NSWindow, NSWindowStyleMaskClosable,
                     NSWindowStyleMaskFullSizeContentView, NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable,
                     NSWindowStyleMaskTitled, NSWindowTitleHidden)
-from Foundation import NSMakeRect, NSMakeSize, NSObject, NSURL
+from Foundation import NSData, NSMakeRect, NSMakeSize, NSObject, NSURL
 from WebKit import WKUserContentController, WKWebView, WKWebViewConfiguration
 
 from .. import pixelart
@@ -37,6 +37,27 @@ class _Handler(NSObject, protocols=[WKScriptMessageHandler]):
 
     def windowWillClose_(self, note):
         self.owner._closed()
+
+
+def _app_icon():
+    """Flippy's icon for the Dock while the window is open. The daemon is a Python child of Flippy.app (or runs
+    from a checkout), so without this the Dock shows Python's icon."""
+    app = os.environ.get("FLIPPY_APP")  # set by Flippy.app's launcher
+    icns = os.path.join(app, "Contents", "Resources", "Flippy.icns") if app else ""
+    if os.path.exists(icns):
+        return NSImage.alloc().initWithContentsOfFile_(icns)
+    try:  # a checkout without the app: draw it the way the build does
+        import importlib.util
+        import io
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(WEB))), "packaging", "make_icon.py")
+        spec = importlib.util.spec_from_file_location("flippy_make_icon", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        png = io.BytesIO()
+        mod.draw(512).write_to_png(png)
+        return NSImage.alloc().initWithData_(NSData.dataWithBytes_length_(png.getvalue(), len(png.getvalue())))
+    except Exception:
+        return None
 
 
 def _menu():
@@ -167,6 +188,9 @@ class AppWindow(Window):
         if NSApp.activationPolicy() != NSApplicationActivationPolicyRegular:
             self._old_menu = NSApp.mainMenu()
             NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+            icon = _app_icon()
+            if icon is not None:
+                NSApp.setApplicationIconImage_(icon)
             NSApp.setMainMenu_(_menu())
         self.win.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
